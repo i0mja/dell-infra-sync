@@ -781,9 +781,129 @@ export const WorkflowExecutionViewer = ({
               <PauseCircle className="h-4 w-4 text-orange-500" />
               <AlertDescription className="mt-2">
                 <div className="font-semibold mb-1 text-orange-600">Workflow Paused</div>
-                <div className="text-xs text-muted-foreground">
+                <div className="text-xs text-muted-foreground mb-3">
                   {effectiveJobDetails?.pause_reason || 'Operator intervention required before continuing.'}
                 </div>
+                
+                {/* Show blocker resolution wizard button if awaiting resolution */}
+                {effectiveJobDetails?.awaiting_blocker_resolution && (
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    <Button
+                      size="sm"
+                      onClick={() => setShowBlockerWizard(true)}
+                      className="bg-orange-500 hover:bg-orange-600"
+                    >
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Open Resolution Wizard
+                    </Button>
+                  </div>
+                )}
+                
+                {/* Retry/Skip buttons for host failures */}
+                {effectiveJobDetails?.can_retry && effectiveJobDetails?.failed_host_name && (
+                  <div className="space-y-2">
+                    <div className="text-xs text-muted-foreground">
+                      Failed host: <span className="font-medium text-foreground">{effectiveJobDetails.failed_host_name}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        onClick={async () => {
+                          try {
+                            const nextDetails = {
+                              ...(effectiveJobDetails || {}),
+                              retry_host: effectiveJobDetails.failed_host_name,
+                              resume_from_host: effectiveJobDetails.failed_host_id || effectiveJobDetails.failed_host_name
+                            };
+                            delete nextDetails.pause_reason;
+                            delete nextDetails.can_retry;
+                            delete nextDetails.can_skip;
+                            
+                            await supabase
+                              .from('jobs')
+                              .update({ status: 'pending', details: nextDetails })
+                              .eq('id', jobId);
+                            
+                            toast.success('Job will retry failed host');
+                          } catch (error) {
+                            toast.error('Failed to retry job');
+                          }
+                        }}
+                      >
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                        Retry Host
+                      </Button>
+                      
+                      {effectiveJobDetails?.can_skip && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={async () => {
+                            try {
+                              const nextDetails = {
+                                ...(effectiveJobDetails || {}),
+                                skip_host: effectiveJobDetails.failed_host_name,
+                                resume_from_host: effectiveJobDetails.failed_host_id || effectiveJobDetails.failed_host_name,
+                                skipped_hosts: [
+                                  ...(effectiveJobDetails.skipped_hosts || []),
+                                  effectiveJobDetails.failed_host_name
+                                ]
+                              };
+                              delete nextDetails.pause_reason;
+                              delete nextDetails.can_retry;
+                              delete nextDetails.can_skip;
+                              delete nextDetails.failed_host_name;
+                              delete nextDetails.failed_host_id;
+                              
+                              await supabase
+                                .from('jobs')
+                                .update({ status: 'pending', details: nextDetails })
+                                .eq('id', jobId);
+                              
+                              toast.success('Host will be skipped, continuing with next host');
+                            } catch (error) {
+                              toast.error('Failed to skip host');
+                            }
+                          }}
+                        >
+                          <ChevronRight className="h-4 w-4 mr-2" />
+                          Skip Host
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )}
+                
+                {/* Resume button for jobs with resolutions saved */}
+                {effectiveJobDetails?.maintenance_blocker_resolutions && !effectiveJobDetails?.awaiting_blocker_resolution && (
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      onClick={async () => {
+                        try {
+                          const nextDetails = {
+                            ...(effectiveJobDetails || {}),
+                            blocker_resolution_applied_at: new Date().toISOString()
+                          };
+                          delete nextDetails.pause_reason;
+                          delete nextDetails.awaiting_blocker_resolution;
+                          
+                          await supabase
+                            .from('jobs')
+                            .update({ status: 'pending', details: nextDetails })
+                            .eq('id', jobId);
+                          
+                          toast.success('Job will resume with saved resolutions');
+                        } catch (error) {
+                          toast.error('Failed to resume job');
+                        }
+                      }}
+                    >
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Resume Job
+                    </Button>
+                  </div>
+                )}
               </AlertDescription>
             </Alert>
           </>

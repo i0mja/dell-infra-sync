@@ -176,6 +176,202 @@ class ClusterHandler(BaseHandler):
             vm_names.append(vm_name)
         return list({name for name in vm_names if name})
     
+    def _select_power_off_by_pattern(self, blockers: List[Dict[str, Any]], patterns: List[str]) -> List[str]:
+        """
+        Select VMs to power off based on name patterns (e.g., 'Z-VRA*', 'Zerto*').
+        Used for automatic handling of appliance VMs in scheduled maintenance.
+        
+        Args:
+            blockers: List of blocker dicts with vm_name field
+            patterns: List of patterns with wildcards (e.g., ['Z-VRA*', '*-VRA-*'])
+            
+        Returns:
+            List of VM names matching any pattern
+        """
+        import fnmatch
+        vm_names = []
+        for blocker in blockers:
+            vm_name = blocker.get('vm_name')
+            if not vm_name:
+                continue
+            # Skip VCSA - never auto power off
+            if blocker.get('reason') == 'vcsa':
+                continue
+            for pattern in patterns:
+                if fnmatch.fnmatch(vm_name.upper(), pattern.upper()):
+                    vm_names.append(vm_name)
+                    break
+        return list({name for name in vm_names if name})
+    
+    def _execute_comprehensive_blocker_scan(
+        self,
+        job: Dict,
+        eligible_hosts: List[Dict],
+        host_credentials: Dict[str, Dict],
+        source_vcenter_id: str,
+        cleanup_state: Dict,
+        workflow_step_counter: int
+    ) -> tuple:
+        """
+        Phase 1.5: Comprehensive blocker scan AFTER HA is disabled.
+        Scans ALL hosts for DRS blockers and handles them based on settings.
+        
+        Returns:
+            Tuple of (should_continue: bool, updated_step_counter: int, all_blockers: dict)
+        """
+        details = job.get('details', {})
+        auto_power_off_enabled = details.get('auto_power_off_enabled', False)
+        auto_power_off_patterns = details.get('auto_power_off_patterns', [])
+        is_scheduled = details.get('scheduled_execution', False)
+        resolutions = details.get('maintenance_blocker_resolutions', {})
+        
+        self.log("")
+        self.log("=" * 80)
+        self.log("PHASE 1.5: COMPREHENSIVE BLOCKER SCAN (POST-HA)")
+        self.log("=" * 80)
+        
+        # Log workflow step for this phase
+        self._log_workflow_step(
+            job['id'], 'rolling_cluster_update',
+            step_number=workflow_step_counter,
+            step_name="Comprehensive blocker scan",
+            status='running',
+            step_started_at=utc_now_iso()
+        )
+        
+        all_current_blockers = {}
+        total_critical_blockers = 0
+        vms_for_auto_power_off = {}  # host_id -> list of VM names
+        
+        for host in eligible_hosts:
+            server = self.get_server_by_id(host['server_id'])
+            vcenter_host_id = server.get('vcenter_host_id') if server else None
+            
+            if not vcenter_host_id:
+                self.log(f"  {host['name']}: No vCenter link, skipping blocker check")
+                continue
+            
+            # Analyze blockers for this host
+            analysis = self.executor.analyze_maintenance_blockers(vcenter_host_id, source_vcenter_id)
+            
+            if analysis and analysis.get('blockers'):
+                blockers = analysis['blockers']
+                critical_count = len([b for b in blockers if b.get('severity') == 'critical'])
+                total_critical_blockers += critical_count
+                
+                # Inject server_id and host_name for resolution lookup
+                analysis['server_id'] = host['server_id']
+                analysis['host_name'] = host['name']
+                analysis['vcenter_host_id'] = vcenter_host_id
+                
+                all_current_blockers[host['server_id']] = analysis
+                self.log(f"  {host['name']}: {len(blockers)} blocker(s) ({critical_count} critical)")
+                
+                # Check if we have resolutions from wizard
+                host_resolution = None
+                for key in [host['server_id'], vcenter_host_id, host['name']]:
+                    if key and key in resolutions:
+                        host_resolution = resolutions[key]
+                        break
+                
+                # If resolutions exist for this host, skip auto-pattern matching
+                if host_resolution:
+                    self.log(f"    → Using wizard resolution (skip={host_resolution.get('skip_host', False)})")
+                    continue
+                
+                # Apply auto power-off patterns if enabled
+                if auto_power_off_patterns and (auto_power_off_enabled or is_scheduled):
+                    pattern_matches = self._select_power_off_by_pattern(blockers, auto_power_off_patterns)
+                    if pattern_matches:
+                        vms_for_auto_power_off[host['server_id']] = {
+                            'vcenter_host_id': vcenter_host_id,
+                            'host_name': host['name'],
+                            'vm_names': pattern_matches,
+                            'matched_patterns': auto_power_off_patterns
+                        }
+                        self.log(f"    → {len(pattern_matches)} VM(s) match auto power-off patterns")
+                        for vm in pattern_matches[:3]:
+                            self.log(f"      - {vm}")
+                        if len(pattern_matches) > 3:
+                            self.log(f"      ... and {len(pattern_matches) - 3} more")
+            else:
+                self.log(f"  {host['name']}: No blockers detected")
+        
+        # Decide what to do based on blockers found
+        if all_current_blockers:
+            unresolved_count = len(all_current_blockers) - len(vms_for_auto_power_off)
+            
+            # Store auto power-off VMs in job details for per-host processing
+            if vms_for_auto_power_off:
+                self.update_job_details_field(job['id'], {
+                    'auto_power_off_vms': vms_for_auto_power_off
+                })
+                self.log(f"")
+                self.log(f"  ✓ {len(vms_for_auto_power_off)} host(s) have VMs for auto power-off")
+            
+            # Check if there are unresolved blockers that need attention
+            has_unresolved = False
+            for server_id, analysis in all_current_blockers.items():
+                if server_id in vms_for_auto_power_off:
+                    # Check if ALL blockers are covered by pattern match
+                    pattern_vms = set(vms_for_auto_power_off[server_id]['vm_names'])
+                    all_blocker_vms = set(b.get('vm_name') for b in analysis.get('blockers', []))
+                    if not all_blocker_vms.issubset(pattern_vms):
+                        has_unresolved = True
+                        break
+                else:
+                    has_unresolved = True
+                    break
+            
+            # If unresolved blockers exist and no resolutions provided, pause for wizard
+            if has_unresolved and not resolutions and not is_scheduled:
+                self.log(f"")
+                self.log(f"  ⚠ Maintenance blockers detected - pausing for resolution")
+                
+                self._log_workflow_step(
+                    job['id'], 'rolling_cluster_update',
+                    step_number=workflow_step_counter,
+                    step_name="Comprehensive blocker scan",
+                    status='paused',
+                    step_details={
+                        'hosts_with_blockers': len(all_current_blockers),
+                        'total_critical_blockers': total_critical_blockers,
+                        'auto_power_off_hosts': len(vms_for_auto_power_off),
+                        'awaiting_resolution': True
+                    },
+                    step_completed_at=utc_now_iso()
+                )
+                
+                # Pause job for wizard resolution
+                self.update_job_status(job['id'], 'paused', details={
+                    'pause_reason': f'Maintenance blockers detected on {len(all_current_blockers)} host(s) - wizard resolution required',
+                    'awaiting_blocker_resolution': True,
+                    'current_blockers': all_current_blockers,
+                    'blocker_analysis_at': utc_now_iso(),
+                    'can_retry': True,
+                    'hosts_with_blockers': len(all_current_blockers),
+                    'total_critical_blockers': total_critical_blockers
+                })
+                
+                return False, workflow_step_counter + 1, all_current_blockers
+        
+        self._log_workflow_step(
+            job['id'], 'rolling_cluster_update',
+            step_number=workflow_step_counter,
+            step_name="Comprehensive blocker scan",
+            status='completed',
+            step_details={
+                'hosts_scanned': len(eligible_hosts),
+                'hosts_with_blockers': len(all_current_blockers),
+                'auto_power_off_hosts': len(vms_for_auto_power_off),
+                'total_critical_blockers': total_critical_blockers
+            },
+            step_completed_at=utc_now_iso()
+        )
+        
+        self.log(f"  ✓ Blocker scan complete - proceeding with updates")
+        return True, workflow_step_counter + 1, all_current_blockers
+    
     def _execute_batch_preflight_checks(
         self, 
         job: Dict, 
@@ -1193,9 +1389,25 @@ class ClusterHandler(BaseHandler):
             
             # Calculate expected total workflow steps for accurate UI progress
             # Base steps: pre-flight (0), SCP backups if enabled (1), sequential updates container (2)
-            base_steps = 3 if backup_scp else 2
-            steps_per_host = 6  # check_updates, maintenance, firmware, reboot, verify, exit_maintenance
+            # Calculate expected total steps with sequential numbering:
+            # 1. Pre-flight checks
+            # 2. HA disable (if cluster)
+            # 3. Comprehensive blocker scan (Phase 1.5)
+            # 4. SCP backups (if enabled)
+            # Per host (7 steps each): check_updates, maintenance, firmware, reboot, verify, exit_maintenance, power_on
+            # N+1. HA re-enable
+            base_steps = 1  # Pre-flight
+            if cluster_name:
+                base_steps += 1  # HA disable
+                base_steps += 1  # Phase 1.5 blocker scan
+                base_steps += 1  # HA re-enable at end
+            if backup_scp:
+                base_steps += 1  # SCP backups
+            steps_per_host = 7  # check_updates, maintenance, firmware, reboot, verify, exit_maintenance, power_on
             expected_total_steps = base_steps + (len(eligible_hosts) * steps_per_host)
+            
+            # Track workflow step counter for sequential numbering
+            workflow_step_counter = 1
             
             # Store progress metadata in job details for UI
             self.update_job_details_field(job['id'], {
@@ -1585,6 +1797,26 @@ class ClusterHandler(BaseHandler):
                 self.log("")
                 self.log("  ℹ No cluster identified for HA management (standalone hosts or no vCenter link)")
             
+            # Increment step counter after HA step
+            workflow_step_counter += 1
+            
+            # =================================================================
+            # PHASE 1.5: COMPREHENSIVE BLOCKER SCAN (POST-HA)
+            # =================================================================
+            # Scan ALL hosts for blockers AFTER HA is disabled - this is the "point of no return"
+            # If blockers are found and no resolutions/patterns provided, pause for wizard
+            if cluster_name and source_vcenter_id:
+                should_continue, workflow_step_counter, all_blockers = self._execute_comprehensive_blocker_scan(
+                    job, eligible_hosts, host_credentials, source_vcenter_id, 
+                    cleanup_state, workflow_step_counter
+                )
+                
+                if not should_continue:
+                    # Job was paused for blocker resolution - exit and wait for user action
+                    self.log(f"")
+                    self.log(f"⏸️ Job paused - awaiting blocker resolution from user")
+                    return
+            
             # =================================================================
             # PHASE 1: BATCH SCP BACKUPS (ONLY HOSTS NEEDING UPDATES)
             # =================================================================
@@ -1601,7 +1833,7 @@ class ClusterHandler(BaseHandler):
                         self.log("")
                         self.log(f"  ℹ SCP backups will only run for {len(hosts_to_backup)}/{len(eligible_hosts)} hosts (those needing updates)")
                     
-                    self._log_workflow_step(job['id'], 'rolling_cluster_update', 1,
+                    self._log_workflow_step(job['id'], 'rolling_cluster_update', workflow_step_counter,
                         f"SCP backups ({len(hosts_to_backup)} hosts)", 'running',
                         step_details={'hosts_to_backup': len(hosts_to_backup), 'skipped': len(eligible_hosts) - len(hosts_to_backup)})
                     
@@ -1612,28 +1844,65 @@ class ClusterHandler(BaseHandler):
                     )
                     
                     successful_backups = sum(1 for r in backup_results.values() if r.get('success'))
-                    self._log_workflow_step(job['id'], 'rolling_cluster_update', 1,
+                    self._log_workflow_step(job['id'], 'rolling_cluster_update', workflow_step_counter,
                         f"SCP backups ({len(hosts_to_backup)} hosts)", 'completed',
                         step_details={
                             'successful': successful_backups, 
                             'total': len(hosts_to_backup),
                             'skipped_up_to_date': len(eligible_hosts) - len(hosts_to_backup)
                         })
+                    workflow_step_counter += 1
                 else:
                     self.log("")
                     self.log("  ℹ No hosts need SCP backup (all up to date)")
-                    self._log_workflow_step(job['id'], 'rolling_cluster_update', 1,
+                    self._log_workflow_step(job['id'], 'rolling_cluster_update', workflow_step_counter,
                         f"SCP backups (skipped)", 'completed',
                         step_details={'skipped': True, 'reason': 'No hosts need updates'})
+                    workflow_step_counter += 1
             
             # =================================================================
             # PHASE 2: SEQUENTIAL HOST UPDATES
             # =================================================================
-            self._log_workflow_step(job['id'], 'rolling_cluster_update', 2,
+            self._log_workflow_step(job['id'], 'rolling_cluster_update', workflow_step_counter,
                 f"Sequential updates ({len(eligible_hosts)} hosts)", 'running')
             
+            # Check for resume_from_host (continuing from a paused/failed state)
+            resume_from_host = details.get('resume_from_host')
+            skip_hosts = set(details.get('skipped_hosts', []))
+            start_host_index = 0
+            
+            if resume_from_host:
+                self.log(f"")
+                self.log(f"📌 Resuming from host: {resume_from_host}")
+                # Find the index of the host to resume from
+                for idx, h in enumerate(eligible_hosts):
+                    if h['server_id'] == resume_from_host or h['name'] == resume_from_host:
+                        # Check if we're retrying or skipping
+                        if details.get('skip_host'):
+                            start_host_index = idx + 1  # Skip this host, start from next
+                            skip_hosts.add(resume_from_host)
+                            self.log(f"  → Skipping host {h['name']}, continuing from index {start_host_index}")
+                        else:
+                            start_host_index = idx  # Retry this host
+                            self.log(f"  → Retrying host {h['name']} at index {start_host_index}")
+                        break
+            
+            # Get auto power-off VMs from Phase 1.5
+            auto_power_off_vms = details.get('auto_power_off_vms', {})
+            
             # Update each host sequentially (one at a time)
-            for host_index, host in enumerate(eligible_hosts, 1):
+            for host_index, host in enumerate(eligible_hosts):
+                # Skip hosts before resume point
+                if host_index < start_host_index:
+                    self.log(f"  ⏭️ Skipping previously processed host: {host['name']}")
+                    continue
+                
+                # Skip explicitly skipped hosts
+                if host['name'] in skip_hosts or host['server_id'] in skip_hosts:
+                    self.log(f"  ⏭️ Skipping host (user requested): {host['name']}")
+                    workflow_results['hosts_skipped'] = workflow_results.get('hosts_skipped', 0) + 1
+                    continue
+                
                 # Check cancellation before each host (supports graceful cancel)
                 cancel_result = self._check_and_handle_cancellation(job, cleanup_state)
                 if cancel_result == 'cancelled':
