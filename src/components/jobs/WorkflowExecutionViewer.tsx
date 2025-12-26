@@ -158,6 +158,7 @@ export const WorkflowExecutionViewer = ({
     consoleWindowRef.current = null;
   }, [currentOperation?.current_host_server_id]);
 
+
   const handleLaunchConsole = async () => {
     const serverId = currentOperation?.current_host_server_id;
     if (!serverId) return;
@@ -487,6 +488,28 @@ export const WorkflowExecutionViewer = ({
   const workflowBlockers = useMemo(() => {
     const blockers: Record<string, HostBlockerAnalysis> = {};
 
+    // NEW: Check current_blockers from Phase 1.5 blocker scan (when job is paused awaiting resolution)
+    const currentBlockers = effectiveJobDetails?.current_blockers;
+    if (currentBlockers && typeof currentBlockers === 'object') {
+      Object.entries(currentBlockers).forEach(([serverId, analysis]: [string, any]) => {
+        if (analysis?.blockers?.length > 0) {
+          blockers[serverId] = {
+            host_id: analysis.host_id || analysis.vcenter_host_id || serverId,
+            host_name: analysis.host_name || serverId,
+            server_id: analysis.server_id || serverId,
+            can_enter_maintenance: analysis.can_enter_maintenance ?? false,
+            blockers: analysis.blockers ?? [],
+            warnings: analysis.warnings ?? [],
+            total_powered_on_vms: analysis.total_powered_on_vms ?? 0,
+            migratable_vms: analysis.migratable_vms ?? 0,
+            blocked_vms: analysis.blocked_vms ?? analysis.blockers?.length ?? 0,
+            estimated_evacuation_time: analysis.estimated_evacuation_time ?? 0
+          };
+        }
+      });
+    }
+
+    // Also check host_results from workflow_results (for per-host failures)
     const hostResults = effectiveJobDetails?.workflow_results?.host_results ?? [];
     hostResults.forEach((host: any, index: number) => {
       const maintenanceBlockers = host?.maintenance_blockers;
@@ -497,6 +520,8 @@ export const WorkflowExecutionViewer = ({
         host?.server_id ||
         host?.host_name ||
         `host-${index}`;
+      // Don't overwrite current_blockers data
+      if (blockers[hostId]) return;
       blockers[hostId] = {
         host_id: hostId,
         host_name: maintenanceBlockers.host_name || host?.host_name || 'Unknown Host',
@@ -549,6 +574,31 @@ export const WorkflowExecutionViewer = ({
       }))
     );
   }, [workflowBlockers]);
+
+  // Auto-show blocker wizard when job pauses awaiting resolution
+  const hasShownWizardToast = useRef(false);
+  useEffect(() => {
+    if (
+      overallStatus === 'paused' && 
+      effectiveJobDetails?.awaiting_blocker_resolution && 
+      Object.keys(workflowBlockers).length > 0 &&
+      !hasShownWizardToast.current
+    ) {
+      hasShownWizardToast.current = true;
+      toast.warning('Maintenance blockers detected - resolution required', {
+        description: `${Object.keys(workflowBlockers).length} host(s) have VMs that cannot be migrated`,
+        duration: 15000,
+        action: {
+          label: 'Resolve Now',
+          onClick: () => setShowBlockerWizard(true)
+        }
+      });
+      setTimeout(() => setShowBlockerWizard(true), 500);
+    }
+    if (!effectiveJobDetails?.awaiting_blocker_resolution) {
+      hasShownWizardToast.current = false;
+    }
+  }, [overallStatus, effectiveJobDetails?.awaiting_blocker_resolution, workflowBlockers]);
 
   return (
     <Card>
@@ -915,28 +965,35 @@ export const WorkflowExecutionViewer = ({
             onOpenChange={setShowBlockerWizard}
             hostBlockers={workflowBlockers}
             onComplete={(resolutionPayload, hostOrder) => {
-              const saveResolutions = async () => {
-                // resolutionPayload is already transformed by the wizard with multiple keys
+              const saveAndResume = async () => {
+                // Build updated details with resolutions and clear pause state
                 const nextDetails = {
                   ...(effectiveJobDetails || {}),
                   maintenance_blocker_resolutions: resolutionPayload,
-                  host_update_order: hostOrder
+                  host_update_order: hostOrder,
+                  blocker_resolution_applied_at: new Date().toISOString()
                 };
+                // Clear pause-related fields
+                delete nextDetails.awaiting_blocker_resolution;
+                delete nextDetails.pause_reason;
+                delete nextDetails.current_blockers;
 
+                // Update job and resume to pending in one call
                 const { error } = await supabase
                   .from('jobs')
-                  .update({ details: nextDetails })
+                  .update({ 
+                    status: 'pending',  // Auto-resume
+                    details: nextDetails 
+                  })
                   .eq('id', jobId);
 
-                if (error) {
-                  throw error;
-                }
+                if (error) throw error;
               };
 
-              saveResolutions()
+              saveAndResume()
                 .then(() => {
                   setShowBlockerWizard(false);
-                  toast.success('Blocker resolutions saved. Retry the job when ready.');
+                  toast.success('Resolutions saved - job resuming automatically');
                 })
                 .catch((error) => {
                   console.error('Failed to save blocker resolutions:', error);

@@ -203,6 +203,51 @@ class ClusterHandler(BaseHandler):
                     break
         return list({name for name in vm_names if name})
     
+    def _sanitize_blockers_for_storage(self, blockers: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Sanitize blocker data to ensure it's JSON-serializable.
+        Converts complex objects (like pyvmomi references) to simple types.
+        
+        Args:
+            blockers: Dict mapping server_id -> blocker analysis
+            
+        Returns:
+            Sanitized dict safe for JSON storage
+        """
+        sanitized = {}
+        for server_id, analysis in blockers.items():
+            if not isinstance(analysis, dict):
+                continue
+            
+            sanitized_blockers = []
+            for b in analysis.get('blockers', []):
+                if not isinstance(b, dict):
+                    continue
+                sanitized_blockers.append({
+                    'vm_name': str(b.get('vm_name', '')) if b.get('vm_name') else None,
+                    'vm_id': str(b.get('vm_id', '')) if b.get('vm_id') else None,
+                    'reason': str(b.get('reason', '')) if b.get('reason') else None,
+                    'severity': str(b.get('severity', 'warning')) if b.get('severity') else 'warning',
+                    'details': str(b.get('details', '')) if b.get('details') else None,
+                    'remediation': str(b.get('remediation', '')) if b.get('remediation') else None,
+                    'auto_fixable': bool(b.get('auto_fixable', False))
+                })
+            
+            sanitized[str(server_id)] = {
+                'host_id': str(analysis.get('host_id', '')) if analysis.get('host_id') else None,
+                'host_name': str(analysis.get('host_name', '')) if analysis.get('host_name') else None,
+                'server_id': str(analysis.get('server_id', '')) if analysis.get('server_id') else str(server_id),
+                'vcenter_host_id': str(analysis.get('vcenter_host_id', '')) if analysis.get('vcenter_host_id') else None,
+                'can_enter_maintenance': bool(analysis.get('can_enter_maintenance', False)),
+                'blockers': sanitized_blockers,
+                'warnings': [str(w) for w in analysis.get('warnings', []) if w],
+                'total_powered_on_vms': int(analysis.get('total_powered_on_vms', 0)),
+                'migratable_vms': int(analysis.get('migratable_vms', 0)),
+                'blocked_vms': int(analysis.get('blocked_vms', len(sanitized_blockers)))
+            }
+        
+        return sanitized
+    
     def _execute_comprehensive_blocker_scan(
         self,
         job: Dict,
@@ -311,6 +356,7 @@ class ClusterHandler(BaseHandler):
             
             # Check if there are unresolved blockers that need attention
             has_unresolved = False
+            unresolved_hosts = []
             for server_id, analysis in all_current_blockers.items():
                 if server_id in vms_for_auto_power_off:
                     # Check if ALL blockers are covered by pattern match
@@ -318,13 +364,46 @@ class ClusterHandler(BaseHandler):
                     all_blocker_vms = set(b.get('vm_name') for b in analysis.get('blockers', []))
                     if not all_blocker_vms.issubset(pattern_vms):
                         has_unresolved = True
-                        break
+                        unresolved_hosts.append(analysis.get('host_name', server_id))
                 else:
                     has_unresolved = True
-                    break
+                    unresolved_hosts.append(analysis.get('host_name', server_id))
             
-            # If unresolved blockers exist and no resolutions provided, pause for wizard
-            if has_unresolved and not resolutions and not is_scheduled:
+            # Handle scheduled jobs differently - skip blocked hosts or fail gracefully
+            if has_unresolved and not resolutions and is_scheduled:
+                self.log(f"")
+                self.log(f"  ⚠ SCHEDULED JOB: {len(unresolved_hosts)} host(s) have unresolved blockers")
+                
+                scheduled_auto_skip = details.get('scheduled_auto_skip_blocked_hosts', True)
+                if scheduled_auto_skip:
+                    # Add unresolved hosts to skip list
+                    skip_hosts = set(details.get('skip_hosts', []))
+                    for server_id, analysis in all_current_blockers.items():
+                        if server_id not in vms_for_auto_power_off:
+                            skip_hosts.add(server_id)
+                            self.log(f"    → Will skip host: {analysis.get('host_name', server_id)} (unresolved blockers)")
+                        else:
+                            # Check if partial coverage
+                            pattern_vms = set(vms_for_auto_power_off[server_id]['vm_names'])
+                            all_blocker_vms = set(b.get('vm_name') for b in analysis.get('blockers', []))
+                            if not all_blocker_vms.issubset(pattern_vms):
+                                skip_hosts.add(server_id)
+                                uncovered = all_blocker_vms - pattern_vms
+                                self.log(f"    → Will skip host: {analysis.get('host_name', server_id)} (VMs not matching patterns: {', '.join(uncovered)})")
+                    
+                    self.update_job_details_field(job['id'], {
+                        'skip_hosts': list(skip_hosts),
+                        'scheduled_skipped_due_to_blockers': list(skip_hosts)
+                    })
+                    self.log(f"  ✓ {len(skip_hosts)} host(s) will be skipped due to unresolved blockers")
+                else:
+                    # Fail the job with clear error for scheduled jobs that can't auto-resolve
+                    error_msg = f"Scheduled job cannot proceed: {len(unresolved_hosts)} host(s) have unresolved maintenance blockers ({', '.join(unresolved_hosts[:3])}{'...' if len(unresolved_hosts) > 3 else ''}). Configure auto_power_off_patterns or run interactively."
+                    self.log(f"  ✗ {error_msg}")
+                    raise Exception(error_msg)
+            
+            # If unresolved blockers exist and no resolutions provided (interactive mode), pause for wizard
+            elif has_unresolved and not resolutions:
                 self.log(f"")
                 self.log(f"  ⚠ Maintenance blockers detected - pausing for resolution")
                 
@@ -342,16 +421,22 @@ class ClusterHandler(BaseHandler):
                     step_completed_at=utc_now_iso()
                 )
                 
+                # Sanitize blockers for JSON storage
+                sanitized_blockers = self._sanitize_blockers_for_storage(all_current_blockers)
+                
                 # Pause job for wizard resolution
                 self.update_job_status(job['id'], 'paused', details={
                     'pause_reason': f'Maintenance blockers detected on {len(all_current_blockers)} host(s) - wizard resolution required',
                     'awaiting_blocker_resolution': True,
-                    'current_blockers': all_current_blockers,
+                    'current_blockers': sanitized_blockers,
                     'blocker_analysis_at': utc_now_iso(),
                     'can_retry': True,
                     'hosts_with_blockers': len(all_current_blockers),
                     'total_critical_blockers': total_critical_blockers
                 })
+                
+                self.log("")
+                self.log("⏸️ Job paused - awaiting blocker resolution from user")
                 
                 return False, workflow_step_counter + 1, all_current_blockers
         
