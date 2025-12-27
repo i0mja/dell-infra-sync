@@ -1,7 +1,8 @@
 """Database operations mixin for Job Executor"""
 
+import json
 import requests
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from datetime import datetime, timezone
 from job_executor.utils import _safe_json_parse
 
@@ -133,6 +134,27 @@ class DatabaseMixin:
             self.log(f"Error fetching server: {e}", "ERROR")
             return None
 
+    def _deep_sanitize_for_json(self, obj: Any) -> Any:
+        """
+        Recursively ensure all values are JSON-serializable.
+        Converts complex objects (pyvmomi references, etc.) to simple types.
+        """
+        if obj is None:
+            return None
+        if isinstance(obj, (str, int, float, bool)):
+            return obj
+        if isinstance(obj, dict):
+            return {str(k): self._deep_sanitize_for_json(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [self._deep_sanitize_for_json(i) for i in obj]
+        if isinstance(obj, (datetime,)):
+            return obj.isoformat()
+        # Convert anything else to string representation
+        try:
+            return str(obj)
+        except:
+            return "<non-serializable>"
+
     def update_job_status(
         self,
         job_id: str,
@@ -141,11 +163,11 @@ class DatabaseMixin:
         error: Optional[str] = None
     ) -> bool:
         """
-        Update job status in database
+        Update job status in database with robust JSON serialization and fallback.
         
         Args:
             job_id: Job UUID
-            status: New status (pending, running, completed, failed, cancelled)
+            status: New status (pending, running, completed, failed, cancelled, paused)
             details: Optional details dict to merge with existing details
             error: Optional error message for failed jobs
             
@@ -174,28 +196,42 @@ class DatabaseMixin:
                 payload["completed_at"] = datetime.now().isoformat()
             
             # Merge details if provided
+            merged_details = {}
             if details:
                 # Fetch current details first
-                get_response = requests.get(
-                    url,
-                    headers=headers,
-                    params={**params, "select": "details"},
-                    verify=VERIFY_SSL
-                )
-                if get_response.status_code == 200:
-                    jobs = _safe_json_parse(get_response)
-                    if jobs:
-                        current_details = jobs[0].get('details') or {}
-                        merged_details = {**current_details, **details}
-                        payload["details"] = merged_details
-                else:
-                    payload["details"] = details
+                try:
+                    get_response = requests.get(
+                        url,
+                        headers=headers,
+                        params={**params, "select": "details"},
+                        verify=VERIFY_SSL,
+                        timeout=10
+                    )
+                    if get_response.status_code == 200:
+                        jobs = _safe_json_parse(get_response)
+                        if jobs:
+                            current_details = jobs[0].get('details') or {}
+                            merged_details = {**current_details, **details}
+                    else:
+                        merged_details = details
+                except Exception as fetch_err:
+                    self.log(f"Warning: Could not fetch current details: {fetch_err}", "WARN")
+                    merged_details = details
+                
+                payload["details"] = merged_details
             
             # Add error message if provided
             if error:
                 current_details = payload.get("details", {})
                 current_details["error"] = error
                 payload["details"] = current_details
+            
+            # Test JSON serialization and sanitize if needed
+            try:
+                json.dumps(payload)
+            except (TypeError, ValueError) as json_err:
+                self.log(f"Payload contains non-serializable data, sanitizing: {json_err}", "WARN")
+                payload = self._deep_sanitize_for_json(payload)
             
             response = requests.patch(
                 url,
@@ -209,7 +245,47 @@ class DatabaseMixin:
             if response.status_code in [200, 204]:
                 return True
             else:
-                self.log(f"Failed to update job {job_id}: {response.status_code}", "WARN")
+                # Log detailed error information
+                try:
+                    error_body = response.json()
+                    error_detail = json.dumps(error_body, default=str)[:500]
+                except:
+                    error_detail = response.text[:500] if response.text else "No response body"
+                
+                self.log(f"Job update failed: status={response.status_code}, body={error_detail}", "ERROR")
+                
+                # FALLBACK: Try minimal update with just status and essential fields
+                if status in ['paused', 'failed', 'cancelled']:
+                    self.log("Attempting fallback minimal update...", "INFO")
+                    minimal_payload = {"status": status}
+                    
+                    if status == 'paused':
+                        # Include only essential pause fields
+                        minimal_payload["details"] = {
+                            "pause_reason": details.get("pause_reason", "Paused - check workflow steps") if details else "Paused",
+                            "awaiting_blocker_resolution": details.get("awaiting_blocker_resolution", False) if details else False,
+                            "hosts_with_blockers": details.get("hosts_with_blockers", 0) if details else 0,
+                            "can_retry": True,
+                            "fallback_update": True
+                        }
+                    
+                    try:
+                        fallback_response = requests.patch(
+                            url,
+                            headers=headers,
+                            params=params,
+                            json=minimal_payload,
+                            verify=VERIFY_SSL,
+                            timeout=10
+                        )
+                        if fallback_response.status_code in [200, 204]:
+                            self.log("Fallback minimal update succeeded", "INFO")
+                            return True
+                        else:
+                            self.log(f"Fallback update also failed: {fallback_response.status_code}", "ERROR")
+                    except Exception as fallback_err:
+                        self.log(f"Fallback update exception: {fallback_err}", "ERROR")
+                
                 return False
                 
         except Exception as e:
