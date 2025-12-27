@@ -738,7 +738,7 @@ export function BlockerResolutionWizard({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 min-h-0 overflow-y-auto space-y-4">
+        <div className="flex-1 overflow-y-auto space-y-4">
           <Progress value={progressPercent} className="h-2" />
 
           <div className="min-h-[400px]">
