@@ -215,13 +215,11 @@ class ClusterHandler(BaseHandler):
             Sanitized dict safe for JSON storage
         """
         MAX_BLOCKERS_PER_HOST = 50
-        MAX_WARNINGS_PER_HOST = 20
         FIELD_LIMITS = {
             'vm_name': 255,
             'reason': 255,
-            'details': 1024,
-            'remediation': 1024,
-            'warning': 512
+            'details': 2000,
+            'remediation': 2000
         }
 
         def _truncate(value: Any, limit: int) -> Optional[str]:
@@ -272,9 +270,7 @@ class ClusterHandler(BaseHandler):
                 'warnings': warnings,
                 'total_powered_on_vms': int(analysis.get('total_powered_on_vms', 0)),
                 'migratable_vms': int(analysis.get('migratable_vms', 0)),
-                'blocked_vms': int(analysis.get('blocked_vms', total_blockers)),
-                'blockers_stored': len(sanitized_blockers),
-                'blockers_truncated': max(total_blockers - len(sanitized_blockers), 0)
+                'blocked_vms': int(analysis.get('blocked_vms', total_blockers))
             }
         
         return sanitized
