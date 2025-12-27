@@ -8,6 +8,16 @@ from urllib.parse import quote
 from .base import BaseHandler
 from job_executor.utils import utc_now_iso
 
+MAX_BLOCKERS_PER_HOST = 50
+MAX_WARNINGS_PER_HOST = 20
+BLOCKER_FIELD_LIMITS = {
+    'vm_name': 255,
+    'reason': 255,
+    'details': 1024,
+    'remediation': 1024,
+    'warning': 512
+}
+
 
 class ClusterHandler(BaseHandler):
     """Handles cluster safety checks and update workflows"""
@@ -214,24 +224,47 @@ class ClusterHandler(BaseHandler):
         Returns:
             Sanitized dict safe for JSON storage
         """
+        blocker_limit = MAX_BLOCKERS_PER_HOST if isinstance(MAX_BLOCKERS_PER_HOST, int) and MAX_BLOCKERS_PER_HOST > 0 else 50
+        warning_limit = MAX_WARNINGS_PER_HOST if isinstance(MAX_WARNINGS_PER_HOST, int) and MAX_WARNINGS_PER_HOST > 0 else 20
+        field_limits = BLOCKER_FIELD_LIMITS or {}
+
+        def _truncate(value: Any, limit: int) -> Optional[str]:
+            if value is None:
+                return None
+            text = str(value)
+            if text == '':
+                return None
+            if limit and len(text) > limit:
+                return text[:limit]
+            return text
+
         sanitized = {}
         for server_id, analysis in blockers.items():
             if not isinstance(analysis, dict):
                 continue
             
             sanitized_blockers = []
-            for b in analysis.get('blockers', []):
+            raw_blockers = analysis.get('blockers', [])
+            total_blockers = len(raw_blockers)
+            for b in raw_blockers[:blocker_limit]:
                 if not isinstance(b, dict):
                     continue
                 sanitized_blockers.append({
-                    'vm_name': str(b.get('vm_name', '')) if b.get('vm_name') else None,
+                    'vm_name': _truncate(b.get('vm_name'), field_limits.get('vm_name', 255)),
                     'vm_id': str(b.get('vm_id', '')) if b.get('vm_id') else None,
-                    'reason': str(b.get('reason', '')) if b.get('reason') else None,
+                    'reason': _truncate(b.get('reason'), field_limits.get('reason', 255)),
                     'severity': str(b.get('severity', 'warning')) if b.get('severity') else 'warning',
-                    'details': str(b.get('details', '')) if b.get('details') else None,
-                    'remediation': str(b.get('remediation', '')) if b.get('remediation') else None,
+                    'details': _truncate(b.get('details'), field_limits.get('details', 1024)),
+                    'remediation': _truncate(b.get('remediation'), field_limits.get('remediation', 1024)),
                     'auto_fixable': bool(b.get('auto_fixable', False))
                 })
+
+            warnings = []
+            raw_warnings = analysis.get('warnings', [])
+            for w in raw_warnings[:warning_limit]:
+                truncated_warning = _truncate(w, field_limits.get('warning', 512))
+                if truncated_warning:
+                    warnings.append(truncated_warning)
             
             sanitized[str(server_id)] = {
                 'host_id': str(analysis.get('host_id', '')) if analysis.get('host_id') else None,
@@ -240,10 +273,12 @@ class ClusterHandler(BaseHandler):
                 'vcenter_host_id': str(analysis.get('vcenter_host_id', '')) if analysis.get('vcenter_host_id') else None,
                 'can_enter_maintenance': bool(analysis.get('can_enter_maintenance', False)),
                 'blockers': sanitized_blockers,
-                'warnings': [str(w) for w in analysis.get('warnings', []) if w],
+                'warnings': warnings,
                 'total_powered_on_vms': int(analysis.get('total_powered_on_vms', 0)),
                 'migratable_vms': int(analysis.get('migratable_vms', 0)),
-                'blocked_vms': int(analysis.get('blocked_vms', len(sanitized_blockers)))
+                'blocked_vms': int(analysis.get('blocked_vms', total_blockers)),
+                'blockers_stored': len(sanitized_blockers),
+                'blockers_truncated': max(total_blockers - len(sanitized_blockers), 0)
             }
         
         return sanitized
