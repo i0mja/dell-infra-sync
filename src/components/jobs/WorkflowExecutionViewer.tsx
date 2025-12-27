@@ -485,31 +485,68 @@ export const WorkflowExecutionViewer = ({
     return Array.from(failedHostMap.values());
   }, [effectiveJobDetails, steps]);
 
+  // Helper to extract blockers from source object
+  const extractBlockersFromSource = (source: any, serverId: string): HostBlockerAnalysis | null => {
+    if (!source?.blockers?.length) return null;
+    return {
+      host_id: source.host_id || source.vcenter_host_id || serverId,
+      host_name: source.host_name || serverId,
+      server_id: source.server_id || serverId,
+      can_enter_maintenance: source.can_enter_maintenance ?? false,
+      blockers: source.blockers ?? [],
+      warnings: source.warnings ?? [],
+      total_powered_on_vms: source.total_powered_on_vms ?? 0,
+      migratable_vms: source.migratable_vms ?? 0,
+      blocked_vms: source.blocked_vms ?? source.blockers?.length ?? 0,
+      estimated_evacuation_time: source.estimated_evacuation_time ?? 0
+    };
+  };
+
+  // Find paused step with blocker data (fallback when job status update failed)
+  const pausedBlockerStep = useMemo(() => {
+    return steps.find(s => 
+      s.step_name?.includes('blocker scan') && 
+      (s.step_status === 'paused' || s.step_status === 'running') &&
+      s.step_details?.awaiting_resolution
+    );
+  }, [steps]);
+
+  // Check if step has been running too long (potential stuck state)
+  const isStaleRunningStep = (step: WorkflowStep): boolean => {
+    if (step.step_status !== 'running' || !step.step_started_at) return false;
+    const runningFor = Date.now() - new Date(step.step_started_at).getTime();
+    return runningFor > 30 * 60 * 1000; // 30 minutes
+  };
+
+  const staleRunningStep = useMemo(() => {
+    return steps.find(s => isStaleRunningStep(s));
+  }, [steps]);
+
   const workflowBlockers = useMemo(() => {
     const blockers: Record<string, HostBlockerAnalysis> = {};
 
-    // NEW: Check current_blockers from Phase 1.5 blocker scan (when job is paused awaiting resolution)
+    // Priority 1: Check current_blockers from job.details (when job is paused awaiting resolution)
     const currentBlockers = effectiveJobDetails?.current_blockers;
     if (currentBlockers && typeof currentBlockers === 'object') {
       Object.entries(currentBlockers).forEach(([serverId, analysis]: [string, any]) => {
-        if (analysis?.blockers?.length > 0) {
-          blockers[serverId] = {
-            host_id: analysis.host_id || analysis.vcenter_host_id || serverId,
-            host_name: analysis.host_name || serverId,
-            server_id: analysis.server_id || serverId,
-            can_enter_maintenance: analysis.can_enter_maintenance ?? false,
-            blockers: analysis.blockers ?? [],
-            warnings: analysis.warnings ?? [],
-            total_powered_on_vms: analysis.total_powered_on_vms ?? 0,
-            migratable_vms: analysis.migratable_vms ?? 0,
-            blocked_vms: analysis.blocked_vms ?? analysis.blockers?.length ?? 0,
-            estimated_evacuation_time: analysis.estimated_evacuation_time ?? 0
-          };
-        }
+        const extracted = extractBlockersFromSource(analysis, serverId);
+        if (extracted) blockers[serverId] = extracted;
       });
     }
 
-    // Also check host_results from workflow_results (for per-host failures)
+    // Priority 2: Check workflow step details for blockers (FALLBACK when job update failed)
+    // This is crucial for recovery when update_job_status fails
+    if (Object.keys(blockers).length === 0 && pausedBlockerStep?.step_details?.current_blockers) {
+      const stepBlockers = pausedBlockerStep.step_details.current_blockers;
+      if (stepBlockers && typeof stepBlockers === 'object') {
+        Object.entries(stepBlockers).forEach(([serverId, analysis]: [string, any]) => {
+          const extracted = extractBlockersFromSource(analysis, serverId);
+          if (extracted) blockers[serverId] = extracted;
+        });
+      }
+    }
+
+    // Priority 3: Check host_results from workflow_results (for per-host failures)
     const hostResults = effectiveJobDetails?.workflow_results?.host_results ?? [];
     hostResults.forEach((host: any, index: number) => {
       const maintenanceBlockers = host?.maintenance_blockers;
@@ -520,22 +557,16 @@ export const WorkflowExecutionViewer = ({
         host?.server_id ||
         host?.host_name ||
         `host-${index}`;
-      // Don't overwrite current_blockers data
+      // Don't overwrite existing blocker data
       if (blockers[hostId]) return;
-      blockers[hostId] = {
-        host_id: hostId,
-        host_name: maintenanceBlockers.host_name || host?.host_name || 'Unknown Host',
-        can_enter_maintenance: maintenanceBlockers.can_enter_maintenance ?? false,
-        blockers: maintenanceBlockers.blockers ?? [],
-        warnings: maintenanceBlockers.warnings ?? [],
-        total_powered_on_vms: maintenanceBlockers.total_powered_on_vms ?? 0,
-        migratable_vms: maintenanceBlockers.migratable_vms ?? 0,
-        blocked_vms:
-          maintenanceBlockers.blocked_vms ?? maintenanceBlockers.blockers?.length ?? 0,
-        estimated_evacuation_time: maintenanceBlockers.estimated_evacuation_time ?? 0
-      };
+      const extracted = extractBlockersFromSource(maintenanceBlockers, hostId);
+      if (extracted) {
+        extracted.host_name = maintenanceBlockers.host_name || host?.host_name || 'Unknown Host';
+        blockers[hostId] = extracted;
+      }
     });
 
+    // Priority 4: Check failed steps for blockers
     steps
       .filter((step) => step.step_status === 'failed')
       .forEach((step, index) => {
@@ -549,22 +580,15 @@ export const WorkflowExecutionViewer = ({
           `step-host-${index}`;
         if (blockers[hostId]) return;
         const inferredHostName = step.step_name?.split(':').slice(1).join(':').trim();
-        blockers[hostId] = {
-          host_id: hostId,
-          host_name: maintenanceBlockers.host_name || inferredHostName || 'Unknown Host',
-          can_enter_maintenance: maintenanceBlockers.can_enter_maintenance ?? false,
-          blockers: maintenanceBlockers.blockers ?? [],
-          warnings: maintenanceBlockers.warnings ?? [],
-          total_powered_on_vms: maintenanceBlockers.total_powered_on_vms ?? 0,
-          migratable_vms: maintenanceBlockers.migratable_vms ?? 0,
-          blocked_vms:
-            maintenanceBlockers.blocked_vms ?? maintenanceBlockers.blockers?.length ?? 0,
-          estimated_evacuation_time: maintenanceBlockers.estimated_evacuation_time ?? 0
-        };
+        const extracted = extractBlockersFromSource(maintenanceBlockers, hostId);
+        if (extracted) {
+          extracted.host_name = maintenanceBlockers.host_name || inferredHostName || 'Unknown Host';
+          blockers[hostId] = extracted;
+        }
       });
 
     return blockers;
-  }, [effectiveJobDetails, steps]);
+  }, [effectiveJobDetails, steps, pausedBlockerStep]);
 
   const workflowBlockerDetails = useMemo(() => {
     return Object.values(workflowBlockers).flatMap((analysis) =>
@@ -576,29 +600,48 @@ export const WorkflowExecutionViewer = ({
   }, [workflowBlockers]);
 
   // Auto-show blocker wizard when job pauses awaiting resolution
+  // Also handles fallback case where job status update failed but step has blockers
   const hasShownWizardToast = useRef(false);
   useEffect(() => {
-    if (
-      overallStatus === 'paused' && 
-      effectiveJobDetails?.awaiting_blocker_resolution && 
-      Object.keys(workflowBlockers).length > 0 &&
-      !hasShownWizardToast.current
-    ) {
+    const jobAwaitingResolution = effectiveJobDetails?.awaiting_blocker_resolution;
+    const stepAwaitingResolution = pausedBlockerStep?.step_details?.awaiting_resolution;
+    const hasBlockers = Object.keys(workflowBlockers).length > 0;
+    
+    // Trigger wizard for:
+    // 1. Job explicitly paused with awaiting_blocker_resolution flag
+    // 2. Workflow step is paused/running with awaiting_resolution AND has blockers (fallback case)
+    const shouldShowWizard = hasBlockers && (
+      (overallStatus === 'paused' && jobAwaitingResolution) ||
+      (stepAwaitingResolution && hasBlockers)
+    );
+    
+    if (shouldShowWizard && !hasShownWizardToast.current) {
       hasShownWizardToast.current = true;
-      toast.warning('Maintenance blockers detected - resolution required', {
-        description: `${Object.keys(workflowBlockers).length} host(s) have VMs that cannot be migrated`,
-        duration: 15000,
-        action: {
-          label: 'Resolve Now',
-          onClick: () => setShowBlockerWizard(true)
+      
+      // Check if this is a fallback recovery situation
+      const isRecoveryMode = !jobAwaitingResolution && stepAwaitingResolution;
+      
+      toast.warning(
+        isRecoveryMode 
+          ? 'Blockers detected in workflow step - resolution available' 
+          : 'Maintenance blockers detected - resolution required',
+        {
+          description: `${Object.keys(workflowBlockers).length} host(s) have VMs that cannot be migrated`,
+          duration: 15000,
+          action: {
+            label: 'Resolve Now',
+            onClick: () => setShowBlockerWizard(true)
+          }
         }
-      });
+      );
       setTimeout(() => setShowBlockerWizard(true), 500);
     }
-    if (!effectiveJobDetails?.awaiting_blocker_resolution) {
+    
+    // Reset toast flag when resolution is cleared
+    if (!jobAwaitingResolution && !stepAwaitingResolution) {
       hasShownWizardToast.current = false;
     }
-  }, [overallStatus, effectiveJobDetails?.awaiting_blocker_resolution, workflowBlockers]);
+  }, [overallStatus, effectiveJobDetails?.awaiting_blocker_resolution, pausedBlockerStep, workflowBlockers]);
 
   return (
     <Card>
@@ -762,6 +805,73 @@ export const WorkflowExecutionViewer = ({
           />
         </div>
 
+        {/* Stale Running Step Warning - Show when a step has been running too long */}
+        {staleRunningStep && overallStatus === 'running' && (
+          <>
+            <Separator />
+            <Alert className="border-yellow-500/50 bg-yellow-500/10">
+              <Clock className="h-4 w-4 text-yellow-500" />
+              <AlertDescription className="mt-2">
+                <div className="font-semibold mb-1 text-yellow-600">Step Running Longer Than Expected</div>
+                <div className="text-xs text-muted-foreground mb-2">
+                  "{staleRunningStep.step_name}" has been running for over 30 minutes. 
+                  There may be blockers awaiting resolution.
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {Object.keys(workflowBlockers).length > 0 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setShowBlockerWizard(true)}
+                      className="border-yellow-500/50 text-yellow-600 hover:bg-yellow-500/10"
+                    >
+                      <RefreshCw className="h-3 w-3 mr-1" />
+                      Check for Blockers ({Object.keys(workflowBlockers).length} found)
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={fetchJobData}
+                    className="border-muted"
+                  >
+                    <RefreshCw className="h-3 w-3 mr-1" />
+                    Refresh Status
+                  </Button>
+                </div>
+              </AlertDescription>
+            </Alert>
+          </>
+        )}
+
+        {/* Fallback Blocker Recovery - When job status update failed but step has blockers */}
+        {pausedBlockerStep?.step_details?.awaiting_resolution && 
+         !effectiveJobDetails?.awaiting_blocker_resolution && 
+         Object.keys(workflowBlockers).length > 0 &&
+         overallStatus === 'running' && (
+          <>
+            <Separator />
+            <Alert className="border-orange-500/50 bg-orange-500/10">
+              <PauseCircle className="h-4 w-4 text-orange-500" />
+              <AlertDescription className="mt-2">
+                <div className="font-semibold mb-1 text-orange-600">Blockers Detected in Workflow</div>
+                <div className="text-xs text-muted-foreground mb-2">
+                  The comprehensive blocker scan found {Object.keys(workflowBlockers).length} host(s) with blockers.
+                  You can resolve these now to continue the workflow.
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => setShowBlockerWizard(true)}
+                  className="bg-orange-500 hover:bg-orange-600"
+                >
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Open Resolution Wizard
+                </Button>
+              </AlertDescription>
+            </Alert>
+          </>
+        )}
+
         {/* Host-Specific Errors from workflow results or steps */}
         {failedHosts.length > 0 && (
           <>
@@ -836,7 +946,8 @@ export const WorkflowExecutionViewer = ({
                 </div>
                 
                 {/* Show blocker resolution wizard button if awaiting resolution */}
-                {effectiveJobDetails?.awaiting_blocker_resolution && (
+                {(effectiveJobDetails?.awaiting_blocker_resolution || 
+                  (pausedBlockerStep?.step_details?.awaiting_resolution && Object.keys(workflowBlockers).length > 0)) && (
                   <div className="flex flex-wrap gap-2 mb-3">
                     <Button
                       size="sm"
@@ -846,6 +957,11 @@ export const WorkflowExecutionViewer = ({
                       <RefreshCw className="h-4 w-4 mr-2" />
                       Open Resolution Wizard
                     </Button>
+                    {effectiveJobDetails?.fallback_update && (
+                      <Badge variant="outline" className="text-xs text-muted-foreground">
+                        Recovery mode - blockers in workflow step
+                      </Badge>
+                    )}
                   </div>
                 )}
                 

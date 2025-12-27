@@ -407,6 +407,11 @@ class ClusterHandler(BaseHandler):
                 self.log(f"")
                 self.log(f"  ⚠ Maintenance blockers detected - pausing for resolution")
                 
+                # Sanitize blockers for JSON storage
+                sanitized_blockers = self._sanitize_blockers_for_storage(all_current_blockers)
+                
+                # IMPORTANT: Store blockers in workflow step details as backup
+                # This ensures UI can recover even if job status update fails
                 self._log_workflow_step(
                     job['id'], 'rolling_cluster_update',
                     step_number=workflow_step_counter,
@@ -416,16 +421,15 @@ class ClusterHandler(BaseHandler):
                         'hosts_with_blockers': len(all_current_blockers),
                         'total_critical_blockers': total_critical_blockers,
                         'auto_power_off_hosts': len(vms_for_auto_power_off),
-                        'awaiting_resolution': True
+                        'awaiting_resolution': True,
+                        'current_blockers': sanitized_blockers,  # Store blockers here as backup
+                        'blocker_analysis_at': utc_now_iso()
                     },
                     step_completed_at=utc_now_iso()
                 )
                 
-                # Sanitize blockers for JSON storage
-                sanitized_blockers = self._sanitize_blockers_for_storage(all_current_blockers)
-                
                 # Pause job for wizard resolution
-                self.update_job_status(job['id'], 'paused', details={
+                update_success = self.update_job_status(job['id'], 'paused', details={
                     'pause_reason': f'Maintenance blockers detected on {len(all_current_blockers)} host(s) - wizard resolution required',
                     'awaiting_blocker_resolution': True,
                     'current_blockers': sanitized_blockers,
@@ -434,6 +438,10 @@ class ClusterHandler(BaseHandler):
                     'hosts_with_blockers': len(all_current_blockers),
                     'total_critical_blockers': total_critical_blockers
                 })
+                
+                if not update_success:
+                    self.log("⚠️ Warning: Job status update to 'paused' failed - blockers stored in workflow step", "WARN")
+                    self.log("   → User can still resolve blockers via workflow step details", "INFO")
                 
                 self.log("")
                 self.log("⏸️ Job paused - awaiting blocker resolution from user")
