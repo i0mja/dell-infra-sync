@@ -13,17 +13,14 @@ import {
   ChevronRight, 
   Check, 
   AlertTriangle, 
-  XCircle, 
   Server, 
   Usb, 
   HardDrive,
   Cpu,
-  MonitorPlay,
   ShieldAlert,
   Loader2,
   GripVertical,
   Power,
-  SkipForward,
   CheckCircle
 } from "lucide-react";
 import { 
@@ -730,7 +727,7 @@ export function BlockerResolutionWizard({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh]">
+      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {activeSteps[currentStepIndex]?.icon}
@@ -741,10 +738,12 @@ export function BlockerResolutionWizard({
           </DialogDescription>
         </DialogHeader>
 
-        <Progress value={progressPercent} className="h-2" />
+        <div className="flex-1 overflow-y-auto space-y-4">
+          <Progress value={progressPercent} className="h-2" />
 
-        <div className="min-h-[400px]">
-          {renderStepContent()}
+          <div className="min-h-[400px]">
+            {renderStepContent()}
+          </div>
         </div>
 
         <DialogFooter className="flex justify-between">
