@@ -727,52 +727,54 @@ export function BlockerResolutionWizard({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            {activeSteps[currentStepIndex]?.icon}
-            Step {currentStepIndex + 1} of {activeSteps.length}: {activeSteps[currentStepIndex]?.title}
-          </DialogTitle>
-          <DialogDescription>
-            {activeSteps[currentStepIndex]?.description}
-          </DialogDescription>
-        </DialogHeader>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden p-0">
+        <div className="flex h-full flex-col gap-3 p-4">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {activeSteps[currentStepIndex]?.icon}
+              Step {currentStepIndex + 1} of {activeSteps.length}: {activeSteps[currentStepIndex]?.title}
+            </DialogTitle>
+            <DialogDescription>
+              {activeSteps[currentStepIndex]?.description}
+            </DialogDescription>
+          </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto space-y-4">
-          <Progress value={progressPercent} className="h-2" />
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-4">
+            <Progress value={progressPercent} className="h-2" />
 
-          <div className="min-h-[400px]">
-            {renderStepContent()}
+            <div className="min-h-[400px]">
+              {renderStepContent()}
+            </div>
           </div>
-        </div>
 
-        <DialogFooter className="flex justify-between">
-          <Button
-            variant="outline"
-            onClick={handleBack}
-            disabled={currentStepIndex === 0}
-          >
-            <ChevronLeft className="h-4 w-4 mr-1" />
-            Back
-          </Button>
-
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={() => onOpenChange(false)}>
-              Cancel
+          <DialogFooter className="flex justify-between">
+            <Button
+              variant="outline"
+              onClick={handleBack}
+              disabled={currentStepIndex === 0}
+            >
+              <ChevronLeft className="h-4 w-4 mr-1" />
+              Back
             </Button>
-            {currentStepIndex === activeSteps.length - 1 ? (
-              <Button onClick={handleComplete}>
-                <Check className="h-4 w-4 mr-1" />
-                Confirm & Proceed
+
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={() => onOpenChange(false)}>
+                Cancel
               </Button>
-            ) : (
-              <Button onClick={handleNext} disabled={scanning && currentStepIndex === 0}>
-                Next
-                <ChevronRight className="h-4 w-4 ml-1" />
-              </Button>
-            )}
-          </div>
-        </DialogFooter>
+              {currentStepIndex === activeSteps.length - 1 ? (
+                <Button onClick={handleComplete}>
+                  <Check className="h-4 w-4 mr-1" />
+                  Confirm & Proceed
+                </Button>
+              ) : (
+                <Button onClick={handleNext} disabled={scanning && currentStepIndex === 0}>
+                  Next
+                  <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              )}
+            </div>
+          </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );
