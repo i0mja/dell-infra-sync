@@ -252,6 +252,13 @@ class ClusterHandler(BaseHandler):
                     'remediation': _truncate(b.get('remediation'), FIELD_LIMITS['remediation']),
                     'auto_fixable': bool(b.get('auto_fixable', False))
                 })
+
+            warnings = []
+            raw_warnings = analysis.get('warnings', [])
+            for w in raw_warnings[:MAX_WARNINGS_PER_HOST]:
+                truncated_warning = _truncate(w, FIELD_LIMITS['warning'])
+                if truncated_warning:
+                    warnings.append(truncated_warning)
             
             sanitized[str(server_id)] = {
                 'host_id': str(analysis.get('host_id', '')) if analysis.get('host_id') else None,
@@ -260,7 +267,7 @@ class ClusterHandler(BaseHandler):
                 'vcenter_host_id': str(analysis.get('vcenter_host_id', '')) if analysis.get('vcenter_host_id') else None,
                 'can_enter_maintenance': bool(analysis.get('can_enter_maintenance', False)),
                 'blockers': sanitized_blockers,
-                'warnings': [str(w) for w in analysis.get('warnings', []) if w],
+                'warnings': warnings,
                 'total_powered_on_vms': int(analysis.get('total_powered_on_vms', 0)),
                 'migratable_vms': int(analysis.get('migratable_vms', 0)),
                 'blocked_vms': int(analysis.get('blocked_vms', total_blockers))
