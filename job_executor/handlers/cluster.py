@@ -8,6 +8,16 @@ from urllib.parse import quote
 from .base import BaseHandler
 from job_executor.utils import utc_now_iso
 
+MAX_BLOCKERS_PER_HOST = 50
+MAX_WARNINGS_PER_HOST = 20
+BLOCKER_FIELD_LIMITS = {
+    'vm_name': 255,
+    'reason': 255,
+    'details': 1024,
+    'remediation': 1024,
+    'warning': 512
+}
+
 
 class ClusterHandler(BaseHandler):
     """Handles cluster safety checks and update workflows"""
