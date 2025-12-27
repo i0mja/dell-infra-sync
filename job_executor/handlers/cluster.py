@@ -247,9 +247,9 @@ class ClusterHandler(BaseHandler):
             if not isinstance(analysis, dict):
                 continue
             
-            sanitized_blockers = []
             raw_blockers = analysis.get('blockers', [])
             total_blockers = len(raw_blockers)
+            sanitized_blockers = []
             for b in raw_blockers[:MAX_BLOCKERS_PER_HOST]:
                 if not isinstance(b, dict):
                     continue
@@ -263,6 +263,7 @@ class ClusterHandler(BaseHandler):
                     'auto_fixable': bool(b.get('auto_fixable', False))
                 })
 
+            blockers_truncated = max(total_blockers - len(sanitized_blockers), 0)
             warnings = []
             raw_warnings = analysis.get('warnings', [])
             for w in raw_warnings[:MAX_WARNINGS_PER_HOST]:
@@ -277,10 +278,12 @@ class ClusterHandler(BaseHandler):
                 'vcenter_host_id': str(analysis.get('vcenter_host_id', '')) if analysis.get('vcenter_host_id') else None,
                 'can_enter_maintenance': bool(analysis.get('can_enter_maintenance', False)),
                 'blockers': sanitized_blockers,
+                'total_blockers': total_blockers,
                 'warnings': warnings,
                 'total_powered_on_vms': int(analysis.get('total_powered_on_vms', 0)),
                 'migratable_vms': int(analysis.get('migratable_vms', 0)),
-                'blocked_vms': int(analysis.get('blocked_vms', total_blockers))
+                'blocked_vms': int(analysis.get('blocked_vms', total_blockers)),
+                'blockers_truncated': blockers_truncated
             }
         
         return sanitized
