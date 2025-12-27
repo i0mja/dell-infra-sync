@@ -224,6 +224,14 @@ class ClusterHandler(BaseHandler):
         Returns:
             Sanitized dict safe for JSON storage
         """
+        MAX_BLOCKERS_PER_HOST = 50
+        FIELD_LIMITS = {
+            'vm_name': 255,
+            'reason': 255,
+            'details': 2000,
+            'remediation': 2000
+        }
+
         def _truncate(value: Any, limit: int) -> Optional[str]:
             if value is None:
                 return None
@@ -246,19 +254,19 @@ class ClusterHandler(BaseHandler):
                 if not isinstance(b, dict):
                     continue
                 sanitized_blockers.append({
-                    'vm_name': _truncate(b.get('vm_name'), BLOCKER_FIELD_LIMITS['vm_name']),
+                    'vm_name': _truncate(b.get('vm_name'), FIELD_LIMITS['vm_name']),
                     'vm_id': str(b.get('vm_id', '')) if b.get('vm_id') else None,
-                    'reason': _truncate(b.get('reason'), BLOCKER_FIELD_LIMITS['reason']),
+                    'reason': _truncate(b.get('reason'), FIELD_LIMITS['reason']),
                     'severity': str(b.get('severity', 'warning')) if b.get('severity') else 'warning',
-                    'details': _truncate(b.get('details'), BLOCKER_FIELD_LIMITS['details']),
-                    'remediation': _truncate(b.get('remediation'), BLOCKER_FIELD_LIMITS['remediation']),
+                    'details': _truncate(b.get('details'), FIELD_LIMITS['details']),
+                    'remediation': _truncate(b.get('remediation'), FIELD_LIMITS['remediation']),
                     'auto_fixable': bool(b.get('auto_fixable', False))
                 })
 
             warnings = []
             raw_warnings = analysis.get('warnings', [])
             for w in raw_warnings[:MAX_WARNINGS_PER_HOST]:
-                truncated_warning = _truncate(w, BLOCKER_FIELD_LIMITS['warning'])
+                truncated_warning = _truncate(w, FIELD_LIMITS['warning'])
                 if truncated_warning:
                     warnings.append(truncated_warning)
             
@@ -272,9 +280,7 @@ class ClusterHandler(BaseHandler):
                 'warnings': warnings,
                 'total_powered_on_vms': int(analysis.get('total_powered_on_vms', 0)),
                 'migratable_vms': int(analysis.get('migratable_vms', 0)),
-                'blocked_vms': int(analysis.get('blocked_vms', total_blockers)),
-                'blockers_stored': len(sanitized_blockers),
-                'blockers_truncated': max(total_blockers - len(sanitized_blockers), 0)
+                'blocked_vms': int(analysis.get('blocked_vms', total_blockers))
             }
         
         return sanitized
