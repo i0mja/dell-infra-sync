@@ -224,9 +224,13 @@ class ClusterHandler(BaseHandler):
         Returns:
             Sanitized dict safe for JSON storage
         """
-        blocker_limit = MAX_BLOCKERS_PER_HOST if isinstance(MAX_BLOCKERS_PER_HOST, int) and MAX_BLOCKERS_PER_HOST > 0 else 50
-        warning_limit = MAX_WARNINGS_PER_HOST if isinstance(MAX_WARNINGS_PER_HOST, int) and MAX_WARNINGS_PER_HOST > 0 else 20
-        field_limits = BLOCKER_FIELD_LIMITS or {}
+        MAX_BLOCKERS_PER_HOST = 50
+        FIELD_LIMITS = {
+            'vm_name': 255,
+            'reason': 255,
+            'details': 2000,
+            'remediation': 2000
+        }
 
         def _truncate(value: Any, limit: int) -> Optional[str]:
             if value is None:
@@ -234,84 +238,50 @@ class ClusterHandler(BaseHandler):
             text = str(value)
             if text == '':
                 return None
-            if limit and len(text) > limit:
+            if len(text) > limit:
                 return text[:limit]
             return text
-
-        def _take_entries(raw: Any, limit: int) -> List[Any]:
-            if raw is None:
-                return []
-            if isinstance(raw, (list, tuple)):
-                return list(raw)[:limit]
-            if isinstance(raw, set):
-                return list(raw)[:limit]
-            if isinstance(raw, dict):
-                return list(raw.values())[:limit]
-            return [raw][:limit]
 
         sanitized = {}
         for server_id, analysis in blockers.items():
             if not isinstance(analysis, dict):
                 continue
+            
+            sanitized_blockers = []
+            raw_blockers = analysis.get('blockers', [])
+            total_blockers = len(raw_blockers)
+            for b in raw_blockers[:MAX_BLOCKERS_PER_HOST]:
+                if not isinstance(b, dict):
+                    continue
+                sanitized_blockers.append({
+                    'vm_name': _truncate(b.get('vm_name'), FIELD_LIMITS['vm_name']),
+                    'vm_id': str(b.get('vm_id', '')) if b.get('vm_id') else None,
+                    'reason': _truncate(b.get('reason'), FIELD_LIMITS['reason']),
+                    'severity': str(b.get('severity', 'warning')) if b.get('severity') else 'warning',
+                    'details': _truncate(b.get('details'), FIELD_LIMITS['details']),
+                    'remediation': _truncate(b.get('remediation'), FIELD_LIMITS['remediation']),
+                    'auto_fixable': bool(b.get('auto_fixable', False))
+                })
 
-            try:
-                sanitized_blockers = []
-                raw_blockers = _take_entries(analysis.get('blockers', []), blocker_limit)
-                total_blockers = len(raw_blockers)
-                for b in raw_blockers:
-                    if not isinstance(b, dict):
-                        sanitized_blockers.append({
-                            'details': _truncate(b, field_limits.get('details', 1024)),
-                            'auto_fixable': False
-                        })
-                        continue
-                    sanitized_blockers.append({
-                        'vm_name': _truncate(b.get('vm_name'), field_limits.get('vm_name', 255)),
-                        'vm_id': str(b.get('vm_id', '')) if b.get('vm_id') else None,
-                        'reason': _truncate(b.get('reason'), field_limits.get('reason', 255)),
-                        'severity': str(b.get('severity', 'warning')) if b.get('severity') else 'warning',
-                        'details': _truncate(b.get('details'), field_limits.get('details', 1024)),
-                        'remediation': _truncate(b.get('remediation'), field_limits.get('remediation', 1024)),
-                        'auto_fixable': bool(b.get('auto_fixable', False))
-                    })
-
-                warnings = []
-                raw_warnings = _take_entries(analysis.get('warnings', []), warning_limit)
-                for w in raw_warnings:
-                    truncated_warning = _truncate(w, field_limits.get('warning', 512))
-                    if truncated_warning is not None:
-                        warnings.append(truncated_warning)
-                
-                sanitized[str(server_id)] = {
-                    'host_id': str(analysis.get('host_id', '')) if analysis.get('host_id') else None,
-                    'host_name': str(analysis.get('host_name', '')) if analysis.get('host_name') else None,
-                    'server_id': str(analysis.get('server_id', '')) if analysis.get('server_id') else str(server_id),
-                    'vcenter_host_id': str(analysis.get('vcenter_host_id', '')) if analysis.get('vcenter_host_id') else None,
-                    'can_enter_maintenance': bool(analysis.get('can_enter_maintenance', False)),
-                    'blockers': sanitized_blockers,
-                    'warnings': warnings,
-                    'total_powered_on_vms': int(analysis.get('total_powered_on_vms', 0)),
-                    'migratable_vms': int(analysis.get('migratable_vms', 0)),
-                    'blocked_vms': int(analysis.get('blocked_vms', total_blockers)),
-                    'blockers_stored': len(sanitized_blockers),
-                    'blockers_truncated': max(total_blockers - len(sanitized_blockers), 0)
-                }
-            except Exception as e:  # pragma: no cover - safety net
-                self.log(f"Warning: failed to sanitize blockers for {server_id}: {e}", "WARN")
-                sanitized[str(server_id)] = {
-                    'host_id': str(analysis.get('host_id', '')) if analysis.get('host_id') else None,
-                    'host_name': str(analysis.get('host_name', '')) if analysis.get('host_name') else None,
-                    'server_id': str(analysis.get('server_id', '')) if analysis.get('server_id') else str(server_id),
-                    'vcenter_host_id': str(analysis.get('vcenter_host_id', '')) if analysis.get('vcenter_host_id') else None,
-                    'can_enter_maintenance': bool(analysis.get('can_enter_maintenance', False)),
-                    'blockers': [],
-                    'warnings': [_truncate(f"sanitize_error: {e}", field_limits.get('warning', 512))],
-                    'total_powered_on_vms': int(analysis.get('total_powered_on_vms', 0)),
-                    'migratable_vms': int(analysis.get('migratable_vms', 0)),
-                    'blocked_vms': 0,
-                    'blockers_stored': 0,
-                    'blockers_truncated': 0
-                }
+            warnings = []
+            raw_warnings = analysis.get('warnings', [])
+            for w in raw_warnings[:MAX_WARNINGS_PER_HOST]:
+                truncated_warning = _truncate(w, FIELD_LIMITS['warning'])
+                if truncated_warning:
+                    warnings.append(truncated_warning)
+            
+            sanitized[str(server_id)] = {
+                'host_id': str(analysis.get('host_id', '')) if analysis.get('host_id') else None,
+                'host_name': str(analysis.get('host_name', '')) if analysis.get('host_name') else None,
+                'server_id': str(analysis.get('server_id', '')) if analysis.get('server_id') else str(server_id),
+                'vcenter_host_id': str(analysis.get('vcenter_host_id', '')) if analysis.get('vcenter_host_id') else None,
+                'can_enter_maintenance': bool(analysis.get('can_enter_maintenance', False)),
+                'blockers': sanitized_blockers,
+                'warnings': warnings,
+                'total_powered_on_vms': int(analysis.get('total_powered_on_vms', 0)),
+                'migratable_vms': int(analysis.get('migratable_vms', 0)),
+                'blocked_vms': int(analysis.get('blocked_vms', total_blockers))
+            }
         
         return sanitized
     
