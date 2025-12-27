@@ -753,8 +753,22 @@ export const WorkflowExecutionViewer = ({
                   </div>
                 )}
                 
+                {/* Blocker Scan Progress */}
+                {currentOperation.blocker_scan_total_hosts && currentOperation.blocker_scan_hosts_scanned !== undefined && (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>Blocker Scan</span>
+                      <span>{currentOperation.blocker_scan_hosts_scanned}/{currentOperation.blocker_scan_total_hosts} hosts</span>
+                    </div>
+                    <Progress 
+                      value={currentOperation.blocker_scan_progress_pct || ((currentOperation.blocker_scan_hosts_scanned / currentOperation.blocker_scan_total_hosts) * 100)} 
+                      className="h-1.5" 
+                    />
+                  </div>
+                )}
+                
                 {/* Current Host */}
-                {currentOperation.current_host && (
+                {currentOperation.current_host && !currentOperation.blocker_scan_total_hosts && (
                   <div className="text-xs">
                     <span className="text-muted-foreground">Current Host: </span>
                     <span className="font-medium">{currentOperation.current_host}</span>
@@ -1220,6 +1234,40 @@ export const WorkflowExecutionViewer = ({
                                 isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />
                               )}
                             </div>
+                            
+                            {/* Inline progress for running steps with progress data */}
+                            {step.step_status === 'running' && step.step_details?.hosts_total && (
+                              <div className="mt-2 space-y-1.5">
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="text-muted-foreground">
+                                    {step.step_details.current_host 
+                                      ? `Scanning: ${step.step_details.current_host}`
+                                      : 'Initializing scan...'}
+                                  </span>
+                                  <span className="font-medium">
+                                    {step.step_details.hosts_scanned || 0}/{step.step_details.hosts_total} hosts
+                                  </span>
+                                </div>
+                                <Progress 
+                                  value={step.step_details.progress_pct || 0} 
+                                  className="h-1.5" 
+                                />
+                                {step.step_details.hosts_with_blockers > 0 && (
+                                  <div className="flex items-center gap-2 text-xs text-orange-600">
+                                    <span>⚠ {step.step_details.hosts_with_blockers} host(s) with blockers</span>
+                                    {step.step_details.total_critical_blockers > 0 && (
+                                      <span className="text-red-600">({step.step_details.total_critical_blockers} critical)</span>
+                                    )}
+                                  </div>
+                                )}
+                                {step.step_details.last_error && (
+                                  <div className="text-xs text-red-600 truncate">
+                                    Last error: {step.step_details.last_error}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            
                             <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
                               <span>
                                 Duration: {formatDuration(step.step_started_at, step.step_completed_at, step.step_status)}
