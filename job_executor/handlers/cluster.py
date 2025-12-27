@@ -275,29 +275,102 @@ class ClusterHandler(BaseHandler):
         self.log("PHASE 1.5: COMPREHENSIVE BLOCKER SCAN (POST-HA)")
         self.log("=" * 80)
         
-        # Log workflow step for this phase
+        # Update job details with current step for UI display
+        total_hosts = len(eligible_hosts)
+        self.update_job_details_field(job['id'], {
+            'current_step': f'Scanning {total_hosts} hosts for maintenance blockers',
+            'blocker_scan_phase': 'starting',
+            'blocker_scan_total_hosts': total_hosts,
+            'blocker_scan_hosts_scanned': 0
+        })
+        
+        # Log workflow step for this phase with initial progress
         self._log_workflow_step(
             job['id'], 'rolling_cluster_update',
             step_number=workflow_step_counter,
             step_name="Comprehensive blocker scan",
             status='running',
-            step_started_at=utc_now_iso()
+            step_started_at=utc_now_iso(),
+            step_details={
+                'hosts_total': total_hosts,
+                'hosts_scanned': 0,
+                'current_host': None,
+                'hosts_with_blockers': 0,
+                'total_critical_blockers': 0
+            }
         )
+        
+        # Stream progress to console
+        self._append_console_log(job['id'], f"Starting comprehensive blocker scan for {total_hosts} hosts...")
         
         all_current_blockers = {}
         total_critical_blockers = 0
         vms_for_auto_power_off = {}  # host_id -> list of VM names
+        hosts_scanned = 0
         
         for host in eligible_hosts:
+            hosts_scanned += 1
+            host_name = host.get('name', 'Unknown')
+            
+            # Update job details with current progress (for Current Operation card)
+            self.update_job_details_field(job['id'], {
+                'current_step': f'Scanning {host_name} ({hosts_scanned}/{total_hosts})',
+                'current_host': host_name,
+                'blocker_scan_hosts_scanned': hosts_scanned,
+                'blocker_scan_progress_pct': int((hosts_scanned / total_hosts) * 100)
+            })
+            
+            # Update workflow step with progress
+            self._log_workflow_step(
+                job['id'], 'rolling_cluster_update',
+                step_number=workflow_step_counter,
+                step_name="Comprehensive blocker scan",
+                status='running',
+                step_details={
+                    'hosts_total': total_hosts,
+                    'hosts_scanned': hosts_scanned,
+                    'current_host': host_name,
+                    'hosts_with_blockers': len(all_current_blockers),
+                    'total_critical_blockers': total_critical_blockers,
+                    'progress_pct': int((hosts_scanned / total_hosts) * 100)
+                }
+            )
+            
+            # Stream progress to console log
+            self._append_console_log(job['id'], f"Scanning host {hosts_scanned}/{total_hosts}: {host_name}...")
+            
             server = self.get_server_by_id(host['server_id'])
             vcenter_host_id = server.get('vcenter_host_id') if server else None
             
             if not vcenter_host_id:
-                self.log(f"  {host['name']}: No vCenter link, skipping blocker check")
+                self.log(f"  {host_name}: No vCenter link, skipping blocker check")
+                self._append_console_log(job['id'], f"  → {host_name}: No vCenter link, skipped")
                 continue
             
-            # Analyze blockers for this host
-            analysis = self.executor.analyze_maintenance_blockers(vcenter_host_id, source_vcenter_id)
+            # Analyze blockers for this host with error handling
+            try:
+                analysis = self.executor.analyze_maintenance_blockers(vcenter_host_id, source_vcenter_id)
+            except Exception as e:
+                error_msg = f"Error analyzing {host_name}: {str(e)}"
+                self.log(f"  {error_msg}", "ERROR")
+                self._append_console_log(job['id'], f"  ⚠ {error_msg}")
+                # Update step with error but continue to other hosts
+                self._log_workflow_step(
+                    job['id'], 'rolling_cluster_update',
+                    step_number=workflow_step_counter,
+                    step_name="Comprehensive blocker scan",
+                    status='running',
+                    step_details={
+                        'hosts_total': total_hosts,
+                        'hosts_scanned': hosts_scanned,
+                        'current_host': host_name,
+                        'hosts_with_blockers': len(all_current_blockers),
+                        'total_critical_blockers': total_critical_blockers,
+                        'progress_pct': int((hosts_scanned / total_hosts) * 100),
+                        'last_error': error_msg
+                    }
+                )
+                continue
             
             if analysis and analysis.get('blockers'):
                 blockers = analysis['blockers']
@@ -306,15 +379,16 @@ class ClusterHandler(BaseHandler):
                 
                 # Inject server_id and host_name for resolution lookup
                 analysis['server_id'] = host['server_id']
-                analysis['host_name'] = host['name']
+                analysis['host_name'] = host_name
                 analysis['vcenter_host_id'] = vcenter_host_id
                 
                 all_current_blockers[host['server_id']] = analysis
-                self.log(f"  {host['name']}: {len(blockers)} blocker(s) ({critical_count} critical)")
+                self.log(f"  {host_name}: {len(blockers)} blocker(s) ({critical_count} critical)")
+                self._append_console_log(job['id'], f"  → {host_name}: {len(blockers)} blocker(s) ({critical_count} critical)")
                 
                 # Check if we have resolutions from wizard
                 host_resolution = None
-                for key in [host['server_id'], vcenter_host_id, host['name']]:
+                for key in [host['server_id'], vcenter_host_id, host_name]:
                     if key and key in resolutions:
                         host_resolution = resolutions[key]
                         break
@@ -330,7 +404,7 @@ class ClusterHandler(BaseHandler):
                     if pattern_matches:
                         vms_for_auto_power_off[host['server_id']] = {
                             'vcenter_host_id': vcenter_host_id,
-                            'host_name': host['name'],
+                            'host_name': host_name,
                             'vm_names': pattern_matches,
                             'matched_patterns': auto_power_off_patterns
                         }
@@ -340,7 +414,8 @@ class ClusterHandler(BaseHandler):
                         if len(pattern_matches) > 3:
                             self.log(f"      ... and {len(pattern_matches) - 3} more")
             else:
-                self.log(f"  {host['name']}: No blockers detected")
+                self.log(f"  {host_name}: No blockers detected")
+                self._append_console_log(job['id'], f"  ✓ {host_name}: No blockers")
         
         # Decide what to do based on blockers found
         if all_current_blockers:
