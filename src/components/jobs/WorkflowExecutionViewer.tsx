@@ -83,8 +83,31 @@ export const WorkflowExecutionViewer = ({
   const consoleWindowRef = useRef<Window | null>(null);
 
   // Use props if provided, otherwise use internal state
-  const effectiveJobStatus = jobStatus || internalJobStatus;
-  const effectiveJobDetails = jobDetails || internalJobDetails;
+  // Prefer real-time updates from Supabase subscriptions over initial props
+  const effectiveJobStatus = internalJobStatus ?? jobStatus;
+  const effectiveJobDetails = internalJobDetails ?? jobDetails;
+
+  const blockerScanStep = useMemo(() => {
+    return steps.find((step) => step.step_name?.toLowerCase().includes('blocker scan'));
+  }, [steps]);
+
+  // Detect a blocker scan that finished scanning all hosts, found blockers, but never moved
+  // to a paused/completed state (stuck in "running").
+  const blockerScanAwaitingResolution = useMemo(() => {
+    if (!blockerScanStep || blockerScanStep.step_status !== 'running') return false;
+    const details = blockerScanStep.step_details || {};
+    const hostsTotal = details.hosts_total ?? details.hostsTotal ?? 0;
+    const hostsScanned = details.hosts_scanned ?? details.hostsScanned ?? 0;
+    const hostsWithBlockers = details.hosts_with_blockers ?? details.hostsWithBlockers ?? 0;
+    const progressPct = details.progress_pct ?? details.progressPct ?? 0;
+
+    return (
+      hostsWithBlockers > 0 &&
+      hostsTotal > 0 &&
+      hostsScanned >= hostsTotal &&
+      progressPct >= 99
+    );
+  }, [blockerScanStep]);
 
   useEffect(() => {
     fetchSteps();
@@ -336,6 +359,7 @@ export const WorkflowExecutionViewer = ({
       return effectiveJobStatus;
     }
     if (effectiveJobStatus === 'paused') return 'paused';
+    if (blockerScanAwaitingResolution) return 'paused';
     if (steps.length === 0) return effectiveJobStatus || 'pending';
     if (steps.some(s => s.step_status === 'failed')) return 'failed';
     if (steps.some(s => s.step_status === 'running')) return 'running';
@@ -345,11 +369,14 @@ export const WorkflowExecutionViewer = ({
 
   const overallStatus = useMemo(
     () => getOverallStatus(),
-    [effectiveJobStatus, steps]
+    [effectiveJobStatus, steps, blockerScanAwaitingResolution]
   );
 
   // Helper to get effective step status - treats running/pending as cancelled if job is cancelled
   const getEffectiveStepStatus = (stepStatus: string) => {
+    if (blockerScanAwaitingResolution && stepStatus === 'running') {
+      return 'paused';
+    }
     if (effectiveJobStatus === 'paused' && ['running', 'pending'].includes(stepStatus)) {
       return 'paused';
     }
@@ -613,12 +640,13 @@ export const WorkflowExecutionViewer = ({
   const hasShownWizardToast = useRef(false);
   useEffect(() => {
     const jobAwaitingResolution = effectiveJobDetails?.awaiting_blocker_resolution;
-    const stepAwaitingResolution = pausedBlockerStep?.step_details?.awaiting_resolution;
+    const stepAwaitingResolution =
+      pausedBlockerStep?.step_details?.awaiting_resolution || blockerScanAwaitingResolution;
     const hasBlockers = Object.keys(workflowBlockers).length > 0;
     
     // Trigger wizard for:
     // 1. Job explicitly paused with awaiting_blocker_resolution flag
-    // 2. Workflow step is paused/running with awaiting_resolution AND has blockers (fallback case)
+    // 2. Workflow step is paused/running with awaiting_resolution OR stuck in running after full scan AND has blockers
     const shouldShowWizard = hasBlockers && (
       (overallStatus === 'paused' && jobAwaitingResolution) ||
       (stepAwaitingResolution && hasBlockers)
@@ -650,7 +678,13 @@ export const WorkflowExecutionViewer = ({
     if (!jobAwaitingResolution && !stepAwaitingResolution) {
       hasShownWizardToast.current = false;
     }
-  }, [overallStatus, effectiveJobDetails?.awaiting_blocker_resolution, pausedBlockerStep, workflowBlockers]);
+  }, [
+    overallStatus,
+    effectiveJobDetails?.awaiting_blocker_resolution,
+    pausedBlockerStep,
+    blockerScanAwaitingResolution,
+    workflowBlockers
+  ]);
 
   return (
     <Card>
@@ -868,7 +902,7 @@ export const WorkflowExecutionViewer = ({
         )}
 
         {/* Fallback Blocker Recovery - When job status update failed but step has blockers */}
-        {pausedBlockerStep?.step_details?.awaiting_resolution && 
+        {(pausedBlockerStep?.step_details?.awaiting_resolution || blockerScanAwaitingResolution) &&
          !effectiveJobDetails?.awaiting_blocker_resolution && 
          Object.keys(workflowBlockers).length > 0 &&
          overallStatus === 'running' && (
