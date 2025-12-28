@@ -16,7 +16,8 @@ import {
   ChevronRight,
   RefreshCw,
   Monitor,
-  ExternalLink
+  ExternalLink,
+  ListCollapse
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -58,6 +59,16 @@ interface WorkflowStep {
   job_id: string;
 }
 
+interface HostSummary {
+  hostName: string;
+  status: string;
+  lastAction: string;
+  duration: string;
+  completedAgo?: string | null;
+  completedCount: number;
+  totalCount: number;
+}
+
 export const WorkflowExecutionViewer = ({ 
   jobId, 
   workflowType,
@@ -72,6 +83,7 @@ export const WorkflowExecutionViewer = ({
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
   const [currentOperation, setCurrentOperation] = useState<any>(null);
   const [showBlockerWizard, setShowBlockerWizard] = useState(false);
+  const [showFullTimeline, setShowFullTimeline] = useState(workflowType !== 'rolling_cluster_update');
   
   // Internal state to track job status/details independently
   const [internalJobStatus, setInternalJobStatus] = useState<string | null>(null);
@@ -374,6 +386,93 @@ export const WorkflowExecutionViewer = ({
     () => getOverallStatus(),
     [effectiveJobStatus, steps, blockerScanAwaitingResolution]
   );
+
+  const formatTotalDuration = (start: string | null, end: string | null) => {
+    if (!start) return '-';
+    const endDate = end ? new Date(end) : new Date();
+    const duration = endDate.getTime() - new Date(start).getTime();
+    if (duration <= 0) return '0s';
+    const minutes = Math.floor(duration / 60000);
+    if (minutes >= 60) {
+      const hours = Math.floor(minutes / 60);
+      const remainingMinutes = minutes % 60;
+      return `${hours}h ${remainingMinutes}m`;
+    }
+    if (minutes > 0) return `${minutes}m`;
+    const seconds = Math.floor(duration / 1000);
+    return `${seconds}s`;
+  };
+
+  const extractHostName = (step: WorkflowStep) => {
+    if (step.step_details?.host_name) return step.step_details.host_name;
+    if (step.step_details?.hostname) return step.step_details.hostname;
+    if (step.host_id) return step.host_id;
+    if (step.server_id) return step.server_id;
+    const namePart = step.step_name?.split(':')[1]?.trim();
+    if (namePart && namePart.includes('.')) return namePart;
+    return null;
+  };
+
+  const hostSummaries = useMemo<HostSummary[]>(() => {
+    if (workflowType !== 'rolling_cluster_update' || steps.length === 0) return [];
+
+    const hostMap: Record<string, WorkflowStep[]> = {};
+
+    steps.forEach((step) => {
+      const hostName = extractHostName(step);
+      if (!hostName) return;
+      if (!hostMap[hostName]) hostMap[hostName] = [];
+      hostMap[hostName].push(step);
+    });
+
+    const statusPriority: Record<string, number> = {
+      running: 0,
+      failed: 1,
+      paused: 2,
+      pending: 3,
+      cancelled: 4,
+      completed: 5,
+      skipped: 6
+    };
+
+    return Object.entries(hostMap)
+      .map(([hostName, hostSteps]) => {
+        const sortedSteps = [...hostSteps].sort((a, b) => a.step_number - b.step_number);
+        const effectiveStatuses = sortedSteps.map((step) => getEffectiveStepStatus(step.step_status));
+
+        let derivedStatus = 'pending';
+        if (effectiveStatuses.includes('failed')) derivedStatus = 'failed';
+        else if (effectiveStatuses.includes('running')) derivedStatus = 'running';
+        else if (effectiveStatuses.includes('paused')) derivedStatus = 'paused';
+        else if (sortedSteps.every((s) => ['completed', 'skipped'].includes(getEffectiveStepStatus(s.step_status)))) {
+          derivedStatus = 'completed';
+        }
+
+        const firstStart = sortedSteps.find((s) => s.step_started_at)?.step_started_at || null;
+        const lastComplete = [...sortedSteps].reverse().find((s) => s.step_completed_at)?.step_completed_at || null;
+        const lastActivity = [...sortedSteps]
+          .reverse()
+          .find((s) => s.step_completed_at || s.step_started_at) || sortedSteps[sortedSteps.length - 1];
+
+        const lastAction = lastActivity?.step_name?.split(':')[0]?.trim() || 'In progress';
+        const completedAgo = lastComplete
+          ? formatDistanceToNow(new Date(lastComplete), { addSuffix: true })
+          : null;
+
+        const completedCount = sortedSteps.filter((s) => ['completed', 'skipped'].includes(getEffectiveStepStatus(s.step_status))).length;
+
+        return {
+          hostName,
+          status: derivedStatus,
+          lastAction,
+          duration: formatTotalDuration(firstStart, lastComplete || (derivedStatus === 'running' ? new Date().toISOString() : null)),
+          completedAgo,
+          completedCount,
+          totalCount: sortedSteps.length
+        };
+      })
+      .sort((a, b) => (statusPriority[a.status] ?? 10) - (statusPriority[b.status] ?? 10));
+  }, [workflowType, steps, overallStatus]);
 
   // Helper to get effective step status - treats running/pending as cancelled if job is cancelled
   const getEffectiveStepStatus = (stepStatus: string) => {
@@ -865,6 +964,56 @@ export const WorkflowExecutionViewer = ({
           />
         </div>
 
+        {workflowType === 'rolling_cluster_update' && hostSummaries.length > 0 && (
+          <>
+            <Separator />
+            <Card className="bg-muted/50 border-dashed">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle className="text-sm">Rolling Update Overview</CardTitle>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowFullTimeline((prev) => !prev)}
+                    className="h-7 text-xs"
+                  >
+                    <ListCollapse className="h-3.5 w-3.5 mr-2" />
+                    {showFullTimeline ? 'Hide full steps' : 'Show full steps'}
+                  </Button>
+                </div>
+                <CardDescription className="text-xs">
+                  Compact host cards replace the long list so you can scan progress and last actions quickly.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {hostSummaries.map((host) => (
+                    <div key={host.hostName} className="p-3 rounded-lg border bg-background shadow-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium text-sm truncate">{host.hostName}</span>
+                        <div className="text-[11px]">{getStatusBadge(host.status)}</div>
+                      </div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        <span className="font-semibold text-foreground">{host.lastAction}</span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
+                        <span>{host.completedCount}/{host.totalCount} steps</span>
+                        <span>Elapsed: {host.duration}</span>
+                        {host.completedAgo && (
+                          <span className="flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            {host.completedAgo}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </>
+        )}
+
         {/* Stale Running Step Warning - Show when a step has been running too long */}
         {staleRunningStep && overallStatus === 'running' && (
           <>
@@ -1309,113 +1458,128 @@ export const WorkflowExecutionViewer = ({
             <div className="h-px flex-1 bg-border" />
           </div>
         )}
-        <div className="space-y-1">
-          {steps.map((step, index) => {
-            const isExpanded = expandedSteps.has(step.id);
-            const hasDetails = step.step_details || step.step_error;
 
-            return (
-              <div key={step.id} className="relative">
-                {/* Connecting line */}
-                {index < steps.length - 1 && (
-                  <div className="absolute left-[18px] top-10 bottom-[-16px] w-0.5 bg-border" />
-                )}
+        {workflowType === 'rolling_cluster_update' && !showFullTimeline && steps.length > 0 ? (
+          <Alert className="border-dashed">
+            <AlertDescription className="text-xs">
+              Detailed workflow steps are hidden to keep the rolling update view focused. Expand to audit every action.
+            </AlertDescription>
+            <div className="mt-3">
+              <Button size="sm" variant="outline" onClick={() => setShowFullTimeline(true)}>
+                <ChevronRight className="h-4 w-4 mr-2" />
+                Show workflow steps
+              </Button>
+            </div>
+          </Alert>
+        ) : (
+          <div className="space-y-1">
+            {steps.map((step, index) => {
+              const isExpanded = expandedSteps.has(step.id);
+              const hasDetails = step.step_details || step.step_error;
 
-                <Collapsible open={isExpanded} onOpenChange={() => hasDetails && toggleStep(step.id)}>
-                  <div className={`flex items-start gap-3 p-3 rounded-lg transition-colors ${
-                    hasDetails ? 'cursor-pointer hover:bg-accent/50' : ''
-                  }`}>
-                    {/* Status Icon */}
-                    <div className="relative z-10 mt-0.5">
-                      {getStatusIcon(getEffectiveStepStatus(step.step_status))}
-                    </div>
+              return (
+                <div key={step.id} className="relative">
+                  {/* Connecting line */}
+                  {index < steps.length - 1 && (
+                    <div className="absolute left-[18px] top-10 bottom-[-16px] w-0.5 bg-border" />
+                  )}
 
-                    {/* Step Content */}
-                    <div className="flex-1 min-w-0">
-                      <CollapsibleTrigger asChild>
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium">
-                                {step.step_name}
-                              </span>
-                              {hasDetails && (
-                                isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />
-                              )}
-                            </div>
-                            
-                            {/* Inline progress for running steps with progress data */}
-                            {step.step_status === 'running' && step.step_details?.hosts_total && (
-                              <div className="mt-2 space-y-1.5">
-                                <div className="flex items-center justify-between text-xs">
-                                  <span className="text-muted-foreground">
-                                    {step.step_details.current_host 
-                                      ? `Scanning: ${step.step_details.current_host}`
-                                      : 'Initializing scan...'}
-                                  </span>
-                                  <span className="font-medium">
-                                    {step.step_details.hosts_scanned || 0}/{step.step_details.hosts_total} hosts
-                                  </span>
-                                </div>
-                                <Progress 
-                                  value={step.step_details.progress_pct || 0} 
-                                  className="h-1.5" 
-                                />
-                                {step.step_details.hosts_with_blockers > 0 && (
-                                  <div className="flex items-center gap-2 text-xs text-orange-600">
-                                    <span>⚠ {step.step_details.hosts_with_blockers} host(s) with blockers</span>
-                                    {step.step_details.total_critical_blockers > 0 && (
-                                      <span className="text-red-600">({step.step_details.total_critical_blockers} critical)</span>
-                                    )}
-                                  </div>
-                                )}
-                                {step.step_details.last_error && (
-                                  <div className="text-xs text-red-600 truncate">
-                                    Last error: {step.step_details.last_error}
-                                  </div>
+                  <Collapsible open={isExpanded} onOpenChange={() => hasDetails && toggleStep(step.id)}>
+                    <div className={`flex items-start gap-3 p-3 rounded-lg transition-colors ${
+                      hasDetails ? 'cursor-pointer hover:bg-accent/50' : ''
+                    }`}>
+                      {/* Status Icon */}
+                      <div className="relative z-10 mt-0.5">
+                        {getStatusIcon(getEffectiveStepStatus(step.step_status))}
+                      </div>
+
+                      {/* Step Content */}
+                      <div className="flex-1 min-w-0">
+                        <CollapsibleTrigger asChild>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium">
+                                  {step.step_name}
+                                </span>
+                                {hasDetails && (
+                                  isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />
                                 )}
                               </div>
-                            )}
-                            
-                            <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
-                              <span>
-                                Duration: {formatDuration(step.step_started_at, step.step_completed_at, step.step_status)}
-                              </span>
-                              {step.step_completed_at && (
-                                <span>
-                                  {formatDistanceToNow(new Date(step.step_completed_at), { addSuffix: true })}
-                                </span>
+                              
+                              {/* Inline progress for running steps with progress data */}
+                              {step.step_status === 'running' && step.step_details?.hosts_total && (
+                                <div className="mt-2 space-y-1.5">
+                                  <div className="flex items-center justify-between text-xs">
+                                    <span className="text-muted-foreground">
+                                      {step.step_details.current_host 
+                                        ? `Scanning: ${step.step_details.current_host}`
+                                        : 'Initializing scan...'}
+                                    </span>
+                                    <span className="font-medium">
+                                      {step.step_details.hosts_scanned || 0}/{step.step_details.hosts_total} hosts
+                                    </span>
+                                  </div>
+                                  <Progress 
+                                    value={step.step_details.progress_pct || 0} 
+                                    className="h-1.5" 
+                                  />
+                                  {step.step_details.hosts_with_blockers > 0 && (
+                                    <div className="flex items-center gap-2 text-xs text-orange-600">
+                                      <span>⚠ {step.step_details.hosts_with_blockers} host(s) with blockers</span>
+                                      {step.step_details.total_critical_blockers > 0 && (
+                                        <span className="text-red-600">({step.step_details.total_critical_blockers} critical)</span>
+                                      )}
+                                    </div>
+                                  )}
+                                  {step.step_details.last_error && (
+                                    <div className="text-xs text-red-600 truncate">
+                                      Last error: {step.step_details.last_error}
+                                    </div>
+                                  )}
+                                </div>
                               )}
+                              
+                              <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
+                                <span>
+                                  Duration: {formatDuration(step.step_started_at, step.step_completed_at, step.step_status)}
+                                </span>
+                                {step.step_completed_at && (
+                                  <span>
+                                    {formatDistanceToNow(new Date(step.step_completed_at), { addSuffix: true })}
+                                  </span>
+                                )}
+                              </div>
                             </div>
+                            {getStatusBadge(getEffectiveStepStatus(step.step_status))}
                           </div>
-                          {getStatusBadge(getEffectiveStepStatus(step.step_status))}
-                        </div>
-                      </CollapsibleTrigger>
+                        </CollapsibleTrigger>
 
-                      {/* Expandable Details */}
-                      {hasDetails && (
-                        <CollapsibleContent className="mt-3">
-                          {step.step_error && (
-                            <Alert variant="destructive" className="mb-3">
-                              <AlertDescription>{step.step_error}</AlertDescription>
-                            </Alert>
-                          )}
-                          {step.step_details && (
-                            <WorkflowStepDetails 
-                              stepName={step.step_name}
-                              stepNumber={step.step_number}
-                              details={step.step_details}
-                            />
-                          )}
-                        </CollapsibleContent>
-                      )}
+                        {/* Expandable Details */}
+                        {hasDetails && (
+                          <CollapsibleContent className="mt-3">
+                            {step.step_error && (
+                              <Alert variant="destructive" className="mb-3">
+                                <AlertDescription>{step.step_error}</AlertDescription>
+                              </Alert>
+                            )}
+                            {step.step_details && (
+                              <WorkflowStepDetails 
+                                stepName={step.step_name}
+                                stepNumber={step.step_number}
+                                details={step.step_details}
+                              />
+                            )}
+                          </CollapsibleContent>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                </Collapsible>
-              </div>
-            );
-          })}
-        </div>
+                  </Collapsible>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {steps.length === 0 && (
           <>
