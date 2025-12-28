@@ -331,6 +331,31 @@ export const WorkflowExecutionViewer = ({
     return Math.min(100, Math.max(0, value));
   }, [effectiveJobDetails, steps]);
 
+  const blockerScanAwaitingResolution = useMemo(() => {
+    if (effectiveJobStatus === 'paused' || effectiveJobDetails?.awaiting_blocker_resolution) {
+      return false;
+    }
+
+    const blockerScanStep = steps.find(
+      (step) =>
+        step.step_name?.includes('blocker scan') &&
+        step.step_status === 'running'
+    );
+
+    if (!blockerScanStep) return false;
+
+    const stepDetails = blockerScanStep.step_details || {};
+    const scanComplete =
+      effectiveJobDetails?.blocker_scan_complete ||
+      (stepDetails.hosts_total && stepDetails.hosts_scanned >= stepDetails.hosts_total);
+    const hasBlockers =
+      (typeof effectiveJobDetails?.blocker_scan_hosts === 'number' && effectiveJobDetails.blocker_scan_hosts > 0) ||
+      (typeof stepDetails.hosts_with_blockers === 'number' && stepDetails.hosts_with_blockers > 0);
+    const awaitingResolutionFlag = stepDetails.awaiting_resolution === true;
+
+    return Boolean(awaitingResolutionFlag || (scanComplete && hasBlockers && effectiveJobStatus === 'running'));
+  }, [effectiveJobDetails, effectiveJobStatus, steps]);
+
   const getOverallStatus = () => {
     // If job has a terminal status (from props or internal state), use it
     if (effectiveJobStatus && ['failed', 'completed', 'cancelled'].includes(effectiveJobStatus)) {
