@@ -67,6 +67,9 @@ interface HostSummary {
   completedAgo?: string | null;
   completedCount: number;
   totalCount: number;
+  lastSuccessAt: string | null;
+  blockerCount: number;
+  hostStepStatus: 'running' | 'paused' | 'blocked' | 'idle';
 }
 
 export const WorkflowExecutionViewer = ({ 
@@ -282,10 +285,12 @@ export const WorkflowExecutionViewer = ({
     }
   };
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string, options?: { compact?: boolean }) => {
+    const sizeClasses = options?.compact ? 'text-[10px] px-2 py-0' : '';
+
     if (status === 'paused') {
       return (
-        <Badge className="bg-orange-500/10 text-orange-600 border-orange-500/30 hover:bg-orange-500/20">
+        <Badge className={`bg-orange-500/10 text-orange-600 border-orange-500/30 hover:bg-orange-500/20 ${sizeClasses}`}>
           paused
         </Badge>
       );
@@ -294,12 +299,28 @@ export const WorkflowExecutionViewer = ({
     // Cancelled gets custom orange styling
     if (status === 'cancelled') {
       return (
-        <Badge className="bg-orange-500/10 text-orange-600 border-orange-500/30 hover:bg-orange-500/20">
+        <Badge className={`bg-orange-500/10 text-orange-600 border-orange-500/30 hover:bg-orange-500/20 ${sizeClasses}`}>
           cancelled
         </Badge>
       );
     }
-    
+
+    if (status === 'blocked') {
+      return (
+        <Badge className={`bg-red-500/10 text-red-600 border-red-500/30 hover:bg-red-500/20 ${sizeClasses}`}>
+          blocked
+        </Badge>
+      );
+    }
+
+    if (status === 'idle') {
+      return (
+        <Badge variant="secondary" className={sizeClasses}>
+          idle
+        </Badge>
+      );
+    }
+
     const variants: Record<string, any> = {
       pending: 'secondary',
       running: 'default',
@@ -309,7 +330,7 @@ export const WorkflowExecutionViewer = ({
     };
 
     return (
-      <Badge variant={variants[status] || 'secondary'}>
+      <Badge variant={variants[status] || 'secondary'} className={sizeClasses}>
         {status}
       </Badge>
     );
@@ -426,67 +447,6 @@ export const WorkflowExecutionViewer = ({
     }
     return stepStatus;
   };
-
-  const hostSummaries = useMemo<HostSummary[]>(() => {
-    if (workflowType !== 'rolling_cluster_update' || steps.length === 0) return [];
-
-    const hostMap: Record<string, WorkflowStep[]> = {};
-
-    steps.forEach((step) => {
-      const hostName = extractHostName(step);
-      if (!hostName) return;
-      if (!hostMap[hostName]) hostMap[hostName] = [];
-      hostMap[hostName].push(step);
-    });
-
-    const statusPriority: Record<string, number> = {
-      running: 0,
-      failed: 1,
-      paused: 2,
-      pending: 3,
-      cancelled: 4,
-      completed: 5,
-      skipped: 6
-    };
-
-    return Object.entries(hostMap)
-      .map(([hostName, hostSteps]) => {
-        const sortedSteps = [...hostSteps].sort((a, b) => a.step_number - b.step_number);
-        const effectiveStatuses = sortedSteps.map((step) => getEffectiveStepStatus(step.step_status));
-
-        let derivedStatus = 'pending';
-        if (effectiveStatuses.includes('failed')) derivedStatus = 'failed';
-        else if (effectiveStatuses.includes('running')) derivedStatus = 'running';
-        else if (effectiveStatuses.includes('paused')) derivedStatus = 'paused';
-        else if (sortedSteps.every((s) => ['completed', 'skipped'].includes(getEffectiveStepStatus(s.step_status)))) {
-          derivedStatus = 'completed';
-        }
-
-        const firstStart = sortedSteps.find((s) => s.step_started_at)?.step_started_at || null;
-        const lastComplete = [...sortedSteps].reverse().find((s) => s.step_completed_at)?.step_completed_at || null;
-        const lastActivity = [...sortedSteps]
-          .reverse()
-          .find((s) => s.step_completed_at || s.step_started_at) || sortedSteps[sortedSteps.length - 1];
-
-        const lastAction = lastActivity?.step_name?.split(':')[0]?.trim() || 'In progress';
-        const completedAgo = lastComplete
-          ? formatDistanceToNow(new Date(lastComplete), { addSuffix: true })
-          : null;
-
-        const completedCount = sortedSteps.filter((s) => ['completed', 'skipped'].includes(getEffectiveStepStatus(s.step_status))).length;
-
-        return {
-          hostName,
-          status: derivedStatus,
-          lastAction,
-          duration: formatTotalDuration(firstStart, lastComplete || (derivedStatus === 'running' ? new Date().toISOString() : null)),
-          completedAgo,
-          completedCount,
-          totalCount: sortedSteps.length
-        };
-      })
-      .sort((a, b) => (statusPriority[a.status] ?? 10) - (statusPriority[b.status] ?? 10));
-  }, [workflowType, steps, overallStatus]);
 
   const formatDuration = (start: string | null, end: string | null, stepStatus?: string) => {
     if (!start) return '-';
@@ -788,6 +748,120 @@ export const WorkflowExecutionViewer = ({
     workflowBlockers
   ]);
 
+  const getHostBlockerCount = (hostName: string) => {
+    const normalizedHost = hostName.toLowerCase();
+
+    return Object.values(workflowBlockers).reduce((count, analysis) => {
+      const identifiers = [analysis.host_name, analysis.server_id, analysis.host_id]
+        .filter(Boolean)
+        .map((value) => String(value).toLowerCase());
+
+      if (identifiers.some((id) => id === normalizedHost)) {
+        return count + (analysis.blockers?.length ?? 0);
+      }
+
+      return count;
+    }, 0);
+  };
+
+  const getHostLastSuccessTime = (hostName: string) => {
+    const normalizedHost = hostName.toLowerCase();
+
+    const completedSteps = steps.filter((step) => {
+      const extractedName = extractHostName(step);
+      if (!extractedName) return false;
+      return (
+        extractedName.toLowerCase() === normalizedHost &&
+        step.step_status === 'completed' &&
+        Boolean(step.step_completed_at)
+      );
+    });
+
+    if (completedSteps.length === 0) return null;
+
+    const latest = completedSteps.reduce((latestStep, current) => {
+      const latestTime = new Date(latestStep.step_completed_at as string).getTime();
+      const currentTime = new Date(current.step_completed_at as string).getTime();
+      return currentTime > latestTime ? current : latestStep;
+    });
+
+    return latest.step_completed_at as string;
+  };
+
+  const getHostStepStatus = (status: string, blockerCount: number): HostSummary['hostStepStatus'] => {
+    if (blockerCount > 0) return 'blocked';
+    if (status === 'paused') return 'paused';
+    if (status === 'running') return 'running';
+    return 'idle';
+  };
+
+  const hostSummaries = useMemo<HostSummary[]>(() => {
+    if (workflowType !== 'rolling_cluster_update' || steps.length === 0) return [];
+
+    const hostMap: Record<string, WorkflowStep[]> = {};
+
+    steps.forEach((step) => {
+      const hostName = extractHostName(step);
+      if (!hostName) return;
+      if (!hostMap[hostName]) hostMap[hostName] = [];
+      hostMap[hostName].push(step);
+    });
+
+    const statusPriority: Record<string, number> = {
+      running: 0,
+      failed: 1,
+      paused: 2,
+      pending: 3,
+      cancelled: 4,
+      completed: 5,
+      skipped: 6
+    };
+
+    return Object.entries(hostMap)
+      .map(([hostName, hostSteps]) => {
+        const sortedSteps = [...hostSteps].sort((a, b) => a.step_number - b.step_number);
+        const effectiveStatuses = sortedSteps.map((step) => getEffectiveStepStatus(step.step_status));
+
+        let derivedStatus = 'pending';
+        if (effectiveStatuses.includes('failed')) derivedStatus = 'failed';
+        else if (effectiveStatuses.includes('running')) derivedStatus = 'running';
+        else if (effectiveStatuses.includes('paused')) derivedStatus = 'paused';
+        else if (sortedSteps.every((s) => ['completed', 'skipped'].includes(getEffectiveStepStatus(s.step_status)))) {
+          derivedStatus = 'completed';
+        }
+
+        const firstStart = sortedSteps.find((s) => s.step_started_at)?.step_started_at || null;
+        const lastComplete = [...sortedSteps].reverse().find((s) => s.step_completed_at)?.step_completed_at || null;
+        const lastActivity = [...sortedSteps]
+          .reverse()
+          .find((s) => s.step_completed_at || s.step_started_at) || sortedSteps[sortedSteps.length - 1];
+
+        const lastAction = lastActivity?.step_name?.split(':')[0]?.trim() || 'In progress';
+        const completedAgo = lastComplete
+          ? formatDistanceToNow(new Date(lastComplete), { addSuffix: true })
+          : null;
+
+        const completedCount = sortedSteps.filter((s) => ['completed', 'skipped'].includes(getEffectiveStepStatus(s.step_status))).length;
+        const blockerCount = getHostBlockerCount(hostName);
+        const lastSuccessAt = getHostLastSuccessTime(hostName);
+        const hostStepStatus = getHostStepStatus(derivedStatus, blockerCount);
+
+        return {
+          hostName,
+          status: derivedStatus,
+          lastAction,
+          duration: formatTotalDuration(firstStart, lastComplete || (derivedStatus === 'running' ? new Date().toISOString() : null)),
+          completedAgo,
+          completedCount,
+          totalCount: sortedSteps.length,
+          blockerCount,
+          lastSuccessAt,
+          hostStepStatus
+        };
+      })
+      .sort((a, b) => (statusPriority[a.status] ?? 10) - (statusPriority[b.status] ?? 10));
+  }, [workflowType, steps, overallStatus, workflowBlockers]);
+
   return (
     <Card>
       {!hideHeader && (
@@ -991,7 +1065,19 @@ export const WorkflowExecutionViewer = ({
                     <div key={host.hostName} className="p-3 rounded-lg border bg-background shadow-sm">
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-medium text-sm truncate">{host.hostName}</span>
-                        <div className="text-[11px]">{getStatusBadge(host.status)}</div>
+                        <div className="flex items-center gap-1 flex-wrap justify-end">
+                          {getStatusBadge(host.hostStepStatus, { compact: true })}
+                          {host.lastSuccessAt && (
+                            <Badge variant="outline" className="text-[10px] px-2 py-0 text-muted-foreground">
+                              Last success {formatDistanceToNow(new Date(host.lastSuccessAt), { addSuffix: true })}
+                            </Badge>
+                          )}
+                          {host.blockerCount > 0 && (
+                            <Badge className="bg-destructive/10 text-destructive border-destructive/30 text-[10px] px-2 py-0">
+                              {host.blockerCount} blocker{host.blockerCount > 1 ? 's' : ''}
+                            </Badge>
+                          )}
+                        </div>
                       </div>
                       <div className="mt-1 text-xs text-muted-foreground">
                         <span className="font-semibold text-foreground">{host.lastAction}</span>
