@@ -32,6 +32,7 @@ import { HostBlockerAnalysis } from "@/lib/host-priority-calculator";
 import { buildMaintenanceBlockerResolutions } from "@/lib/maintenance-blocker-resolutions";
 import { launchConsole } from "@/lib/job-executor-api";
 import { toast } from "sonner";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface WorkflowExecutionViewerProps {
   jobId: string;
@@ -58,20 +59,52 @@ interface WorkflowStep {
   created_at: string;
   workflow_type: string;
   job_id: string;
+  server?: {
+    id: string;
+    hostname: string | null;
+    ip_address: string | null;
+  } | null;
+  host?: {
+    id: string;
+    name: string;
+    cluster: string | null;
+    maintenance_mode: boolean | null;
+    status: string | null;
+  } | null;
 }
 
 interface HostSummary {
   hostName: string;
+  displayName?: string;
+  managementIp?: string | null;
+  clusterName?: string | null;
+  maintenanceMode?: boolean | null;
+  maintenanceWindow?: MaintenanceWindowMetadata | null;
+  lastTaskContext?: string | null;
   status: string;
   lastAction: string;
+  lastActionId: string;
   duration: string;
+  serverId?: string | null;
+  hostId?: string | null;
+  nodeRole?: string | null;
+  managementAddress?: string | null;
+  vcenterHostName?: string | null;
   completedAgo?: string | null;
   completedCount: number;
   totalCount: number;
-  blockerSummary?: {
-    count: number;
-    labels: string[];
-  };
+  lastSuccessAt: string | null;
+  blockerCount: number;
+  hostStepStatus: 'running' | 'paused' | 'blocked' | 'idle';
+}
+
+interface MaintenanceWindowMetadata {
+  id?: string;
+  title?: string;
+  planned_start?: string | null;
+  planned_end?: string | null;
+  maintenance_type?: string | null;
+  status?: string | null;
 }
 
 export const WorkflowExecutionViewer = ({ 
@@ -89,10 +122,13 @@ export const WorkflowExecutionViewer = ({
   const [currentOperation, setCurrentOperation] = useState<any>(null);
   const [showBlockerWizard, setShowBlockerWizard] = useState(false);
   const [showFullTimeline, setShowFullTimeline] = useState(workflowType !== 'rolling_cluster_update');
+  const [serverMetadata, setServerMetadata] = useState<Record<string, ServerMetadata>>({});
   
   // Internal state to track job status/details independently
   const [internalJobStatus, setInternalJobStatus] = useState<string | null>(null);
   const [internalJobDetails, setInternalJobDetails] = useState<any>(null);
+  const [maintenanceWindow, setMaintenanceWindow] = useState<MaintenanceWindowMetadata | null>(null);
+  const [jobTargetScope, setJobTargetScope] = useState<any>(null);
   
   // Console launch state
   const [consoleLaunching, setConsoleLaunching] = useState(false);
@@ -222,15 +258,49 @@ export const WorkflowExecutionViewer = ({
     try {
       const { data } = await supabase
         .from('jobs')
-        .select('status, details')
+        .select('status, details, target_scope')
         .eq('id', jobId)
         .maybeSingle();
       
       if (data) {
         setInternalJobStatus(data.status);
         setInternalJobDetails(data.details);
+        setJobTargetScope(data.target_scope);
         if (data.details) {
           setCurrentOperation(data.details);
+        }
+
+        const maintenanceWindowId = data.details?.maintenance_window_id || data.details?.maintenance_window?.id;
+        const maintenanceWindowTitle = data.details?.maintenance_window_title || data.details?.maintenance_window?.title;
+
+        if (maintenanceWindowId) {
+          const { data: maintenanceWindowData, error: maintenanceWindowError } = await supabase
+            .from('maintenance_windows')
+            .select('id, title, planned_start, planned_end, maintenance_type, status')
+            .eq('id', maintenanceWindowId)
+            .maybeSingle();
+
+          if (maintenanceWindowError) {
+            console.error('Error fetching maintenance window:', maintenanceWindowError);
+            setMaintenanceWindow({
+              id: maintenanceWindowId,
+              title: maintenanceWindowTitle,
+            });
+          } else {
+            setMaintenanceWindow(maintenanceWindowData || null);
+            if (maintenanceWindowData && !data.details?.maintenance_window) {
+              setInternalJobDetails({
+                ...(data.details || {}),
+                maintenance_window: maintenanceWindowData,
+              });
+            }
+          }
+        } else if (maintenanceWindowTitle) {
+          setMaintenanceWindow({
+            title: maintenanceWindowTitle,
+          });
+        } else {
+          setMaintenanceWindow(null);
         }
       }
     } catch (error) {
@@ -243,12 +313,16 @@ export const WorkflowExecutionViewer = ({
       setLoading(true);
       const { data, error } = await supabase
         .from('workflow_executions')
-        .select('*')
+        .select(`
+          *,
+          server:servers!workflow_executions_server_id_fkey(id, hostname, ip_address),
+          host:vcenter_hosts!workflow_executions_host_id_fkey(id, name, cluster, maintenance_mode, status)
+        `)
         .eq('job_id', jobId)
         .order('step_number', { ascending: true });
 
       if (error) throw error;
-      setSteps(data || []);
+      setSteps((data as WorkflowStep[]) || []);
     } catch (error) {
       console.error('Error fetching workflow steps:', error);
     } finally {
@@ -287,10 +361,12 @@ export const WorkflowExecutionViewer = ({
     }
   };
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string, options?: { compact?: boolean }) => {
+    const sizeClasses = options?.compact ? 'text-[10px] px-2 py-0' : '';
+
     if (status === 'paused') {
       return (
-        <Badge className="bg-orange-500/10 text-orange-600 border-orange-500/30 hover:bg-orange-500/20">
+        <Badge className={`bg-orange-500/10 text-orange-600 border-orange-500/30 hover:bg-orange-500/20 ${sizeClasses}`}>
           paused
         </Badge>
       );
@@ -299,12 +375,28 @@ export const WorkflowExecutionViewer = ({
     // Cancelled gets custom orange styling
     if (status === 'cancelled') {
       return (
-        <Badge className="bg-orange-500/10 text-orange-600 border-orange-500/30 hover:bg-orange-500/20">
+        <Badge className={`bg-orange-500/10 text-orange-600 border-orange-500/30 hover:bg-orange-500/20 ${sizeClasses}`}>
           cancelled
         </Badge>
       );
     }
-    
+
+    if (status === 'blocked') {
+      return (
+        <Badge className={`bg-red-500/10 text-red-600 border-red-500/30 hover:bg-red-500/20 ${sizeClasses}`}>
+          blocked
+        </Badge>
+      );
+    }
+
+    if (status === 'idle') {
+      return (
+        <Badge variant="secondary" className={sizeClasses}>
+          idle
+        </Badge>
+      );
+    }
+
     const variants: Record<string, any> = {
       pending: 'secondary',
       running: 'default',
@@ -314,7 +406,7 @@ export const WorkflowExecutionViewer = ({
     };
 
     return (
-      <Badge variant={variants[status] || 'secondary'}>
+      <Badge variant={variants[status] || 'secondary'} className={sizeClasses}>
         {status}
       </Badge>
     );
@@ -373,6 +465,24 @@ export const WorkflowExecutionViewer = ({
     return Boolean(awaitingResolutionFlag || (scanComplete && hasBlockers && effectiveJobStatus === 'running'));
   }, [effectiveJobDetails, effectiveJobStatus, steps]);
 
+  const hostRoleMap = useMemo(() => {
+    const map: Record<string, { nodeRole?: string | null; vcenterHostName?: string | null }> = {};
+    const hostResults = effectiveJobDetails?.workflow_results?.host_results ?? [];
+
+    hostResults.forEach((host: any) => {
+      const serverId = host?.server_id || host?.host_id;
+      if (!serverId) return;
+
+      const nodeRole = host?.node_role || host?.role || host?.host_role || host?.nodeRole;
+      map[serverId] = {
+        nodeRole: nodeRole ?? null,
+        vcenterHostName: host?.host_name ?? host?.name ?? null
+      };
+    });
+
+    return map;
+  }, [effectiveJobDetails?.workflow_results?.host_results]);
+
   const getOverallStatus = () => {
     // If job has a terminal status (from props or internal state), use it
     if (effectiveJobStatus && ['failed', 'completed', 'cancelled'].includes(effectiveJobStatus)) {
@@ -392,6 +502,82 @@ export const WorkflowExecutionViewer = ({
     [effectiveJobStatus, steps, blockerScanAwaitingResolution]
   );
 
+  const serverIdsForMetadata = useMemo(() => {
+    const ids = new Set<string>();
+
+    steps.forEach((step) => {
+      if (step.server_id) ids.add(step.server_id);
+      if (step.host_id) ids.add(step.host_id);
+    });
+
+    const hostResults = effectiveJobDetails?.workflow_results?.host_results ?? [];
+    hostResults.forEach((host: any) => {
+      if (host?.server_id) {
+        ids.add(host.server_id);
+      } else if (host?.host_id) {
+        ids.add(host.host_id);
+      }
+    });
+
+    return Array.from(ids);
+  }, [steps, effectiveJobDetails?.workflow_results?.host_results]);
+
+  const serverIdsKey = useMemo(() => serverIdsForMetadata.slice().sort().join(','), [serverIdsForMetadata]);
+  const hostRoleKey = useMemo(() => JSON.stringify(hostRoleMap), [hostRoleMap]);
+
+  useEffect(() => {
+    if (!serverIdsKey) return;
+
+    const loadMetadata = async () => {
+      try {
+        const { data: serversData, error } = await supabase
+          .from('servers')
+          .select('id, hostname, ip_address, vcenter_host_id')
+          .in('id', serverIdsForMetadata);
+
+        if (error) throw error;
+
+        const vcenterIds = (serversData || [])
+          .map((server: any) => server.vcenter_host_id)
+          .filter(Boolean);
+
+        const uniqueVcenterIds = Array.from(new Set(vcenterIds));
+        let vcenterMap: Record<string, { name?: string | null; server_id?: string | null }> = {};
+
+        if (uniqueVcenterIds.length > 0) {
+          const { data: vcenterData, error: vcError } = await supabase
+            .from('vcenter_hosts')
+            .select('id, name, server_id')
+            .in('id', uniqueVcenterIds as string[]);
+
+          if (vcError) throw vcError;
+
+          vcenterData?.forEach((vc: any) => {
+            vcenterMap[vc.id] = { name: vc.name, server_id: vc.server_id };
+          });
+        }
+
+        const metadataUpdate: Record<string, ServerMetadata> = {};
+        (serversData || []).forEach((server: any) => {
+          const roleInfo = hostRoleMap[server.id];
+          metadataUpdate[server.id] = {
+            serverId: server.id,
+            hostname: server.hostname,
+            ipAddress: server.ip_address,
+            vcenterHostName: (server.vcenter_host_id && vcenterMap[server.vcenter_host_id]?.name) || roleInfo?.vcenterHostName || null,
+            nodeRole: roleInfo?.nodeRole ?? null
+          };
+        });
+
+        setServerMetadata((prev) => ({ ...prev, ...metadataUpdate }));
+      } catch (error) {
+        console.error('Error fetching server metadata:', error);
+      }
+    };
+
+    loadMetadata();
+  }, [serverIdsKey, hostRoleKey]);
+
   const formatTotalDuration = (start: string | null, end: string | null) => {
     if (!start) return '-';
     const endDate = end ? new Date(end) : new Date();
@@ -409,12 +595,21 @@ export const WorkflowExecutionViewer = ({
   };
 
   const extractHostName = (step: WorkflowStep) => {
+    if (step.server?.hostname) return step.server.hostname;
+    if (step.host?.name) return step.host.name;
     if (step.step_details?.host_name) return step.step_details.host_name;
     if (step.step_details?.hostname) return step.step_details.hostname;
     if (step.host_id) return step.host_id;
     if (step.server_id) return step.server_id;
     const namePart = step.step_name?.split(':')[1]?.trim();
     if (namePart && namePart.includes('.')) return namePart;
+    return null;
+  };
+
+  const extractManagementIp = (step: WorkflowStep) => {
+    if (step.server?.ip_address) return step.server.ip_address;
+    if (step.step_details?.host_ip) return step.step_details.host_ip;
+    if (step.step_details?.ip_address) return step.step_details.ip_address;
     return null;
   };
 
@@ -432,33 +627,78 @@ export const WorkflowExecutionViewer = ({
     return stepStatus;
   };
 
-  const formatBlockerLabel = (blocker: any) => {
-    const reasonMap: Record<string, string> = {
-      vcsa: 'vCenter appliance',
-      passthrough: 'Passthrough device',
-      local_storage: 'Local storage',
-      fault_tolerance: 'Fault Tolerance',
-      vgpu: 'vGPU',
-      affinity: 'Affinity rules',
-      critical_infra: 'Critical infra VM',
-      connected_media: 'Connected media'
-    };
-
-    if (blocker?.reason && reasonMap[blocker.reason]) {
-      return reasonMap[blocker.reason];
+  const maintenanceWindowMetadata = useMemo<MaintenanceWindowMetadata | null>(() => {
+    if (maintenanceWindow) return maintenanceWindow;
+    if (effectiveJobDetails?.maintenance_window) return effectiveJobDetails.maintenance_window as MaintenanceWindowMetadata;
+    if (effectiveJobDetails?.maintenance_window_id || effectiveJobDetails?.maintenance_window_title) {
+      return {
+        id: effectiveJobDetails?.maintenance_window_id,
+        title: effectiveJobDetails?.maintenance_window_title
+      };
     }
+    return null;
+  }, [maintenanceWindow, effectiveJobDetails]);
 
-    if (typeof blocker?.reason === 'string') {
-      return blocker.reason.replace(/_/g, ' ');
-    }
+  const clusterMetadata = useMemo(() => {
+    return (
+      effectiveJobDetails?.cluster_id ||
+      effectiveJobDetails?.cluster_name ||
+      jobTargetScope?.cluster_id ||
+      jobTargetScope?.cluster_name ||
+      null
+    );
+  }, [effectiveJobDetails, jobTargetScope]);
+
+  const hostMatchesName = (first?: string | null, second?: string | null) =>
+    typeof first === 'string' &&
+    typeof second === 'string' &&
+    first.toLowerCase() === second.toLowerCase();
+
+  const hostSummaries = useMemo<HostSummary[]>(() => {
+    if (workflowType !== 'rolling_cluster_update' || steps.length === 0) return [];
+
+    const hostMap: Record<string, { steps: WorkflowStep[]; metadata: Partial<HostSummary> }> = {};
+
+    steps.forEach((step) => {
+      const hostName = extractHostName(step);
+      if (!hostName) return;
+      if (!hostMap[hostName]) hostMap[hostName] = { steps: [], metadata: {} };
+      hostMap[hostName].steps.push(step);
+
+      const displayName =
+        step.step_details?.host_display_name ||
+        step.server?.hostname ||
+        step.host?.name ||
+        step.step_details?.host_name;
+      const managementIp = extractManagementIp(step);
+      const clusterName = step.step_details?.cluster || step.host?.cluster || step.cluster_id || clusterMetadata;
+      const maintenanceMode = step.host?.maintenance_mode ?? step.step_details?.maintenance_mode;
+      const taskContext =
+        step.step_details?.task_context ||
+        step.step_details?.current_task ||
+        step.step_details?.current_operation ||
+        step.step_details?.current_step ||
+        null;
+
+      hostMap[hostName].metadata = {
+        ...hostMap[hostName].metadata,
+        displayName: hostMap[hostName].metadata.displayName || displayName,
+        managementIp: hostMap[hostName].metadata.managementIp || managementIp,
+        clusterName: hostMap[hostName].metadata.clusterName || clusterName,
+        maintenanceMode: hostMap[hostName].metadata.maintenanceMode ?? maintenanceMode,
+        maintenanceWindow: hostMap[hostName].metadata.maintenanceWindow || maintenanceWindowMetadata,
+        lastTaskContext: hostMap[hostName].metadata.lastTaskContext || taskContext
+      };
+    });
 
     if (typeof blocker?.details === 'string' && blocker.details.length > 0) {
       return blocker.details;
     }
 
-    if (typeof blocker?.remediation === 'string' && blocker.remediation.length > 0) {
-      return blocker.remediation;
-    }
+    return Object.entries(hostMap)
+      .map(([hostName, hostData]) => {
+        const sortedSteps = [...hostData.steps].sort((a, b) => a.step_number - b.step_number);
+        const effectiveStatuses = sortedSteps.map((step) => getEffectiveStepStatus(step.step_status));
 
     if (typeof blocker?.vm_name === 'string' && blocker.vm_name.length > 0) {
       return blocker.vm_name;
@@ -467,30 +707,48 @@ export const WorkflowExecutionViewer = ({
     return 'Blocker';
   };
 
-  const getHostBlockerSummary = (hostName: string) => {
-    const normalizedHostName = hostName.toLowerCase();
+        const { label: lastAction, rawId: lastActionId } = getStepDisplayInfo(
+          lastActivity?.step_name,
+          lastActivity?.step_details?.step_id
+        );
+        const completedAgo = lastComplete
+          ? formatDistanceToNow(new Date(lastComplete), { addSuffix: true })
+          : null;
 
-    const matchingBlockers = Object.values(workflowBlockers).find((analysis) => {
-      const candidates = [analysis.host_name, analysis.server_id, analysis.host_id]
-        .filter(Boolean)
-        .map((value) => String(value).toLowerCase());
-      return candidates.includes(normalizedHostName);
-    });
+        const completedCount = sortedSteps.filter((s) => ['completed', 'skipped'].includes(getEffectiveStepStatus(s.step_status))).length;
+        const isCurrentHost = hostMatchesName(hostName, currentOperation?.current_host);
+        const managementIp = hostData.metadata.managementIp || (isCurrentHost ? currentOperation?.current_host_ip : null);
+        const maintenanceWindowForHost = hostData.metadata.maintenanceWindow || maintenanceWindowMetadata || null;
+        const taskContext =
+          hostData.metadata.lastTaskContext ||
+          (isCurrentHost ? currentOperation?.current_step : null) ||
+          lastActivity?.step_details?.current_step ||
+          lastActivity?.step_details?.status ||
+          lastActivity?.step_name ||
+          lastAction;
 
-    if (!matchingBlockers?.blockers?.length) return undefined;
+        const nodeRole = hostRoleMap[hostData.serverId || hostData.hostId || key]?.nodeRole ?? null;
+        const vcenterHostName = hostRoleMap[hostData.serverId || hostData.hostId || key]?.vcenterHostName ?? hostData.vcenterHostName ?? null;
 
-    const topLabels = matchingBlockers.blockers.slice(0, 2).map((blocker) => formatBlockerLabel(blocker));
-    const remaining = matchingBlockers.blockers.length - topLabels.length;
-
-    if (remaining > 0) {
-      topLabels.push(`+${remaining} more`);
-    }
-
-    return {
-      count: matchingBlockers.blockers.length,
-      labels: topLabels
-    };
-  };
+        return {
+          hostName,
+          displayName: hostData.metadata.displayName || hostName,
+          managementIp,
+          clusterName: hostData.metadata.clusterName || clusterMetadata,
+          maintenanceMode: hostData.metadata.maintenanceMode,
+          maintenanceWindow: maintenanceWindowForHost,
+          lastTaskContext: taskContext,
+          status: derivedStatus,
+          lastAction,
+          lastActionId,
+          duration: formatTotalDuration(firstStart, lastComplete || (derivedStatus === 'running' ? new Date().toISOString() : null)),
+          completedAgo,
+          completedCount,
+          totalCount: sortedSteps.length
+        };
+      })
+      .sort((a, b) => (statusPriority[a.status] ?? 10) - (statusPriority[b.status] ?? 10));
+  }, [workflowType, steps, overallStatus, clusterMetadata, maintenanceWindowMetadata, currentOperation]);
 
   const formatDuration = (start: string | null, end: string | null, stepStatus?: string) => {
     if (!start) return '-';
@@ -855,6 +1113,120 @@ export const WorkflowExecutionViewer = ({
     workflowBlockers
   ]);
 
+  const getHostBlockerCount = (hostName: string) => {
+    const normalizedHost = hostName.toLowerCase();
+
+    return Object.values(workflowBlockers).reduce((count, analysis) => {
+      const identifiers = [analysis.host_name, analysis.server_id, analysis.host_id]
+        .filter(Boolean)
+        .map((value) => String(value).toLowerCase());
+
+      if (identifiers.some((id) => id === normalizedHost)) {
+        return count + (analysis.blockers?.length ?? 0);
+      }
+
+      return count;
+    }, 0);
+  };
+
+  const getHostLastSuccessTime = (hostName: string) => {
+    const normalizedHost = hostName.toLowerCase();
+
+    const completedSteps = steps.filter((step) => {
+      const extractedName = extractHostName(step);
+      if (!extractedName) return false;
+      return (
+        extractedName.toLowerCase() === normalizedHost &&
+        step.step_status === 'completed' &&
+        Boolean(step.step_completed_at)
+      );
+    });
+
+    if (completedSteps.length === 0) return null;
+
+    const latest = completedSteps.reduce((latestStep, current) => {
+      const latestTime = new Date(latestStep.step_completed_at as string).getTime();
+      const currentTime = new Date(current.step_completed_at as string).getTime();
+      return currentTime > latestTime ? current : latestStep;
+    });
+
+    return latest.step_completed_at as string;
+  };
+
+  const getHostStepStatus = (status: string, blockerCount: number): HostSummary['hostStepStatus'] => {
+    if (blockerCount > 0) return 'blocked';
+    if (status === 'paused') return 'paused';
+    if (status === 'running') return 'running';
+    return 'idle';
+  };
+
+  const hostSummaries = useMemo<HostSummary[]>(() => {
+    if (workflowType !== 'rolling_cluster_update' || steps.length === 0) return [];
+
+    const hostMap: Record<string, WorkflowStep[]> = {};
+
+    steps.forEach((step) => {
+      const hostName = extractHostName(step);
+      if (!hostName) return;
+      if (!hostMap[hostName]) hostMap[hostName] = [];
+      hostMap[hostName].push(step);
+    });
+
+    const statusPriority: Record<string, number> = {
+      running: 0,
+      failed: 1,
+      paused: 2,
+      pending: 3,
+      cancelled: 4,
+      completed: 5,
+      skipped: 6
+    };
+
+    return Object.entries(hostMap)
+      .map(([hostName, hostSteps]) => {
+        const sortedSteps = [...hostSteps].sort((a, b) => a.step_number - b.step_number);
+        const effectiveStatuses = sortedSteps.map((step) => getEffectiveStepStatus(step.step_status));
+
+        let derivedStatus = 'pending';
+        if (effectiveStatuses.includes('failed')) derivedStatus = 'failed';
+        else if (effectiveStatuses.includes('running')) derivedStatus = 'running';
+        else if (effectiveStatuses.includes('paused')) derivedStatus = 'paused';
+        else if (sortedSteps.every((s) => ['completed', 'skipped'].includes(getEffectiveStepStatus(s.step_status)))) {
+          derivedStatus = 'completed';
+        }
+
+        const firstStart = sortedSteps.find((s) => s.step_started_at)?.step_started_at || null;
+        const lastComplete = [...sortedSteps].reverse().find((s) => s.step_completed_at)?.step_completed_at || null;
+        const lastActivity = [...sortedSteps]
+          .reverse()
+          .find((s) => s.step_completed_at || s.step_started_at) || sortedSteps[sortedSteps.length - 1];
+
+        const lastAction = lastActivity?.step_name?.split(':')[0]?.trim() || 'In progress';
+        const completedAgo = lastComplete
+          ? formatDistanceToNow(new Date(lastComplete), { addSuffix: true })
+          : null;
+
+        const completedCount = sortedSteps.filter((s) => ['completed', 'skipped'].includes(getEffectiveStepStatus(s.step_status))).length;
+        const blockerCount = getHostBlockerCount(hostName);
+        const lastSuccessAt = getHostLastSuccessTime(hostName);
+        const hostStepStatus = getHostStepStatus(derivedStatus, blockerCount);
+
+        return {
+          hostName,
+          status: derivedStatus,
+          lastAction,
+          duration: formatTotalDuration(firstStart, lastComplete || (derivedStatus === 'running' ? new Date().toISOString() : null)),
+          completedAgo,
+          completedCount,
+          totalCount: sortedSteps.length,
+          blockerCount,
+          lastSuccessAt,
+          hostStepStatus
+        };
+      })
+      .sort((a, b) => (statusPriority[a.status] ?? 10) - (statusPriority[b.status] ?? 10));
+  }, [workflowType, steps, overallStatus, workflowBlockers]);
+
   return (
     <Card>
       {!hideHeader && (
@@ -1057,12 +1429,47 @@ export const WorkflowExecutionViewer = ({
                   {hostSummaries.map((host) => (
                     <div key={host.hostName} className="p-3 rounded-lg border bg-background shadow-sm">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium text-sm truncate">{host.hostName}</span>
+                        <div className="min-w-0">
+                          <div className="font-medium text-sm truncate">{host.hostName}</div>
+                          {host.displayName && host.displayName !== host.hostName && (
+                            <div className="text-[11px] text-muted-foreground truncate">{host.displayName}</div>
+                          )}
+                        </div>
                         <div className="text-[11px]">{getStatusBadge(host.status)}</div>
                       </div>
+                      {(host.managementIp || host.clusterName || host.maintenanceWindow) && (
+                        <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                          {host.managementIp && (
+                            <span className="flex items-center gap-1">
+                              <Monitor className="h-3 w-3" />
+                              {host.managementIp}
+                            </span>
+                          )}
+                          {host.clusterName && (
+                            <span className="flex items-center gap-1">
+                              <ChevronRight className="h-3 w-3" />
+                              {host.clusterName}
+                            </span>
+                          )}
+                          {host.maintenanceWindow && (
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              {host.maintenanceWindow.title || 'Maintenance window'}
+                              {host.maintenanceWindow.status && (
+                                <span className="text-foreground/70">({host.maintenanceWindow.status})</span>
+                              )}
+                            </span>
+                          )}
+                        </div>
+                      )}
                       <div className="mt-1 text-xs text-muted-foreground">
                         <span className="font-semibold text-foreground">{host.lastAction}</span>
                       </div>
+                      {host.lastTaskContext && (
+                        <div className="mt-1 text-[11px] text-muted-foreground">
+                          <span className="font-semibold text-foreground">Last task:</span> {host.lastTaskContext}
+                        </div>
+                      )}
                       <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
                         <span>{host.completedCount}/{host.totalCount} steps</span>
                         <span>Elapsed: {host.duration}</span>
@@ -1071,25 +1478,29 @@ export const WorkflowExecutionViewer = ({
                             <Clock className="h-3 w-3" />
                             {host.completedAgo}
                           </span>
-                        )}
-                      </div>
-                      {host.blockerSummary && (
-                        <div className="mt-2 flex items-start gap-2 text-[11px] text-orange-600">
-                          <AlertTriangle className="h-3.5 w-3.5 mt-0.5" />
-                          <div className="flex-1 text-[11px] leading-tight">
-                            <span className="font-semibold">
-                              {host.blockerSummary.count === 1
-                                ? '1 blocker:'
-                                : `${host.blockerSummary.count} blockers:`}
-                            </span>{' '}
-                            <span className="text-orange-700 dark:text-orange-300">
-                              {host.blockerSummary.labels.join(', ')}
-                            </span>
-                          </div>
+                          <div className="text-[11px]">{getStatusBadge(host.status)}</div>
                         </div>
-                      )}
-                    </div>
-                  ))}
+                        {presentation.secondaryLine && (
+                          <div className="text-[11px] text-muted-foreground truncate mt-0.5">
+                            {presentation.secondaryLine}
+                          </div>
+                        )}
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          <span className="font-semibold text-foreground">{host.lastAction}</span>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
+                          <span>{host.completedCount}/{host.totalCount} steps</span>
+                          <span>Elapsed: {host.duration}</span>
+                          {host.completedAgo && (
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              {host.completedAgo}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </CardContent>
             </Card>
