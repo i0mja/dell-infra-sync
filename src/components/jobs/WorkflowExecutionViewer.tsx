@@ -654,102 +654,6 @@ export const WorkflowExecutionViewer = ({
     typeof second === 'string' &&
     first.toLowerCase() === second.toLowerCase();
 
-  const hostSummaries = useMemo<HostSummary[]>(() => {
-    if (workflowType !== 'rolling_cluster_update' || steps.length === 0) return [];
-
-    const hostMap: Record<string, { steps: WorkflowStep[]; metadata: Partial<HostSummary> }> = {};
-
-    steps.forEach((step) => {
-      const hostName = extractHostName(step);
-      if (!hostName) return;
-      if (!hostMap[hostName]) hostMap[hostName] = { steps: [], metadata: {} };
-      hostMap[hostName].steps.push(step);
-
-      const displayName =
-        step.step_details?.host_display_name ||
-        step.server?.hostname ||
-        step.host?.name ||
-        step.step_details?.host_name;
-      const managementIp = extractManagementIp(step);
-      const clusterName = step.step_details?.cluster || step.host?.cluster || step.cluster_id || clusterMetadata;
-      const maintenanceMode = step.host?.maintenance_mode ?? step.step_details?.maintenance_mode;
-      const taskContext =
-        step.step_details?.task_context ||
-        step.step_details?.current_task ||
-        step.step_details?.current_operation ||
-        step.step_details?.current_step ||
-        null;
-
-      hostMap[hostName].metadata = {
-        ...hostMap[hostName].metadata,
-        displayName: hostMap[hostName].metadata.displayName || displayName,
-        managementIp: hostMap[hostName].metadata.managementIp || managementIp,
-        clusterName: hostMap[hostName].metadata.clusterName || clusterName,
-        maintenanceMode: hostMap[hostName].metadata.maintenanceMode ?? maintenanceMode,
-        maintenanceWindow: hostMap[hostName].metadata.maintenanceWindow || maintenanceWindowMetadata,
-        lastTaskContext: hostMap[hostName].metadata.lastTaskContext || taskContext
-      };
-    });
-
-    if (typeof blocker?.details === 'string' && blocker.details.length > 0) {
-      return blocker.details;
-    }
-
-    return Object.entries(hostMap)
-      .map(([hostName, hostData]) => {
-        const sortedSteps = [...hostData.steps].sort((a, b) => a.step_number - b.step_number);
-        const effectiveStatuses = sortedSteps.map((step) => getEffectiveStepStatus(step.step_status));
-
-    if (typeof blocker?.vm_name === 'string' && blocker.vm_name.length > 0) {
-      return blocker.vm_name;
-    }
-
-    return 'Blocker';
-  };
-
-        const { label: lastAction, rawId: lastActionId } = getStepDisplayInfo(
-          lastActivity?.step_name,
-          lastActivity?.step_details?.step_id
-        );
-        const completedAgo = lastComplete
-          ? formatDistanceToNow(new Date(lastComplete), { addSuffix: true })
-          : null;
-
-        const completedCount = sortedSteps.filter((s) => ['completed', 'skipped'].includes(getEffectiveStepStatus(s.step_status))).length;
-        const isCurrentHost = hostMatchesName(hostName, currentOperation?.current_host);
-        const managementIp = hostData.metadata.managementIp || (isCurrentHost ? currentOperation?.current_host_ip : null);
-        const maintenanceWindowForHost = hostData.metadata.maintenanceWindow || maintenanceWindowMetadata || null;
-        const taskContext =
-          hostData.metadata.lastTaskContext ||
-          (isCurrentHost ? currentOperation?.current_step : null) ||
-          lastActivity?.step_details?.current_step ||
-          lastActivity?.step_details?.status ||
-          lastActivity?.step_name ||
-          lastAction;
-
-        const nodeRole = hostRoleMap[hostData.serverId || hostData.hostId || key]?.nodeRole ?? null;
-        const vcenterHostName = hostRoleMap[hostData.serverId || hostData.hostId || key]?.vcenterHostName ?? hostData.vcenterHostName ?? null;
-
-        return {
-          hostName,
-          displayName: hostData.metadata.displayName || hostName,
-          managementIp,
-          clusterName: hostData.metadata.clusterName || clusterMetadata,
-          maintenanceMode: hostData.metadata.maintenanceMode,
-          maintenanceWindow: maintenanceWindowForHost,
-          lastTaskContext: taskContext,
-          status: derivedStatus,
-          lastAction,
-          lastActionId,
-          duration: formatTotalDuration(firstStart, lastComplete || (derivedStatus === 'running' ? new Date().toISOString() : null)),
-          completedAgo,
-          completedCount,
-          totalCount: sortedSteps.length
-        };
-      })
-      .sort((a, b) => (statusPriority[a.status] ?? 10) - (statusPriority[b.status] ?? 10));
-  }, [workflowType, steps, overallStatus, clusterMetadata, maintenanceWindowMetadata, currentOperation]);
-
   const formatDuration = (start: string | null, end: string | null, stepStatus?: string) => {
     if (!start) return '-';
     // If step was running when job was cancelled, show "Cancelled" instead of "Running..."
@@ -999,69 +903,6 @@ export const WorkflowExecutionViewer = ({
     );
   }, [workflowBlockers]);
 
-  const hostSummaries = useMemo<HostSummary[]>(() => {
-    if (workflowType !== 'rolling_cluster_update' || steps.length === 0) return [];
-
-    const hostMap: Record<string, WorkflowStep[]> = {};
-
-    steps.forEach((step) => {
-      const hostName = extractHostName(step);
-      if (!hostName) return;
-      if (!hostMap[hostName]) hostMap[hostName] = [];
-      hostMap[hostName].push(step);
-    });
-
-    const statusPriority: Record<string, number> = {
-      running: 0,
-      failed: 1,
-      paused: 2,
-      pending: 3,
-      cancelled: 4,
-      completed: 5,
-      skipped: 6
-    };
-
-    return Object.entries(hostMap)
-      .map(([hostName, hostSteps]) => {
-        const sortedSteps = [...hostSteps].sort((a, b) => a.step_number - b.step_number);
-        const effectiveStatuses = sortedSteps.map((step) => getEffectiveStepStatus(step.step_status));
-
-        let derivedStatus = 'pending';
-        if (effectiveStatuses.includes('failed')) derivedStatus = 'failed';
-        else if (effectiveStatuses.includes('running')) derivedStatus = 'running';
-        else if (effectiveStatuses.includes('paused')) derivedStatus = 'paused';
-        else if (sortedSteps.every((s) => ['completed', 'skipped'].includes(getEffectiveStepStatus(s.step_status)))) {
-          derivedStatus = 'completed';
-        }
-
-        const firstStart = sortedSteps.find((s) => s.step_started_at)?.step_started_at || null;
-        const lastComplete = [...sortedSteps].reverse().find((s) => s.step_completed_at)?.step_completed_at || null;
-        const lastActivity = [...sortedSteps]
-          .reverse()
-          .find((s) => s.step_completed_at || s.step_started_at) || sortedSteps[sortedSteps.length - 1];
-
-        const lastAction = lastActivity?.step_name?.split(':')[0]?.trim() || 'In progress';
-        const completedAgo = lastComplete
-          ? formatDistanceToNow(new Date(lastComplete), { addSuffix: true })
-          : null;
-
-        const completedCount = sortedSteps.filter((s) => ['completed', 'skipped'].includes(getEffectiveStepStatus(s.step_status))).length;
-        const blockerSummary = getHostBlockerSummary(hostName);
-
-        return {
-          hostName,
-          status: derivedStatus,
-          lastAction,
-          duration: formatTotalDuration(firstStart, lastComplete || (derivedStatus === 'running' ? new Date().toISOString() : null)),
-          completedAgo,
-          completedCount,
-          totalCount: sortedSteps.length,
-          blockerSummary
-        };
-      })
-      .sort((a, b) => (statusPriority[a.status] ?? 10) - (statusPriority[b.status] ?? 10));
-  }, [workflowType, steps, overallStatus, workflowBlockers]);
-
   // Auto-show blocker wizard when job pauses awaiting resolution
   // Also handles fallback case where job status update failed but step has blockers
   const hasShownWizardToast = useRef(false);
@@ -1163,13 +1004,45 @@ export const WorkflowExecutionViewer = ({
   const hostSummaries = useMemo<HostSummary[]>(() => {
     if (workflowType !== 'rolling_cluster_update' || steps.length === 0) return [];
 
-    const hostMap: Record<string, WorkflowStep[]> = {};
+    const hostMap: Record<string, { steps: WorkflowStep[]; metadata: Partial<HostSummary> }> = {};
 
     steps.forEach((step) => {
       const hostName = extractHostName(step);
       if (!hostName) return;
-      if (!hostMap[hostName]) hostMap[hostName] = [];
-      hostMap[hostName].push(step);
+      if (!hostMap[hostName]) hostMap[hostName] = { steps: [], metadata: {} };
+      hostMap[hostName].steps.push(step);
+
+      const displayName =
+        step.step_details?.host_display_name ||
+        step.server?.hostname ||
+        step.host?.name ||
+        step.step_details?.host_name;
+      const managementIp = extractManagementIp(step);
+      const clusterName = step.step_details?.cluster || step.host?.cluster || step.cluster_id || clusterMetadata;
+      const maintenanceMode = step.host?.maintenance_mode ?? step.step_details?.maintenance_mode;
+      const taskContext =
+        step.step_details?.task_context ||
+        step.step_details?.current_task ||
+        step.step_details?.current_operation ||
+        step.step_details?.current_step ||
+        null;
+      const serverId = step.server_id || step.server?.id || step.host?.id || null;
+      const hostId = step.host_id || step.host?.id || null;
+      const vcenterHostName = step.host?.name || step.step_details?.host_name || null;
+
+      hostMap[hostName].metadata = {
+        ...hostMap[hostName].metadata,
+        displayName: hostMap[hostName].metadata.displayName || displayName,
+        managementIp: hostMap[hostName].metadata.managementIp || managementIp,
+        managementAddress: hostMap[hostName].metadata.managementAddress || managementIp,
+        clusterName: hostMap[hostName].metadata.clusterName || clusterName,
+        maintenanceMode: hostMap[hostName].metadata.maintenanceMode ?? maintenanceMode,
+        maintenanceWindow: hostMap[hostName].metadata.maintenanceWindow || maintenanceWindowMetadata,
+        lastTaskContext: hostMap[hostName].metadata.lastTaskContext || taskContext,
+        serverId: hostMap[hostName].metadata.serverId || serverId,
+        hostId: hostMap[hostName].metadata.hostId || hostId,
+        vcenterHostName: hostMap[hostName].metadata.vcenterHostName || vcenterHostName
+      };
     });
 
     const statusPriority: Record<string, number> = {
@@ -1183,8 +1056,8 @@ export const WorkflowExecutionViewer = ({
     };
 
     return Object.entries(hostMap)
-      .map(([hostName, hostSteps]) => {
-        const sortedSteps = [...hostSteps].sort((a, b) => a.step_number - b.step_number);
+      .map(([hostName, hostData]) => {
+        const sortedSteps = [...hostData.steps].sort((a, b) => a.step_number - b.step_number);
         const effectiveStatuses = sortedSteps.map((step) => getEffectiveStepStatus(step.step_status));
 
         let derivedStatus = 'pending';
@@ -1197,11 +1070,18 @@ export const WorkflowExecutionViewer = ({
 
         const firstStart = sortedSteps.find((s) => s.step_started_at)?.step_started_at || null;
         const lastComplete = [...sortedSteps].reverse().find((s) => s.step_completed_at)?.step_completed_at || null;
-        const lastActivity = [...sortedSteps]
-          .reverse()
-          .find((s) => s.step_completed_at || s.step_started_at) || sortedSteps[sortedSteps.length - 1];
+        const lastActivity =
+          [...sortedSteps].reverse().find((s) => s.step_completed_at || s.step_started_at) ||
+          sortedSteps[sortedSteps.length - 1];
 
         const lastAction = lastActivity?.step_name?.split(':')[0]?.trim() || 'In progress';
+        const lastActionId =
+          lastActivity?.step_details?.step_id ||
+          lastActivity?.step_details?.id ||
+          lastActivity?.step_id ||
+          lastActivity?.step_number?.toString() ||
+          lastActivity?.step_name ||
+          lastAction;
         const completedAgo = lastComplete
           ? formatDistanceToNow(new Date(lastComplete), { addSuffix: true })
           : null;
@@ -1210,22 +1090,61 @@ export const WorkflowExecutionViewer = ({
         const blockerCount = getHostBlockerCount(hostName);
         const lastSuccessAt = getHostLastSuccessTime(hostName);
         const hostStepStatus = getHostStepStatus(derivedStatus, blockerCount);
+        const isCurrentHost = hostMatchesName(hostName, currentOperation?.current_host);
+        const managementIp =
+          hostData.metadata.managementIp || (isCurrentHost ? currentOperation?.current_host_ip : null);
+        const maintenanceWindowForHost = hostData.metadata.maintenanceWindow || maintenanceWindowMetadata || null;
+        const taskContext =
+          hostData.metadata.lastTaskContext ||
+          (isCurrentHost ? currentOperation?.current_step : null) ||
+          lastActivity?.step_details?.current_step ||
+          lastActivity?.step_details?.status ||
+          lastActivity?.step_name ||
+          lastAction;
+
+        const nodeRole =
+          hostRoleMap[hostData.metadata.serverId || hostData.metadata.hostId || hostName]?.nodeRole ?? null;
+        const vcenterHostName =
+          hostRoleMap[hostData.metadata.serverId || hostData.metadata.hostId || hostName]?.vcenterHostName ??
+          hostData.metadata.vcenterHostName ??
+          null;
 
         return {
           hostName,
+          displayName: hostData.metadata.displayName || hostName,
+          managementIp,
+          managementAddress: hostData.metadata.managementAddress,
+          clusterName: hostData.metadata.clusterName || clusterMetadata,
+          maintenanceMode: hostData.metadata.maintenanceMode,
+          maintenanceWindow: maintenanceWindowForHost,
+          lastTaskContext: taskContext,
           status: derivedStatus,
           lastAction,
+          lastActionId: String(lastActionId),
           duration: formatTotalDuration(firstStart, lastComplete || (derivedStatus === 'running' ? new Date().toISOString() : null)),
+          serverId: hostData.metadata.serverId,
+          hostId: hostData.metadata.hostId,
+          nodeRole,
+          vcenterHostName,
           completedAgo,
           completedCount,
           totalCount: sortedSteps.length,
-          blockerCount,
           lastSuccessAt,
+          blockerCount,
           hostStepStatus
         };
       })
       .sort((a, b) => (statusPriority[a.status] ?? 10) - (statusPriority[b.status] ?? 10));
-  }, [workflowType, steps, overallStatus, workflowBlockers]);
+  }, [
+    workflowType,
+    steps,
+    overallStatus,
+    clusterMetadata,
+    maintenanceWindowMetadata,
+    currentOperation,
+    workflowBlockers,
+    hostRoleMap
+  ]);
 
   return (
     <Card>
@@ -1430,14 +1349,24 @@ export const WorkflowExecutionViewer = ({
                     <div key={host.hostName} className="p-3 rounded-lg border bg-background shadow-sm">
                       <div className="flex items-center justify-between gap-2">
                         <div className="min-w-0">
-                          <div className="font-medium text-sm truncate">{host.hostName}</div>
+                          <div className="font-medium text-sm truncate">{host.displayName || host.hostName}</div>
                           {host.displayName && host.displayName !== host.hostName && (
-                            <div className="text-[11px] text-muted-foreground truncate">{host.displayName}</div>
+                            <div className="text-[11px] text-muted-foreground truncate">{host.hostName}</div>
+                          )}
+                          {!host.displayName && host.vcenterHostName && host.vcenterHostName !== host.hostName && (
+                            <div className="text-[11px] text-muted-foreground truncate">{host.vcenterHostName}</div>
                           )}
                         </div>
-                        <div className="text-[11px]">{getStatusBadge(host.status)}</div>
+                        <div className="flex items-center gap-2 text-[11px]">
+                          {host.blockerCount > 0 && (
+                            <Badge variant="outline" className="border-orange-500/60 text-orange-600">
+                              {host.blockerCount} blocker{host.blockerCount === 1 ? '' : 's'}
+                            </Badge>
+                          )}
+                          {getStatusBadge(host.status)}
+                        </div>
                       </div>
-                      {(host.managementIp || host.clusterName || host.maintenanceWindow) && (
+                      {(host.managementIp || host.clusterName || host.maintenanceWindow || host.nodeRole) && (
                         <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
                           {host.managementIp && (
                             <span className="flex items-center gap-1">
@@ -1449,6 +1378,12 @@ export const WorkflowExecutionViewer = ({
                             <span className="flex items-center gap-1">
                               <ChevronRight className="h-3 w-3" />
                               {host.clusterName}
+                            </span>
+                          )}
+                          {host.nodeRole && (
+                            <span className="flex items-center gap-1">
+                              <ChevronRight className="h-3 w-3" />
+                              {host.nodeRole}
                             </span>
                           )}
                           {host.maintenanceWindow && (
@@ -1464,6 +1399,9 @@ export const WorkflowExecutionViewer = ({
                       )}
                       <div className="mt-1 text-xs text-muted-foreground">
                         <span className="font-semibold text-foreground">{host.lastAction}</span>
+                        {host.lastActionId && host.lastActionId !== host.lastAction && (
+                          <span className="ml-1 text-[11px] text-muted-foreground">({host.lastActionId})</span>
+                        )}
                       </div>
                       {host.lastTaskContext && (
                         <div className="mt-1 text-[11px] text-muted-foreground">
@@ -1478,29 +1416,22 @@ export const WorkflowExecutionViewer = ({
                             <Clock className="h-3 w-3" />
                             {host.completedAgo}
                           </span>
-                          <div className="text-[11px]">{getStatusBadge(host.status)}</div>
-                        </div>
-                        {presentation.secondaryLine && (
-                          <div className="text-[11px] text-muted-foreground truncate mt-0.5">
-                            {presentation.secondaryLine}
-                          </div>
                         )}
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          <span className="font-semibold text-foreground">{host.lastAction}</span>
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
-                          <span>{host.completedCount}/{host.totalCount} steps</span>
-                          <span>Elapsed: {host.duration}</span>
-                          {host.completedAgo && (
-                            <span className="flex items-center gap-1">
-                              <Clock className="h-3 w-3" />
-                              {host.completedAgo}
-                            </span>
-                          )}
-                        </div>
+                        {host.lastSuccessAt && (
+                          <span className="flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            {formatDistanceToNow(new Date(host.lastSuccessAt), { addSuffix: true })}
+                          </span>
+                        )}
+                        {host.hostStepStatus === 'blocked' && (
+                          <span className="flex items-center gap-1 text-orange-600">
+                            <AlertTriangle className="h-3 w-3" />
+                            Blocked
+                          </span>
+                        )}
                       </div>
-                    );
-                  })}
+                    </div>
+                  ))}
                 </div>
               </CardContent>
             </Card>
