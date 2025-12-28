@@ -17,7 +17,8 @@ import {
   RefreshCw,
   Monitor,
   ExternalLink,
-  ListCollapse
+  ListCollapse,
+  AlertTriangle
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -690,34 +691,21 @@ export const WorkflowExecutionViewer = ({
       };
     });
 
-    const statusPriority: Record<string, number> = {
-      running: 0,
-      failed: 1,
-      paused: 2,
-      pending: 3,
-      cancelled: 4,
-      completed: 5,
-      skipped: 6
-    };
+    if (typeof blocker?.details === 'string' && blocker.details.length > 0) {
+      return blocker.details;
+    }
 
     return Object.entries(hostMap)
       .map(([hostName, hostData]) => {
         const sortedSteps = [...hostData.steps].sort((a, b) => a.step_number - b.step_number);
         const effectiveStatuses = sortedSteps.map((step) => getEffectiveStepStatus(step.step_status));
 
-        let derivedStatus = 'pending';
-        if (effectiveStatuses.includes('failed')) derivedStatus = 'failed';
-        else if (effectiveStatuses.includes('running')) derivedStatus = 'running';
-        else if (effectiveStatuses.includes('paused')) derivedStatus = 'paused';
-        else if (sortedSteps.every((s) => ['completed', 'skipped'].includes(getEffectiveStepStatus(s.step_status)))) {
-          derivedStatus = 'completed';
-        }
+    if (typeof blocker?.vm_name === 'string' && blocker.vm_name.length > 0) {
+      return blocker.vm_name;
+    }
 
-        const firstStart = sortedSteps.find((s) => s.step_started_at)?.step_started_at || null;
-        const lastComplete = [...sortedSteps].reverse().find((s) => s.step_completed_at)?.step_completed_at || null;
-        const lastActivity = [...sortedSteps]
-          .reverse()
-          .find((s) => s.step_completed_at || s.step_started_at) || sortedSteps[sortedSteps.length - 1];
+    return 'Blocker';
+  };
 
         const { label: lastAction, rawId: lastActionId } = getStepDisplayInfo(
           lastActivity?.step_name,
@@ -1010,6 +998,69 @@ export const WorkflowExecutionViewer = ({
       }))
     );
   }, [workflowBlockers]);
+
+  const hostSummaries = useMemo<HostSummary[]>(() => {
+    if (workflowType !== 'rolling_cluster_update' || steps.length === 0) return [];
+
+    const hostMap: Record<string, WorkflowStep[]> = {};
+
+    steps.forEach((step) => {
+      const hostName = extractHostName(step);
+      if (!hostName) return;
+      if (!hostMap[hostName]) hostMap[hostName] = [];
+      hostMap[hostName].push(step);
+    });
+
+    const statusPriority: Record<string, number> = {
+      running: 0,
+      failed: 1,
+      paused: 2,
+      pending: 3,
+      cancelled: 4,
+      completed: 5,
+      skipped: 6
+    };
+
+    return Object.entries(hostMap)
+      .map(([hostName, hostSteps]) => {
+        const sortedSteps = [...hostSteps].sort((a, b) => a.step_number - b.step_number);
+        const effectiveStatuses = sortedSteps.map((step) => getEffectiveStepStatus(step.step_status));
+
+        let derivedStatus = 'pending';
+        if (effectiveStatuses.includes('failed')) derivedStatus = 'failed';
+        else if (effectiveStatuses.includes('running')) derivedStatus = 'running';
+        else if (effectiveStatuses.includes('paused')) derivedStatus = 'paused';
+        else if (sortedSteps.every((s) => ['completed', 'skipped'].includes(getEffectiveStepStatus(s.step_status)))) {
+          derivedStatus = 'completed';
+        }
+
+        const firstStart = sortedSteps.find((s) => s.step_started_at)?.step_started_at || null;
+        const lastComplete = [...sortedSteps].reverse().find((s) => s.step_completed_at)?.step_completed_at || null;
+        const lastActivity = [...sortedSteps]
+          .reverse()
+          .find((s) => s.step_completed_at || s.step_started_at) || sortedSteps[sortedSteps.length - 1];
+
+        const lastAction = lastActivity?.step_name?.split(':')[0]?.trim() || 'In progress';
+        const completedAgo = lastComplete
+          ? formatDistanceToNow(new Date(lastComplete), { addSuffix: true })
+          : null;
+
+        const completedCount = sortedSteps.filter((s) => ['completed', 'skipped'].includes(getEffectiveStepStatus(s.step_status))).length;
+        const blockerSummary = getHostBlockerSummary(hostName);
+
+        return {
+          hostName,
+          status: derivedStatus,
+          lastAction,
+          duration: formatTotalDuration(firstStart, lastComplete || (derivedStatus === 'running' ? new Date().toISOString() : null)),
+          completedAgo,
+          completedCount,
+          totalCount: sortedSteps.length,
+          blockerSummary
+        };
+      })
+      .sort((a, b) => (statusPriority[a.status] ?? 10) - (statusPriority[b.status] ?? 10));
+  }, [workflowType, steps, overallStatus, workflowBlockers]);
 
   // Auto-show blocker wizard when job pauses awaiting resolution
   // Also handles fallback case where job status update failed but step has blockers
