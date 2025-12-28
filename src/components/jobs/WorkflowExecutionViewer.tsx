@@ -413,6 +413,20 @@ export const WorkflowExecutionViewer = ({
     return null;
   };
 
+  // Helper to get effective step status - treats running/pending as cancelled if job is cancelled
+  const getEffectiveStepStatus = (stepStatus: string) => {
+    if (blockerScanAwaitingResolution && stepStatus === 'running') {
+      return 'paused';
+    }
+    if (effectiveJobStatus === 'paused' && ['running', 'pending'].includes(stepStatus)) {
+      return 'paused';
+    }
+    if (effectiveJobStatus === 'cancelled' && ['running', 'pending'].includes(stepStatus)) {
+      return 'cancelled';
+    }
+    return stepStatus;
+  };
+
   const hostSummaries = useMemo<HostSummary[]>(() => {
     if (workflowType !== 'rolling_cluster_update' || steps.length === 0) return [];
 
@@ -473,20 +487,6 @@ export const WorkflowExecutionViewer = ({
       })
       .sort((a, b) => (statusPriority[a.status] ?? 10) - (statusPriority[b.status] ?? 10));
   }, [workflowType, steps, overallStatus]);
-
-  // Helper to get effective step status - treats running/pending as cancelled if job is cancelled
-  const getEffectiveStepStatus = (stepStatus: string) => {
-    if (blockerScanAwaitingResolution && stepStatus === 'running') {
-      return 'paused';
-    }
-    if (effectiveJobStatus === 'paused' && ['running', 'pending'].includes(stepStatus)) {
-      return 'paused';
-    }
-    if (effectiveJobStatus === 'cancelled' && ['running', 'pending'].includes(stepStatus)) {
-      return 'cancelled';
-    }
-    return stepStatus;
-  };
 
   const formatDuration = (start: string | null, end: string | null, stepStatus?: string) => {
     if (!start) return '-';
