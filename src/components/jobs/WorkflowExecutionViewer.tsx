@@ -64,9 +64,22 @@ interface HostSummary {
   status: string;
   lastAction: string;
   duration: string;
+  serverId?: string | null;
+  hostId?: string | null;
+  nodeRole?: string | null;
+  managementAddress?: string | null;
+  vcenterHostName?: string | null;
   completedAgo?: string | null;
   completedCount: number;
   totalCount: number;
+}
+
+interface ServerMetadata {
+  serverId: string;
+  hostname?: string | null;
+  ipAddress?: string | null;
+  vcenterHostName?: string | null;
+  nodeRole?: string | null;
 }
 
 export const WorkflowExecutionViewer = ({ 
@@ -84,6 +97,7 @@ export const WorkflowExecutionViewer = ({
   const [currentOperation, setCurrentOperation] = useState<any>(null);
   const [showBlockerWizard, setShowBlockerWizard] = useState(false);
   const [showFullTimeline, setShowFullTimeline] = useState(workflowType !== 'rolling_cluster_update');
+  const [serverMetadata, setServerMetadata] = useState<Record<string, ServerMetadata>>({});
   
   // Internal state to track job status/details independently
   const [internalJobStatus, setInternalJobStatus] = useState<string | null>(null);
@@ -368,6 +382,24 @@ export const WorkflowExecutionViewer = ({
     return Boolean(awaitingResolutionFlag || (scanComplete && hasBlockers && effectiveJobStatus === 'running'));
   }, [effectiveJobDetails, effectiveJobStatus, steps]);
 
+  const hostRoleMap = useMemo(() => {
+    const map: Record<string, { nodeRole?: string | null; vcenterHostName?: string | null }> = {};
+    const hostResults = effectiveJobDetails?.workflow_results?.host_results ?? [];
+
+    hostResults.forEach((host: any) => {
+      const serverId = host?.server_id || host?.host_id;
+      if (!serverId) return;
+
+      const nodeRole = host?.node_role || host?.role || host?.host_role || host?.nodeRole;
+      map[serverId] = {
+        nodeRole: nodeRole ?? null,
+        vcenterHostName: host?.host_name ?? host?.name ?? null
+      };
+    });
+
+    return map;
+  }, [effectiveJobDetails?.workflow_results?.host_results]);
+
   const getOverallStatus = () => {
     // If job has a terminal status (from props or internal state), use it
     if (effectiveJobStatus && ['failed', 'completed', 'cancelled'].includes(effectiveJobStatus)) {
@@ -386,6 +418,82 @@ export const WorkflowExecutionViewer = ({
     () => getOverallStatus(),
     [effectiveJobStatus, steps, blockerScanAwaitingResolution]
   );
+
+  const serverIdsForMetadata = useMemo(() => {
+    const ids = new Set<string>();
+
+    steps.forEach((step) => {
+      if (step.server_id) ids.add(step.server_id);
+      if (step.host_id) ids.add(step.host_id);
+    });
+
+    const hostResults = effectiveJobDetails?.workflow_results?.host_results ?? [];
+    hostResults.forEach((host: any) => {
+      if (host?.server_id) {
+        ids.add(host.server_id);
+      } else if (host?.host_id) {
+        ids.add(host.host_id);
+      }
+    });
+
+    return Array.from(ids);
+  }, [steps, effectiveJobDetails?.workflow_results?.host_results]);
+
+  const serverIdsKey = useMemo(() => serverIdsForMetadata.slice().sort().join(','), [serverIdsForMetadata]);
+  const hostRoleKey = useMemo(() => JSON.stringify(hostRoleMap), [hostRoleMap]);
+
+  useEffect(() => {
+    if (!serverIdsKey) return;
+
+    const loadMetadata = async () => {
+      try {
+        const { data: serversData, error } = await supabase
+          .from('servers')
+          .select('id, hostname, ip_address, vcenter_host_id')
+          .in('id', serverIdsForMetadata);
+
+        if (error) throw error;
+
+        const vcenterIds = (serversData || [])
+          .map((server: any) => server.vcenter_host_id)
+          .filter(Boolean);
+
+        const uniqueVcenterIds = Array.from(new Set(vcenterIds));
+        let vcenterMap: Record<string, { name?: string | null; server_id?: string | null }> = {};
+
+        if (uniqueVcenterIds.length > 0) {
+          const { data: vcenterData, error: vcError } = await supabase
+            .from('vcenter_hosts')
+            .select('id, name, server_id')
+            .in('id', uniqueVcenterIds as string[]);
+
+          if (vcError) throw vcError;
+
+          vcenterData?.forEach((vc: any) => {
+            vcenterMap[vc.id] = { name: vc.name, server_id: vc.server_id };
+          });
+        }
+
+        const metadataUpdate: Record<string, ServerMetadata> = {};
+        (serversData || []).forEach((server: any) => {
+          const roleInfo = hostRoleMap[server.id];
+          metadataUpdate[server.id] = {
+            serverId: server.id,
+            hostname: server.hostname,
+            ipAddress: server.ip_address,
+            vcenterHostName: (server.vcenter_host_id && vcenterMap[server.vcenter_host_id]?.name) || roleInfo?.vcenterHostName || null,
+            nodeRole: roleInfo?.nodeRole ?? null
+          };
+        });
+
+        setServerMetadata((prev) => ({ ...prev, ...metadataUpdate }));
+      } catch (error) {
+        console.error('Error fetching server metadata:', error);
+      }
+    };
+
+    loadMetadata();
+  }, [serverIdsKey, hostRoleKey]);
 
   const formatTotalDuration = (start: string | null, end: string | null) => {
     if (!start) return '-';
@@ -430,13 +538,40 @@ export const WorkflowExecutionViewer = ({
   const hostSummaries = useMemo<HostSummary[]>(() => {
     if (workflowType !== 'rolling_cluster_update' || steps.length === 0) return [];
 
-    const hostMap: Record<string, WorkflowStep[]> = {};
+    const hostMap: Record<string, { steps: WorkflowStep[]; hostName: string; serverId?: string | null; hostId?: string | null; managementAddress?: string | null; vcenterHostName?: string | null }> = {};
 
     steps.forEach((step) => {
-      const hostName = extractHostName(step);
-      if (!hostName) return;
-      if (!hostMap[hostName]) hostMap[hostName] = [];
-      hostMap[hostName].push(step);
+      const hostName = extractHostName(step) || 'Unknown Host';
+      const key = step.server_id || step.host_id || hostName;
+
+      if (!hostMap[key]) {
+        hostMap[key] = {
+          steps: [],
+          hostName,
+          serverId: step.server_id ?? null,
+          hostId: step.host_id ?? null,
+          managementAddress: step.step_details?.host_ip || step.step_details?.ip_address || step.step_details?.idrac_ip || null,
+          vcenterHostName: step.step_details?.host_name || null
+        };
+      }
+
+      hostMap[key].steps.push(step);
+
+      if (!hostMap[key].serverId && step.server_id) {
+        hostMap[key].serverId = step.server_id;
+      }
+      if (!hostMap[key].hostId && step.host_id) {
+        hostMap[key].hostId = step.host_id;
+      }
+      if (
+        !hostMap[key].managementAddress &&
+        (step.step_details?.host_ip || step.step_details?.ip_address || step.step_details?.idrac_ip)
+      ) {
+        hostMap[key].managementAddress = step.step_details.host_ip || step.step_details.ip_address || step.step_details.idrac_ip;
+      }
+      if (!hostMap[key].vcenterHostName && step.step_details?.host_name) {
+        hostMap[key].vcenterHostName = step.step_details.host_name;
+      }
     });
 
     const statusPriority: Record<string, number> = {
@@ -450,8 +585,8 @@ export const WorkflowExecutionViewer = ({
     };
 
     return Object.entries(hostMap)
-      .map(([hostName, hostSteps]) => {
-        const sortedSteps = [...hostSteps].sort((a, b) => a.step_number - b.step_number);
+      .map(([key, hostData]) => {
+        const sortedSteps = [...hostData.steps].sort((a, b) => a.step_number - b.step_number);
         const effectiveStatuses = sortedSteps.map((step) => getEffectiveStepStatus(step.step_status));
 
         let derivedStatus = 'pending';
@@ -475,8 +610,16 @@ export const WorkflowExecutionViewer = ({
 
         const completedCount = sortedSteps.filter((s) => ['completed', 'skipped'].includes(getEffectiveStepStatus(s.step_status))).length;
 
+        const nodeRole = hostRoleMap[hostData.serverId || hostData.hostId || key]?.nodeRole ?? null;
+        const vcenterHostName = hostRoleMap[hostData.serverId || hostData.hostId || key]?.vcenterHostName ?? hostData.vcenterHostName ?? null;
+
         return {
-          hostName,
+          hostName: hostData.hostName,
+          serverId: hostData.serverId ?? null,
+          hostId: hostData.hostId ?? null,
+          nodeRole,
+          managementAddress: hostData.managementAddress,
+          vcenterHostName,
           status: derivedStatus,
           lastAction,
           duration: formatTotalDuration(firstStart, lastComplete || (derivedStatus === 'running' ? new Date().toISOString() : null)),
@@ -486,7 +629,20 @@ export const WorkflowExecutionViewer = ({
         };
       })
       .sort((a, b) => (statusPriority[a.status] ?? 10) - (statusPriority[b.status] ?? 10));
-  }, [workflowType, steps, overallStatus]);
+  }, [workflowType, steps, overallStatus, hostRoleMap]);
+
+  const getHostPresentation = (host: HostSummary) => {
+    const metadata = host.serverId ? serverMetadata[host.serverId] : undefined;
+    const primaryName = metadata?.vcenterHostName || metadata?.hostname || host.hostName;
+    const nodeRole = metadata?.nodeRole || host.nodeRole;
+    const secondaryLine =
+      metadata?.ipAddress ||
+      host.managementAddress ||
+      ((metadata?.vcenterHostName && metadata?.vcenterHostName !== primaryName) ? metadata.vcenterHostName : null) ||
+      host.vcenterHostName;
+
+    return { primaryName, nodeRole, secondaryLine };
+  };
 
   const formatDuration = (start: string | null, end: string | null, stepStatus?: string) => {
     if (!start) return '-';
@@ -987,27 +1143,41 @@ export const WorkflowExecutionViewer = ({
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {hostSummaries.map((host) => (
-                    <div key={host.hostName} className="p-3 rounded-lg border bg-background shadow-sm">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium text-sm truncate">{host.hostName}</span>
-                        <div className="text-[11px]">{getStatusBadge(host.status)}</div>
-                      </div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        <span className="font-semibold text-foreground">{host.lastAction}</span>
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
-                        <span>{host.completedCount}/{host.totalCount} steps</span>
-                        <span>Elapsed: {host.duration}</span>
-                        {host.completedAgo && (
-                          <span className="flex items-center gap-1">
-                            <Clock className="h-3 w-3" />
-                            {host.completedAgo}
+                  {hostSummaries.map((host) => {
+                    const presentation = getHostPresentation(host);
+
+                    return (
+                      <div key={host.serverId || host.hostName} className="p-3 rounded-lg border bg-background shadow-sm">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium text-sm truncate">
+                            {presentation.primaryName}
+                            {presentation.nodeRole && (
+                              <span className="ml-2 text-xs text-muted-foreground">({presentation.nodeRole})</span>
+                            )}
                           </span>
+                          <div className="text-[11px]">{getStatusBadge(host.status)}</div>
+                        </div>
+                        {presentation.secondaryLine && (
+                          <div className="text-[11px] text-muted-foreground truncate mt-0.5">
+                            {presentation.secondaryLine}
+                          </div>
                         )}
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          <span className="font-semibold text-foreground">{host.lastAction}</span>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
+                          <span>{host.completedCount}/{host.totalCount} steps</span>
+                          <span>Elapsed: {host.duration}</span>
+                          {host.completedAgo && (
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              {host.completedAgo}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </CardContent>
             </Card>
