@@ -229,7 +229,8 @@ class ClusterHandler(BaseHandler):
             'vm_name': 255,
             'reason': 255,
             'details': 2000,
-            'remediation': 2000
+            'remediation': 2000,
+            'warning': 512  # Add missing 'warning' key that was causing KeyError
         }
 
         def _truncate(value: Any, limit: int) -> Optional[str]:
