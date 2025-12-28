@@ -31,6 +31,7 @@ import { HostBlockerAnalysis } from "@/lib/host-priority-calculator";
 import { buildMaintenanceBlockerResolutions } from "@/lib/maintenance-blocker-resolutions";
 import { launchConsole } from "@/lib/job-executor-api";
 import { toast } from "sonner";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface WorkflowExecutionViewerProps {
   jobId: string;
@@ -81,6 +82,7 @@ interface HostSummary {
   lastTaskContext?: string | null;
   status: string;
   lastAction: string;
+  lastActionId: string;
   duration: string;
   serverId?: string | null;
   hostId?: string | null;
@@ -696,7 +698,10 @@ export const WorkflowExecutionViewer = ({
           .reverse()
           .find((s) => s.step_completed_at || s.step_started_at) || sortedSteps[sortedSteps.length - 1];
 
-        const lastAction = lastActivity?.step_name?.split(':')[0]?.trim() || 'In progress';
+        const { label: lastAction, rawId: lastActionId } = getStepDisplayInfo(
+          lastActivity?.step_name,
+          lastActivity?.step_details?.step_id
+        );
         const completedAgo = lastComplete
           ? formatDistanceToNow(new Date(lastComplete), { addSuffix: true })
           : null;
@@ -726,6 +731,7 @@ export const WorkflowExecutionViewer = ({
           lastTaskContext: taskContext,
           status: derivedStatus,
           lastAction,
+          lastActionId,
           duration: formatTotalDuration(firstStart, lastComplete || (derivedStatus === 'running' ? new Date().toISOString() : null)),
           completedAgo,
           completedCount,
