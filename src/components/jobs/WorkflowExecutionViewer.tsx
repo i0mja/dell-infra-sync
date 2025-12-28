@@ -87,28 +87,6 @@ export const WorkflowExecutionViewer = ({
   const effectiveJobStatus = internalJobStatus ?? jobStatus;
   const effectiveJobDetails = internalJobDetails ?? jobDetails;
 
-  const blockerScanStep = useMemo(() => {
-    return steps.find((step) => step.step_name?.toLowerCase().includes('blocker scan'));
-  }, [steps]);
-
-  // Detect a blocker scan that finished scanning all hosts, found blockers, but never moved
-  // to a paused/completed state (stuck in "running").
-  const blockerScanAwaitingResolution = useMemo(() => {
-    if (!blockerScanStep || blockerScanStep.step_status !== 'running') return false;
-    const details = blockerScanStep.step_details || {};
-    const hostsTotal = details.hosts_total ?? details.hostsTotal ?? 0;
-    const hostsScanned = details.hosts_scanned ?? details.hostsScanned ?? 0;
-    const hostsWithBlockers = details.hosts_with_blockers ?? details.hostsWithBlockers ?? 0;
-    const progressPct = details.progress_pct ?? details.progressPct ?? 0;
-
-    return (
-      hostsWithBlockers > 0 &&
-      hostsTotal > 0 &&
-      hostsScanned >= hostsTotal &&
-      progressPct >= 99
-    );
-  }, [blockerScanStep]);
-
   useEffect(() => {
     fetchSteps();
     fetchJobData();
