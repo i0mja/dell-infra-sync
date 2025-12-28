@@ -260,14 +260,26 @@ class DatabaseMixin:
                     minimal_payload = {"status": status}
                     
                     if status == 'paused':
-                        # Include only essential pause fields
+                        # Include only essential pause fields plus blockers if small enough
                         minimal_payload["details"] = {
                             "pause_reason": details.get("pause_reason", "Paused - check workflow steps") if details else "Paused",
                             "awaiting_blocker_resolution": details.get("awaiting_blocker_resolution", False) if details else False,
                             "hosts_with_blockers": details.get("hosts_with_blockers", 0) if details else 0,
+                            "total_critical_blockers": details.get("total_critical_blockers", 0) if details else 0,
                             "can_retry": True,
                             "fallback_update": True
                         }
+                        # Try to include blockers if small enough (under 50KB)
+                        if details and details.get('current_blockers'):
+                            try:
+                                blockers_json = json.dumps(details['current_blockers'])
+                                if len(blockers_json) < 50000:
+                                    minimal_payload["details"]["current_blockers"] = details['current_blockers']
+                                    self.log(f"Including blockers in fallback ({len(blockers_json)} bytes)", "DEBUG")
+                                else:
+                                    self.log(f"Blockers too large for fallback ({len(blockers_json)} bytes), stored in workflow step", "WARN")
+                            except Exception as blocker_err:
+                                self.log(f"Could not serialize blockers for fallback: {blocker_err}", "WARN")
                     
                     try:
                         fallback_response = requests.patch(

@@ -546,6 +546,15 @@ export const WorkflowExecutionViewer = ({
       }
     }
 
+    // Priority 2.5: Check raw_blockers_backup (emergency backup from scan phase)
+    const rawBackup = effectiveJobDetails?.raw_blockers_backup;
+    if (Object.keys(blockers).length === 0 && rawBackup && typeof rawBackup === 'object') {
+      Object.entries(rawBackup).forEach(([serverId, analysis]: [string, any]) => {
+        const extracted = extractBlockersFromSource(analysis, serverId);
+        if (extracted) blockers[serverId] = extracted;
+      });
+    }
+
     // Priority 3: Check host_results from workflow_results (for per-host failures)
     const hostResults = effectiveJobDetails?.workflow_results?.host_results ?? [];
     hostResults.forEach((host: any, index: number) => {
@@ -942,6 +951,69 @@ export const WorkflowExecutionViewer = ({
                 <div className="font-semibold mb-1">Job Failed</div>
                 <div className="font-mono text-xs whitespace-pre-wrap">
                   {effectiveJobDetails.error}
+                </div>
+              </AlertDescription>
+            </Alert>
+          </>
+        )}
+
+        {/* Failed Job with Blockers Available - Force Resume option */}
+        {overallStatus === 'failed' && Object.keys(workflowBlockers).length > 0 && (
+          <>
+            <Separator />
+            <Alert className="border-orange-500/50 bg-orange-500/10">
+              <XCircle className="h-4 w-4 text-orange-500" />
+              <AlertDescription className="mt-2">
+                <div className="font-semibold mb-1 text-orange-600">Job Failed - Blockers Available</div>
+                <div className="text-xs text-muted-foreground mb-3">
+                  The job failed during blocker scan, but {Object.keys(workflowBlockers).length} host(s) with blockers were detected.
+                  You can attempt to recover by resolving the blockers and resuming the job.
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => setShowBlockerWizard(true)}
+                    className="bg-orange-500 hover:bg-orange-600"
+                  >
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Open Resolution Wizard
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={async () => {
+                      // Find blocker data from any available source
+                      const blockerData = effectiveJobDetails?.current_blockers || 
+                                          effectiveJobDetails?.raw_blockers_backup ||
+                                          pausedBlockerStep?.step_details?.current_blockers;
+                      
+                      if (blockerData) {
+                        try {
+                          // Use 'pending' status to trigger re-check, blockers will pause again
+                          await supabase.from('jobs').update({
+                            status: 'pending',
+                            details: {
+                              ...effectiveJobDetails,
+                              awaiting_blocker_resolution: true,
+                              current_blockers: blockerData,
+                              force_recovered: true,
+                              force_recovered_at: new Date().toISOString()
+                            }
+                          }).eq('id', jobId);
+                          toast.success('Job recovered - blocker wizard will open');
+                          fetchJobData();
+                          setTimeout(() => setShowBlockerWizard(true), 500);
+                        } catch (err) {
+                          toast.error('Failed to recover job');
+                        }
+                      } else {
+                        toast.error('No blocker data available for recovery');
+                      }
+                    }}
+                    className="border-orange-500/50 text-orange-600"
+                  >
+                    Force Resume to Paused
+                  </Button>
                 </div>
               </AlertDescription>
             </Alert>
