@@ -458,6 +458,26 @@ class ClusterHandler(BaseHandler):
         if all_current_blockers:
             unresolved_count = len(all_current_blockers) - len(vms_for_auto_power_off)
             
+            # STEP 5: Early blocker storage - store immediately after scan as safety net
+            try:
+                early_sanitized = self._sanitize_blockers_for_storage(all_current_blockers)
+                # Log size for debugging
+                import json
+                blockers_size = len(json.dumps(early_sanitized))
+                self.log(f"  Blocker data size: {blockers_size} bytes", "DEBUG")
+                if blockers_size > 100000:
+                    self.log(f"  ⚠ Large blocker data ({blockers_size} bytes) - may cause issues", "WARN")
+                
+                self.update_job_details_field(job['id'], {
+                    'blocker_scan_complete': True,
+                    'raw_blockers_backup': early_sanitized,
+                    'blocker_scan_hosts': len(all_current_blockers),
+                    'blocker_scan_critical': total_critical_blockers
+                })
+                self.log(f"  ✓ Stored blocker backup in job details")
+            except Exception as e:
+                self.log(f"  Warning: Could not store early blocker backup: {e}", "WARN")
+            
             # Store auto power-off VMs in job details for per-host processing
             if vms_for_auto_power_off:
                 self.update_job_details_field(job['id'], {
@@ -522,41 +542,81 @@ class ClusterHandler(BaseHandler):
                 # Sanitize blockers for JSON storage
                 sanitized_blockers = self._sanitize_blockers_for_storage(all_current_blockers)
                 
-                # IMPORTANT: Store blockers in workflow step details as backup
-                # This ensures UI can recover even if job status update fails
-                self._log_workflow_step(
-                    job['id'], 'rolling_cluster_update',
-                    step_number=workflow_step_counter,
-                    step_name="Comprehensive blocker scan",
-                    status='paused',
-                    step_details={
+                # Wrap blocker processing in try-except to prevent 'warning' becoming error message
+                try:
+                    # IMPORTANT: Store blockers in workflow step details as backup
+                    # This ensures UI can recover even if job status update fails
+                    self._log_workflow_step(
+                        job['id'], 'rolling_cluster_update',
+                        step_number=workflow_step_counter,
+                        step_name="Comprehensive blocker scan",
+                        status='paused',
+                        step_details={
+                            'hosts_with_blockers': len(all_current_blockers),
+                            'total_critical_blockers': total_critical_blockers,
+                            'auto_power_off_hosts': len(vms_for_auto_power_off),
+                            'awaiting_resolution': True,
+                            'current_blockers': sanitized_blockers,  # Store blockers here as backup
+                            'blocker_analysis_at': utc_now_iso(),
+                            'recovery_available': True
+                        },
+                        step_completed_at=utc_now_iso()
+                    )
+                    
+                    # Pause job for wizard resolution
+                    update_success = self.update_job_status(job['id'], 'paused', details={
+                        'pause_reason': f'Maintenance blockers detected on {len(all_current_blockers)} host(s) - wizard resolution required',
+                        'awaiting_blocker_resolution': True,
+                        'current_blockers': sanitized_blockers,
+                        'blocker_analysis_at': utc_now_iso(),
+                        'can_retry': True,
                         'hosts_with_blockers': len(all_current_blockers),
-                        'total_critical_blockers': total_critical_blockers,
-                        'auto_power_off_hosts': len(vms_for_auto_power_off),
-                        'awaiting_resolution': True,
-                        'current_blockers': sanitized_blockers,  # Store blockers here as backup
-                        'blocker_analysis_at': utc_now_iso()
-                    },
-                    step_completed_at=utc_now_iso()
-                )
-                
-                # Pause job for wizard resolution
-                update_success = self.update_job_status(job['id'], 'paused', details={
-                    'pause_reason': f'Maintenance blockers detected on {len(all_current_blockers)} host(s) - wizard resolution required',
-                    'awaiting_blocker_resolution': True,
-                    'current_blockers': sanitized_blockers,
-                    'blocker_analysis_at': utc_now_iso(),
-                    'can_retry': True,
-                    'hosts_with_blockers': len(all_current_blockers),
-                    'total_critical_blockers': total_critical_blockers
-                })
-                
-                if not update_success:
-                    self.log("⚠️ Warning: Job status update to 'paused' failed - blockers stored in workflow step", "WARN")
-                    self.log("   → User can still resolve blockers via workflow step details", "INFO")
-                
-                self.log("")
-                self.log("⏸️ Job paused - awaiting blocker resolution from user")
+                        'total_critical_blockers': total_critical_blockers
+                    })
+                    
+                    if not update_success:
+                        self.log("⚠️ Warning: Job status update to 'paused' failed - blockers stored in workflow step", "WARN")
+                        self.log("   → User can still resolve blockers via workflow step details", "INFO")
+                        # Update step with explicit recovery mode flag
+                        self._log_workflow_step(
+                            job['id'], 'rolling_cluster_update',
+                            step_number=workflow_step_counter,
+                            step_name="Comprehensive blocker scan",
+                            status='paused',
+                            step_details={
+                                'hosts_with_blockers': len(all_current_blockers),
+                                'total_critical_blockers': total_critical_blockers,
+                                'awaiting_resolution': True,
+                                'current_blockers': sanitized_blockers,
+                                'job_update_failed': True,
+                                'recovery_mode': True,
+                                'recovery_available': True
+                            },
+                            step_completed_at=utc_now_iso()
+                        )
+                    
+                    self.log("")
+                    self.log("⏸️ Job paused - awaiting blocker resolution from user")
+                    
+                except Exception as blocker_err:
+                    self.log(f"Error processing blockers for pause: {blocker_err}", "ERROR")
+                    # Mark step as failed with proper error (not just 'warning')
+                    self._log_workflow_step(
+                        job['id'], 'rolling_cluster_update',
+                        step_number=workflow_step_counter,
+                        step_name="Comprehensive blocker scan",
+                        status='failed',
+                        step_error=f"Blocker processing failed: {str(blocker_err)}",
+                        step_details={
+                            'hosts_with_blockers': len(all_current_blockers),
+                            'total_critical_blockers': total_critical_blockers,
+                            'current_blockers': sanitized_blockers,
+                            'processing_error': str(blocker_err),
+                            'recovery_available': True
+                        },
+                        step_completed_at=utc_now_iso()
+                    )
+                    raise Exception(f"Blocker scan processing failed: {str(blocker_err)}")
                 
                 return False, workflow_step_counter + 1, all_current_blockers
         
@@ -1153,6 +1213,30 @@ class ClusterHandler(BaseHandler):
         result = self._check_and_handle_cancellation(job, cleanup_state)
         return result == 'graceful'
     
+    def _deep_sanitize_for_json(self, obj):
+        """
+        Recursively ensure all values are JSON-serializable.
+        Converts complex objects (pyvmomi references, etc.) to simple types.
+        """
+        import json
+        from datetime import datetime as dt
+        
+        if obj is None:
+            return None
+        if isinstance(obj, (str, int, float, bool)):
+            return obj
+        if isinstance(obj, dict):
+            return {str(k): self._deep_sanitize_for_json(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [self._deep_sanitize_for_json(i) for i in obj]
+        if isinstance(obj, dt):
+            return obj.isoformat()
+        # Convert anything else to string representation
+        try:
+            return str(obj)
+        except:
+            return "<non-serializable>"
+    
     def _log_workflow_step(self, job_id: str, workflow_type: str, step_number: int, 
                            step_name: str, status: str, server_id: str = None, 
                            host_id: str = None, cluster_id: str = None,
@@ -1160,8 +1244,18 @@ class ClusterHandler(BaseHandler):
                            step_started_at: str = None, step_completed_at: str = None):
         """Insert or update workflow execution step in database for real-time UI updates"""
         from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        import json
         
         try:
+            # Sanitize step_details if provided to ensure JSON-serializable
+            sanitized_details = step_details
+            if step_details:
+                try:
+                    json.dumps(step_details)
+                except (TypeError, ValueError) as json_err:
+                    self.log(f"Step details contain non-serializable data, sanitizing: {json_err}", "DEBUG")
+                    sanitized_details = self._deep_sanitize_for_json(step_details)
+            
             # Check if step exists
             response = requests.get(
                 f"{DSM_URL}/rest/v1/workflow_executions?job_id=eq.{job_id}&step_number=eq.{step_number}",
@@ -1178,7 +1272,7 @@ class ClusterHandler(BaseHandler):
                 'server_id': server_id,
                 'host_id': host_id,
                 'cluster_id': cluster_id,
-                'step_details': step_details,
+                'step_details': sanitized_details,
                 'step_error': step_error,
                 'step_started_at': step_started_at,
                 'step_completed_at': step_completed_at
@@ -1190,7 +1284,7 @@ class ClusterHandler(BaseHandler):
             if response.status_code == 200 and response.json():
                 # Update existing step
                 step_id = response.json()[0]['id']
-                requests.patch(
+                patch_response = requests.patch(
                     f"{DSM_URL}/rest/v1/workflow_executions?id=eq.{step_id}",
                     headers={
                         'apikey': SERVICE_ROLE_KEY, 
@@ -1201,9 +1295,11 @@ class ClusterHandler(BaseHandler):
                     json=step_data,
                     verify=VERIFY_SSL
                 )
+                if patch_response.status_code not in [200, 204]:
+                    self.log(f"Failed to update workflow step {step_name}: {patch_response.status_code} - {patch_response.text[:200]}", "WARN")
             else:
                 # Insert new step
-                requests.post(
+                post_response = requests.post(
                     f"{DSM_URL}/rest/v1/workflow_executions",
                     headers={
                         'apikey': SERVICE_ROLE_KEY,
@@ -1214,6 +1310,8 @@ class ClusterHandler(BaseHandler):
                     json=step_data,
                     verify=VERIFY_SSL
                 )
+                if post_response.status_code not in [200, 201]:
+                    self.log(f"Failed to insert workflow step {step_name}: {post_response.status_code} - {post_response.text[:200]}", "WARN")
         except Exception as e:
             self.log(f"Failed to log workflow step: {e}", "WARN")
     
