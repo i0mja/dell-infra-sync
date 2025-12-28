@@ -83,8 +83,9 @@ export const WorkflowExecutionViewer = ({
   const consoleWindowRef = useRef<Window | null>(null);
 
   // Use props if provided, otherwise use internal state
-  const effectiveJobStatus = jobStatus || internalJobStatus;
-  const effectiveJobDetails = jobDetails || internalJobDetails;
+  // Prefer real-time updates from Supabase subscriptions over initial props
+  const effectiveJobStatus = internalJobStatus ?? jobStatus;
+  const effectiveJobDetails = internalJobDetails ?? jobDetails;
 
   useEffect(() => {
     fetchSteps();
