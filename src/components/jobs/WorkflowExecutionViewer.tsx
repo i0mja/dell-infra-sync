@@ -339,7 +339,7 @@ export const WorkflowExecutionViewer = ({
     const blockerScanStep = steps.find(
       (step) =>
         step.step_name?.includes('blocker scan') &&
-        step.step_status === 'running'
+        ['running', 'paused'].includes(step.step_status)
     );
 
     if (!blockerScanStep) return false;
