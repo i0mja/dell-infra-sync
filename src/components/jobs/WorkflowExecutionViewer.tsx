@@ -31,6 +31,7 @@ import { HostBlockerAnalysis } from "@/lib/host-priority-calculator";
 import { buildMaintenanceBlockerResolutions } from "@/lib/maintenance-blocker-resolutions";
 import { launchConsole } from "@/lib/job-executor-api";
 import { toast } from "sonner";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface WorkflowExecutionViewerProps {
   jobId: string;
@@ -63,11 +64,62 @@ interface HostSummary {
   hostName: string;
   status: string;
   lastAction: string;
+  lastActionId: string;
   duration: string;
   completedAgo?: string | null;
   completedCount: number;
   totalCount: number;
 }
+
+const workflowStepLabels: Record<string, string> = {
+  initialize_workflow: 'Initialized workflow',
+  preflight_checks: 'Ran pre-flight checks',
+  pre_flight_checks: 'Ran pre-flight checks',
+  check_updates: 'Checked for updates',
+  check_for_updates: 'Checked for updates',
+  comprehensive_blocker_scan: 'Completed blocker scan',
+  blocker_scan: 'Completed blocker scan',
+  disable_ha_on_cluster: 'Disabled HA on cluster',
+  enable_ha_on_cluster: 'Re-enabled HA on cluster',
+  enter_maintenance: 'Entered maintenance mode',
+  enter_maintenance_mode: 'Entered maintenance mode',
+  exit_maintenance: 'Exited maintenance mode',
+  exit_maintenance_mode: 'Exited maintenance mode',
+  scp_export: 'Backed up configuration via SCP',
+  validate_server: 'Validated server connectivity',
+  test_idrac: 'Validated iDRAC connectivity',
+  apply_firmware_updates: 'Applied firmware updates',
+  apply_bios_firmware: 'Applied BIOS firmware',
+  apply_upgrade: 'Applied ESXi upgrade',
+  reboot_and_wait: 'Rebooted host and waiting to return',
+  reboot_initiated: 'Rebooted host',
+  reconnect_verified: 'Reconnected after reboot',
+  verify_update: 'Verified updates completed',
+  power_on_vms: 'Powered on VMs',
+  maintenance_cleanup: 'Performed maintenance cleanup',
+  early_exit_no_updates_needed: 'Exited early – no updates needed'
+};
+
+const normalizeStepId = (stepId: string) => stepId.toLowerCase().replace(/[\s-]+/g, '_');
+
+const getStepDisplayInfo = (stepName?: string | null, explicitStepId?: string | null) => {
+  const rawId = (explicitStepId || stepName?.split(':')[0] || '').trim();
+  if (!rawId) {
+    return { label: 'In progress', rawId: 'unknown' };
+  }
+
+  const normalizedId = normalizeStepId(rawId);
+  const mappedLabel = workflowStepLabels[normalizedId] || workflowStepLabels[rawId];
+  if (mappedLabel) {
+    return { label: mappedLabel, rawId };
+  }
+
+  const fallbackLabel = rawId
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+
+  return { label: fallbackLabel, rawId };
+};
 
 export const WorkflowExecutionViewer = ({ 
   jobId, 
@@ -468,7 +520,10 @@ export const WorkflowExecutionViewer = ({
           .reverse()
           .find((s) => s.step_completed_at || s.step_started_at) || sortedSteps[sortedSteps.length - 1];
 
-        const lastAction = lastActivity?.step_name?.split(':')[0]?.trim() || 'In progress';
+        const { label: lastAction, rawId: lastActionId } = getStepDisplayInfo(
+          lastActivity?.step_name,
+          lastActivity?.step_details?.step_id
+        );
         const completedAgo = lastComplete
           ? formatDistanceToNow(new Date(lastComplete), { addSuffix: true })
           : null;
@@ -479,6 +534,7 @@ export const WorkflowExecutionViewer = ({
           hostName,
           status: derivedStatus,
           lastAction,
+          lastActionId,
           duration: formatTotalDuration(firstStart, lastComplete || (derivedStatus === 'running' ? new Date().toISOString() : null)),
           completedAgo,
           completedCount,
@@ -986,29 +1042,40 @@ export const WorkflowExecutionViewer = ({
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {hostSummaries.map((host) => (
-                    <div key={host.hostName} className="p-3 rounded-lg border bg-background shadow-sm">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium text-sm truncate">{host.hostName}</span>
-                        <div className="text-[11px]">{getStatusBadge(host.status)}</div>
+                <TooltipProvider>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {hostSummaries.map((host) => (
+                      <div key={host.hostName} className="p-3 rounded-lg border bg-background shadow-sm">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium text-sm truncate">{host.hostName}</span>
+                          <div className="text-[11px]">{getStatusBadge(host.status)}</div>
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="font-semibold text-foreground cursor-help">
+                                {host.lastAction}
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p className="font-mono text-[11px]">Step ID: {host.lastActionId || 'unknown'}</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
+                          <span>{host.completedCount}/{host.totalCount} steps</span>
+                          <span>Elapsed: {host.duration}</span>
+                          {host.completedAgo && (
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              {host.completedAgo}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        <span className="font-semibold text-foreground">{host.lastAction}</span>
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
-                        <span>{host.completedCount}/{host.totalCount} steps</span>
-                        <span>Elapsed: {host.duration}</span>
-                        {host.completedAgo && (
-                          <span className="flex items-center gap-1">
-                            <Clock className="h-3 w-3" />
-                            {host.completedAgo}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                </TooltipProvider>
               </CardContent>
             </Card>
           </>
