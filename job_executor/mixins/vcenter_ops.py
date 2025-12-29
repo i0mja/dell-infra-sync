@@ -2720,7 +2720,89 @@ class VCenterMixin:
                 error=str(e)
             )
             return {'success': False, 'error': str(e)}
-    
+
+    def _get_vcenter_host_status(self, host_id: str) -> Optional[Dict]:
+        """Fetch live maintenance and connection status for a vCenter host."""
+        host_name = host_id
+        vcenter_moref = None
+        source_vcenter_id = None
+
+        try:
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_hosts?id=eq.{host_id}&select=id,name,vcenter_id,source_vcenter_id",
+                headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            host_records = _safe_json_parse(response)
+            if not host_records:
+                self.log(f"  ⚠️ Could not load vCenter host {host_id} from database", "WARN")
+                return None
+
+            host_data = host_records[0]
+            host_name = host_data.get('name', host_id)
+            vcenter_moref = host_data.get('vcenter_id')
+            source_vcenter_id = host_data.get('source_vcenter_id')
+        except Exception as fetch_err:
+            self.log(f"  ⚠️ Failed to fetch vCenter host {host_id}: {fetch_err}", "WARN")
+            return None
+
+        vcenter_settings = self.get_vcenter_settings(source_vcenter_id) if source_vcenter_id else None
+        vc = self.connect_vcenter(settings=vcenter_settings)
+        if not vc:
+            self.log(f"  ⚠️ Could not connect to vCenter for host {host_name}", "WARN")
+            return None
+
+        content = vc.RetrieveContent()
+        container = content.viewManager.CreateContainerView(
+            content.rootFolder, [vim.HostSystem], True
+        )
+
+        host_obj = None
+        try:
+            for h in container.view:
+                try:
+                    if vcenter_moref and str(h._moId) == str(vcenter_moref):
+                        host_obj = h
+                        break
+                    if not vcenter_moref and getattr(h, 'name', None) == host_name:
+                        host_obj = h
+                        break
+                except Exception:
+                    continue
+        finally:
+            container.Destroy()
+
+        if not host_obj:
+            self.log(f"  ⚠️ Host {host_name} not found in vCenter (moRef: {vcenter_moref})", "WARN")
+            return None
+
+        status: Dict[str, Any] = {
+            'host_id': host_id,
+            'host_name': host_name,
+            'vcenter_moref': vcenter_moref,
+            'connection_state': None,
+            'power_state': None,
+            'in_maintenance': None
+        }
+
+        try:
+            status['connection_state'] = str(getattr(host_obj.runtime, 'connectionState', None))
+        except Exception:
+            pass
+
+        try:
+            status['power_state'] = str(getattr(host_obj.runtime, 'powerState', None))
+        except Exception:
+            pass
+
+        try:
+            status['in_maintenance'] = self._host_in_maintenance(content, host_obj)
+        except Exception:
+            status['in_maintenance'] = None
+
+        return status
+
     def wait_for_vcenter_host_connected(self, host_id: str, timeout: int = 600) -> bool:
         """Wait for ESXi host to be in CONNECTED state via live vCenter query"""
         start_time = time.time()
