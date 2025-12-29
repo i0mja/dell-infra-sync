@@ -29,8 +29,9 @@ import { MaintenanceFailureDetails, FailedHost, BlockingVM } from "./results/Mai
 import { MaintenanceBlockerAlert } from "@/components/maintenance/MaintenanceBlockerAlert";
 import { BlockerResolutionWizard } from "@/components/maintenance/BlockerResolutionWizard";
 import { HostBlockerAnalysis } from "@/lib/host-priority-calculator";
-import { buildMaintenanceBlockerResolutions } from "@/lib/maintenance-blocker-resolutions";
+import { buildMaintenanceBlockerResolutions, HostResolutionPayload } from "@/lib/maintenance-blocker-resolutions";
 import { launchConsole } from "@/lib/job-executor-api";
+import { useBlockerSubmission } from "./hooks/useBlockerSubmission";
 import { toast } from "sonner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -116,6 +117,8 @@ interface ServerMetadata {
   nodeRole: string | null;
 }
 
+const SUBMISSION_TIMEOUT_MS = 20000;
+
 export const WorkflowExecutionViewer = ({ 
   jobId, 
   workflowType,
@@ -143,6 +146,22 @@ export const WorkflowExecutionViewer = ({
   const [consoleLaunching, setConsoleLaunching] = useState(false);
   const [consoleWindowOpen, setConsoleWindowOpen] = useState(false);
   const consoleWindowRef = useRef<Window | null>(null);
+
+  const {
+    selectedVmIds,
+    isSubmitting,
+    pendingTaskId,
+    submitError,
+    submitStartedAt,
+    timedOut,
+    startSubmission,
+    markSuccess,
+    markError,
+    cancelSubmission,
+    resetSubmissionState
+  } = useBlockerSubmission(SUBMISSION_TIMEOUT_MS);
+
+  const showSubmissionOverlay = isSubmitting || timedOut || Boolean(submitError);
 
   // Use props if provided, otherwise use internal state
   // Prefer real-time updates from Supabase subscriptions over initial props
@@ -514,6 +533,10 @@ export const WorkflowExecutionViewer = ({
     [effectiveJobStatus, steps, blockerScanAwaitingResolution]
   );
 
+  const submissionStartedAgo = submitStartedAt
+    ? formatDistanceToNow(new Date(submitStartedAt), { addSuffix: true })
+    : null;
+
   const serverIdsForMetadata = useMemo(() => {
     const ids = new Set<string>();
 
@@ -737,6 +760,20 @@ export const WorkflowExecutionViewer = ({
     });
   };
 
+  const extractSelectedVmIds = (resolutionPayload: Record<string, HostResolutionPayload>) => {
+    const vmIds = new Set<string>();
+
+    Object.values(resolutionPayload || {}).forEach((resolution) => {
+      resolution?.vms_to_power_off?.forEach((vm) => {
+        if (vm?.vm_id) {
+          vmIds.add(vm.vm_id);
+        }
+      });
+    });
+
+    return Array.from(vmIds);
+  };
+
   const failedHosts = useMemo(() => {
     const failedHostMap = new Map<string, FailedHost>();
     const hostResults = effectiveJobDetails?.workflow_results?.host_results ?? [];
@@ -947,11 +984,11 @@ export const WorkflowExecutionViewer = ({
           duration: 15000,
           action: {
             label: 'Resolve Now',
-            onClick: () => setShowBlockerWizard(true)
+            onClick: () => handleWizardOpenChange(true)
           }
         }
       );
-      setTimeout(() => setShowBlockerWizard(true), 500);
+      setTimeout(() => handleWizardOpenChange(true), 500);
     }
     
     // Reset toast flag when resolution is cleared
@@ -1158,8 +1195,74 @@ export const WorkflowExecutionViewer = ({
     hostRoleMap
   ]);
 
+  const handleWizardOpenChange = (isOpen: boolean) => {
+    if (isOpen) {
+      resetSubmissionState();
+    }
+    setShowBlockerWizard(isOpen);
+  };
+
   return (
-    <Card>
+    <Card className="relative overflow-hidden">
+      {showSubmissionOverlay && (
+        <div className="absolute inset-0 z-20 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md space-y-3 rounded-lg border bg-card p-4 shadow-lg">
+            <div className="flex items-center gap-3">
+              {isSubmitting ? (
+                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+              ) : (
+                <AlertTriangle className="h-5 w-5 text-orange-600" />
+              )}
+              <div className="text-left">
+                <p className="text-sm font-semibold">
+                  {isSubmitting ? 'Submitting power-down request' : 'Waiting for acknowledgement'}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {submitError ||
+                    (timedOut
+                      ? 'The executor has not acknowledged the request yet. You can retry without losing your selections.'
+                      : 'Hold tight while we record the request. Your VM selections are preserved while we wait.')}
+                </p>
+              </div>
+            </div>
+            {selectedVmIds.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Selected VMs to power down: <span className="font-medium">{selectedVmIds.length}</span>
+              </p>
+            )}
+            {submissionStartedAgo && (
+              <p className="text-[11px] text-muted-foreground">
+                Started {submissionStartedAgo}
+              </p>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  handleWizardOpenChange(true);
+                }}
+              >
+                Re-open selections
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  cancelSubmission();
+                }}
+              >
+                Cancel waiting
+              </Button>
+              {pendingTaskId && (
+                <Badge variant="secondary" className="ml-auto">
+                  Task {pendingTaskId.slice(0, 8)}
+                </Badge>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       {!hideHeader && (
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
@@ -1467,7 +1570,7 @@ export const WorkflowExecutionViewer = ({
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => setShowBlockerWizard(true)}
+                      onClick={() => handleWizardOpenChange(true)}
                       className="border-yellow-500/50 text-yellow-600 hover:bg-yellow-500/10"
                     >
                       <RefreshCw className="h-3 w-3 mr-1" />
@@ -1506,7 +1609,7 @@ export const WorkflowExecutionViewer = ({
                 </div>
                 <Button
                   size="sm"
-                  onClick={() => setShowBlockerWizard(true)}
+                  onClick={() => handleWizardOpenChange(true)}
                   className="bg-orange-500 hover:bg-orange-600"
                 >
                   <RefreshCw className="h-4 w-4 mr-2" />
@@ -1524,7 +1627,7 @@ export const WorkflowExecutionViewer = ({
             {workflowBlockerDetails.length > 0 && (
               <MaintenanceBlockerAlert
                 blockerDetails={workflowBlockerDetails}
-                onResolveBlockers={() => setShowBlockerWizard(true)}
+                onResolveBlockers={() => handleWizardOpenChange(true)}
                 className="mb-4"
               />
             )}
@@ -1594,7 +1697,7 @@ export const WorkflowExecutionViewer = ({
                 <div className="flex flex-wrap gap-2">
                   <Button
                     size="sm"
-                    onClick={() => setShowBlockerWizard(true)}
+                    onClick={() => handleWizardOpenChange(true)}
                     className="bg-orange-500 hover:bg-orange-600"
                   >
                     <RefreshCw className="h-4 w-4 mr-2" />
@@ -1624,7 +1727,7 @@ export const WorkflowExecutionViewer = ({
                           }).eq('id', jobId);
                           toast.success('Job recovered - blocker wizard will open');
                           fetchJobData();
-                          setTimeout(() => setShowBlockerWizard(true), 500);
+                          setTimeout(() => handleWizardOpenChange(true), 500);
                         } catch (err) {
                           toast.error('Failed to recover job');
                         }
@@ -1659,7 +1762,7 @@ export const WorkflowExecutionViewer = ({
                   <div className="flex flex-wrap gap-2 mb-3">
                     <Button
                       size="sm"
-                      onClick={() => setShowBlockerWizard(true)}
+                      onClick={() => handleWizardOpenChange(true)}
                       className="bg-orange-500 hover:bg-orange-600"
                     >
                       <RefreshCw className="h-4 w-4 mr-2" />
@@ -1783,12 +1886,16 @@ export const WorkflowExecutionViewer = ({
           </>
         )}
 
-        {showBlockerWizard && Object.keys(workflowBlockers).length > 0 && (
+        {Object.keys(workflowBlockers).length > 0 && (
           <BlockerResolutionWizard
             open={showBlockerWizard}
-            onOpenChange={setShowBlockerWizard}
+            onOpenChange={handleWizardOpenChange}
             hostBlockers={workflowBlockers}
             onComplete={(resolutionPayload, hostOrder) => {
+              const selectedPowerOffVmIds = extractSelectedVmIds(resolutionPayload);
+              startSubmission(selectedPowerOffVmIds);
+              handleWizardOpenChange(false);
+
               const saveAndResume = async () => {
                 // Build updated details with resolutions and clear pause state
                 const nextDetails = {
@@ -1803,25 +1910,33 @@ export const WorkflowExecutionViewer = ({
                 delete nextDetails.current_blockers;
 
                 // Update job and resume to pending in one call
-                const { error } = await supabase
+                const { data, error } = await supabase
                   .from('jobs')
                   .update({ 
                     status: 'pending',  // Auto-resume
                     details: nextDetails 
                   })
-                  .eq('id', jobId);
+                  .eq('id', jobId)
+                  .select('id, status')
+                  .maybeSingle();
 
                 if (error) throw error;
+                setInternalJobStatus(data?.status || 'pending');
+                setInternalJobDetails(nextDetails);
+                return data?.id || jobId;
               };
 
               saveAndResume()
-                .then(() => {
-                  setShowBlockerWizard(false);
+                .then((taskId) => {
+                  markSuccess(taskId);
                   toast.success('Resolutions saved - job resuming automatically');
                 })
                 .catch((error) => {
                   console.error('Failed to save blocker resolutions:', error);
-                  toast.error('Failed to save blocker resolutions');
+                  markError(error?.message || 'Failed to save blocker resolutions');
+                  toast.error('Failed to save blocker resolutions', {
+                    description: error?.message || 'Executor did not acknowledge the submission.'
+                  });
                 });
             }}
           />

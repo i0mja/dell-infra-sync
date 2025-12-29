@@ -68,6 +68,11 @@ Jobs are the top-level orchestration unit. They have the following states:
    - `hosts_with_blockers`: Count for summary display
    - `total_critical_blockers`: Count for summary display
 
+### UI submission safeguards
+
+- The WorkflowExecutionViewer keeps local submission state (`selectedVmIds`, `isSubmitting`, `pendingTaskId`, `submitError`, `submitStartedAt`) so real-time polling data does not wipe operator choices.
+- Blocker resolution submissions now show a blocking "Submitting…" overlay until Supabase acknowledges the update (with timeout + cancel/retry controls) to prevent duplicate requests while keeping power-off selections intact.
+
 ## Workflow Step States
 
 Workflow steps track granular progress within a job. States:
