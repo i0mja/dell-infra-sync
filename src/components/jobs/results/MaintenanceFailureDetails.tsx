@@ -18,7 +18,7 @@ import {
   Clock
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-
+import { formatVCenterError } from "@/lib/vcenter-errors";
 export interface BlockingVM {
   name: string;
   reason: string;
@@ -176,7 +176,7 @@ export const MaintenanceFailureDetails = ({
                         <p className="text-sm text-muted-foreground mt-1">
                           {host.error_type === 'vm_evacuation_failed' 
                             ? `${host.blocking_vms?.length || 0} VM(s) blocking evacuation`
-                            : host.error_message || 'Failed to enter maintenance mode'}
+                            : formatVCenterError(host.error_message) || 'Failed to enter maintenance mode'}
                         </p>
                       </div>
                     </div>
