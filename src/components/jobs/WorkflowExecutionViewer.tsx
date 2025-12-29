@@ -5,6 +5,14 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import {
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerDescription,
+  DrawerClose,
+} from "@/components/ui/drawer";
 import { 
   CheckCircle, 
   XCircle, 
@@ -98,6 +106,9 @@ interface HostSummary {
   lastSuccessAt: string | null;
   blockerCount: number;
   hostStepStatus: 'running' | 'paused' | 'blocked' | 'idle';
+  evacuatedCount?: number | null;
+  evacuatedVmNames?: string[];
+  pendingEvacuation?: number | null;
 }
 
 interface MaintenanceWindowMetadata {
@@ -135,6 +146,8 @@ export const WorkflowExecutionViewer = ({
   const [showBlockerWizard, setShowBlockerWizard] = useState(false);
   const [showFullTimeline, setShowFullTimeline] = useState(workflowType !== 'rolling_cluster_update');
   const [serverMetadata, setServerMetadata] = useState<Record<string, ServerMetadata>>({});
+  const [selectedHost, setSelectedHost] = useState<HostSummary | null>(null);
+  const [selectedHostSteps, setSelectedHostSteps] = useState<WorkflowStep[]>([]);
   
   // Internal state to track job status/details independently
   const [internalJobStatus, setInternalJobStatus] = useState<string | null>(null);
@@ -498,9 +511,7 @@ export const WorkflowExecutionViewer = ({
 
   const hostRoleMap = useMemo(() => {
     const map: Record<string, { nodeRole?: string | null; vcenterHostName?: string | null }> = {};
-    const hostResults = effectiveJobDetails?.workflow_results?.host_results ?? [];
-
-    hostResults.forEach((host: any) => {
+    workflowHostResults.forEach((host: any) => {
       const serverId = host?.server_id || host?.host_id;
       if (!serverId) return;
 
@@ -512,7 +523,7 @@ export const WorkflowExecutionViewer = ({
     });
 
     return map;
-  }, [effectiveJobDetails?.workflow_results?.host_results]);
+  }, [workflowHostResults]);
 
   const getOverallStatus = () => {
     // If job has a terminal status (from props or internal state), use it
@@ -556,6 +567,10 @@ export const WorkflowExecutionViewer = ({
 
     return Array.from(ids);
   }, [steps, effectiveJobDetails?.workflow_results?.host_results]);
+
+  const workflowHostResults = useMemo(() => {
+    return effectiveJobDetails?.workflow_results?.host_results ?? [];
+  }, [effectiveJobDetails?.workflow_results?.host_results]);
 
   const serverIdsKey = useMemo(() => serverIdsForMetadata.slice().sort().join(','), [serverIdsForMetadata]);
   const hostRoleKey = useMemo(() => JSON.stringify(hostRoleMap), [hostRoleMap]);
@@ -1151,6 +1166,14 @@ export const WorkflowExecutionViewer = ({
           lastActivity?.step_name ||
           lastAction;
 
+        const hostResult = workflowHostResults.find(
+          (hr: any) =>
+            hostMatchesName(hr?.host_name, hostName) ||
+            hostMatchesName(hr?.name, hostName) ||
+            hr?.server_id === hostData.metadata.serverId ||
+            hr?.host_id === hostData.metadata.hostId
+        );
+
         const nodeRole =
           hostRoleMap[hostData.metadata.serverId || hostData.metadata.hostId || hostName]?.nodeRole ?? null;
         const vcenterHostName =
@@ -1180,7 +1203,13 @@ export const WorkflowExecutionViewer = ({
           totalCount: sortedSteps.length,
           lastSuccessAt,
           blockerCount,
-          hostStepStatus
+          hostStepStatus,
+          evacuatedCount:
+            hostResult?.vms_evacuated ??
+            hostResult?.evacuated_vm_count ??
+            (Array.isArray(hostResult?.evacuated_vms) ? hostResult.evacuated_vms.length : null),
+          evacuatedVmNames: hostResult?.evacuated_vms || hostResult?.evacuated_vm_names || [],
+          pendingEvacuation: Array.isArray(hostResult?.vms_remaining) ? hostResult.vms_remaining.length : null
         };
       })
       .sort((a, b) => (statusPriority[a.status] ?? 10) - (statusPriority[b.status] ?? 10));
@@ -1192,7 +1221,8 @@ export const WorkflowExecutionViewer = ({
     maintenanceWindowMetadata,
     currentOperation,
     workflowBlockers,
-    hostRoleMap
+    hostRoleMap,
+    workflowHostResults
   ]);
 
   const handleWizardOpenChange = (isOpen: boolean) => {
@@ -1201,6 +1231,68 @@ export const WorkflowExecutionViewer = ({
     }
     setShowBlockerWizard(isOpen);
   };
+
+  const handleSelectHost = (host: HostSummary) => {
+    setSelectedHost(host);
+    const matchingSteps = steps.filter((step) => {
+      const name = extractHostName(step);
+      return name ? hostMatchesName(name, host.hostName) : false;
+    });
+    setSelectedHostSteps(matchingSteps);
+  };
+
+  const clusterName =
+    clusterMetadata ||
+    effectiveJobDetails?.cluster_name ||
+    effectiveJobDetails?.cluster ||
+    jobTargetScope?.cluster_name ||
+    'Cluster';
+  const haState =
+    effectiveJobDetails?.ha_state ||
+    (effectiveJobDetails?.ha_disabled ? 'Disabled' : effectiveJobDetails?.ha_enabled ? 'Enabled' : null) ||
+    currentOperation?.ha_state ||
+    'Unknown';
+  const drsState =
+    effectiveJobDetails?.drs_state ||
+    (effectiveJobDetails?.drs_disabled ? 'Disabled' : effectiveJobDetails?.drs_enabled ? 'Enabled' : null) ||
+    effectiveJobDetails?.drs_mode ||
+    currentOperation?.drs_state ||
+    'Unknown';
+
+  const evacuatedTotal = useMemo(() => {
+    return workflowHostResults.reduce((total: number, host: any) => {
+      const evacuatedCount =
+        host?.vms_evacuated ||
+        host?.evacuated_vm_count ||
+        (Array.isArray(host?.evacuated_vms) ? host.evacuated_vms.length : 0);
+      return total + (evacuatedCount || 0);
+    }, effectiveJobDetails?.vms_evacuated_total || 0);
+  }, [workflowHostResults, effectiveJobDetails?.vms_evacuated_total]);
+
+  const maintenanceHost = useMemo(() => {
+    const hostInMaintenance = hostSummaries.find((h) => h.maintenanceMode);
+    return hostInMaintenance?.displayName || currentOperation?.current_host || null;
+  }, [hostSummaries, currentOperation?.current_host]);
+
+  const runningHost = useMemo(() => {
+    return hostSummaries.find((h) => h.status === 'running')?.displayName || currentOperation?.current_host || null;
+  }, [hostSummaries, currentOperation?.current_host]);
+
+  const blockerOrFailureCount = useMemo(() => {
+    const blockers = Object.keys(workflowBlockers).length;
+    return blockers || failedHosts.length;
+  }, [workflowBlockers, failedHosts.length]);
+
+  const selectedHostResult = useMemo(() => {
+    if (!selectedHost) return null;
+    return workflowHostResults.find(
+      (hr: any) =>
+        hostMatchesName(hr?.host_name, selectedHost.hostName) ||
+        hostMatchesName(hr?.name, selectedHost.hostName) ||
+        hr?.server_id === selectedHost.serverId ||
+        hr?.host_id === selectedHost.hostId
+    );
+  }, [selectedHost, workflowHostResults]);
 
   return (
     <Card className="relative overflow-hidden">
@@ -1296,6 +1388,53 @@ export const WorkflowExecutionViewer = ({
         </CardHeader>
       )}
       <CardContent className="space-y-4">
+        {/* Sticky job summary for rolling cluster updates */}
+        {workflowType === 'rolling_cluster_update' && (
+          <div className="sticky top-0 z-10 space-y-3 rounded-lg border bg-background/90 p-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs text-muted-foreground">Cluster</p>
+                <p className="text-sm font-semibold">{clusterName}</p>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30">
+                  HA {haState}
+                </Badge>
+                <Badge variant="outline" className="bg-blue-500/10 text-blue-700 border-blue-500/30 dark:text-blue-400">
+                  DRS {drsState}
+                </Badge>
+                {maintenanceHost && (
+                  <Badge variant="secondary" className="text-xs">
+                    Maintenance: {maintenanceHost}
+                  </Badge>
+                )}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+              <div className="rounded-md border bg-muted/50 p-2">
+                <p className="text-muted-foreground">Hosts processed</p>
+                <p className="text-lg font-semibold">
+                  {effectiveJobDetails?.hosts_processed || 0}/{effectiveJobDetails?.total_hosts || hostSummaries.length}
+                </p>
+              </div>
+              <div className="rounded-md border bg-muted/50 p-2">
+                <p className="text-muted-foreground">VMs evacuated</p>
+                <p className="text-lg font-semibold">{evacuatedTotal || 0}</p>
+              </div>
+              <div className="rounded-md border bg-muted/50 p-2">
+                <p className="text-muted-foreground">Current host</p>
+                <p className="text-lg font-semibold">{runningHost || 'Waiting'}</p>
+              </div>
+              <div className="rounded-md border bg-muted/50 p-2">
+                <p className="text-muted-foreground">Blocked/Failed</p>
+                <p className="text-lg font-semibold">
+                  {blockerOrFailureCount}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Current Operation - Real-time Progress */}
         {currentOperation && (overallStatus === 'running' || overallStatus === 'paused') && (
           <>
@@ -1461,7 +1600,12 @@ export const WorkflowExecutionViewer = ({
               <CardContent className="space-y-3">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {hostSummaries.map((host) => (
-                    <div key={host.hostName} className="p-3 rounded-lg border bg-background shadow-sm">
+                    <button
+                      key={host.hostName}
+                      type="button"
+                      onClick={() => handleSelectHost(host)}
+                      className="p-3 rounded-lg border bg-background shadow-sm text-left transition hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    >
                       <div className="flex items-center justify-between gap-2">
                         <div className="min-w-0">
                           <div className="font-medium text-sm truncate">{host.displayName || host.hostName}</div>
@@ -1481,7 +1625,7 @@ export const WorkflowExecutionViewer = ({
                           {getStatusBadge(host.status)}
                         </div>
                       </div>
-                      {(host.managementIp || host.clusterName || host.maintenanceWindow || host.nodeRole) && (
+                      {(host.managementIp || host.clusterName || host.maintenanceWindow || host.nodeRole || host.maintenanceMode !== undefined) && (
                         <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
                           {host.managementIp && (
                             <span className="flex items-center gap-1">
@@ -1499,6 +1643,12 @@ export const WorkflowExecutionViewer = ({
                             <span className="flex items-center gap-1">
                               <ChevronRight className="h-3 w-3" />
                               {host.nodeRole}
+                            </span>
+                          )}
+                          {host.maintenanceMode !== undefined && (
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              Maintenance {host.maintenanceMode ? 'enabled' : 'disabled'}
                             </span>
                           )}
                           {host.maintenanceWindow && (
@@ -1526,6 +1676,12 @@ export const WorkflowExecutionViewer = ({
                       <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
                         <span>{host.completedCount}/{host.totalCount} steps</span>
                         <span>Elapsed: {host.duration}</span>
+                        {host.evacuatedCount !== undefined && host.evacuatedCount !== null && (
+                          <span>{host.evacuatedCount} VMs evacuated</span>
+                        )}
+                        {host.pendingEvacuation !== undefined && host.pendingEvacuation !== null && host.pendingEvacuation > 0 && (
+                          <span className="text-orange-600">{host.pendingEvacuation} VMs pending</span>
+                        )}
                         {host.completedAgo && (
                           <span className="flex items-center gap-1">
                             <Clock className="h-3 w-3" />
@@ -1545,7 +1701,11 @@ export const WorkflowExecutionViewer = ({
                           </span>
                         )}
                       </div>
-                    </div>
+                      <div className="mt-2">
+                        <Progress value={(host.completedCount / Math.max(host.totalCount, 1)) * 100} className="h-1.5" />
+                      </div>
+                      <div className="mt-1 text-[11px] text-primary font-medium">View host details</div>
+                    </button>
                   ))}
                 </div>
               </CardContent>
@@ -2152,6 +2312,127 @@ export const WorkflowExecutionViewer = ({
             )}
           </>
         )}
+
+        <Drawer
+          open={Boolean(selectedHost)}
+          onOpenChange={(open) => {
+            if (!open) {
+              setSelectedHost(null);
+              setSelectedHostSteps([]);
+            }
+          }}
+        >
+          <DrawerContent>
+            {selectedHost && (
+              <div className="p-4 space-y-3">
+                <DrawerHeader className="p-0">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <DrawerTitle className="text-lg">{selectedHost.displayName || selectedHost.hostName}</DrawerTitle>
+                      <DrawerDescription className="text-xs">
+                        {selectedHost.vcenterHostName && <span className="mr-2">vCenter: {selectedHost.vcenterHostName}</span>}
+                        {selectedHost.managementIp && <span>Mgmt: {selectedHost.managementIp}</span>}
+                      </DrawerDescription>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {selectedHost.blockerCount > 0 && (
+                        <Badge variant="outline" className="border-orange-500/60 text-orange-600">
+                          {selectedHost.blockerCount} blocker{selectedHost.blockerCount === 1 ? '' : 's'}
+                        </Badge>
+                      )}
+                      {getStatusBadge(selectedHost.status)}
+                    </div>
+                  </div>
+                </DrawerHeader>
+
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="rounded-md border bg-muted/50 p-2">
+                    <p className="text-muted-foreground">Maintenance</p>
+                    <p className="font-semibold">
+                      {selectedHost.maintenanceMode !== undefined ? (selectedHost.maintenanceMode ? 'Enabled' : 'Disabled') : 'Unknown'}
+                    </p>
+                  </div>
+                  <div className="rounded-md border bg-muted/50 p-2">
+                    <p className="text-muted-foreground">VM evacuation</p>
+                    <p className="font-semibold">
+                      {selectedHost.evacuatedCount !== undefined && selectedHost.evacuatedCount !== null
+                        ? `${selectedHost.evacuatedCount} moved`
+                        : 'Pending'}
+                    </p>
+                  </div>
+                  <div className="rounded-md border bg-muted/50 p-2">
+                    <p className="text-muted-foreground">Elapsed</p>
+                    <p className="font-semibold">{selectedHost.duration}</p>
+                  </div>
+                  <div className="rounded-md border bg-muted/50 p-2">
+                    <p className="text-muted-foreground">Current step</p>
+                    <p className="font-semibold truncate">{selectedHost.lastTaskContext || selectedHost.lastAction}</p>
+                  </div>
+                </div>
+
+                {selectedHostResult && (
+                  <div className="rounded-lg border bg-muted/40 p-3 space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">VMware context</p>
+                    <ul className="space-y-1 text-sm text-foreground/90">
+                      {selectedHostResult.can_enter_maintenance !== undefined && (
+                        <li className="flex items-center gap-2">
+                          <CheckCircle className="h-3 w-3 text-green-500" />
+                          {selectedHostResult.can_enter_maintenance ? 'Clear to enter maintenance' : 'Maintenance blocked until evacuation'}
+                        </li>
+                      )}
+                      {selectedHost.pendingEvacuation !== null && selectedHost.pendingEvacuation !== undefined && (
+                        <li className="flex items-center gap-2">
+                          <Loader2 className="h-3 w-3 animate-spin text-primary" />
+                          {selectedHost.pendingEvacuation} VM(s) waiting for evacuation
+                        </li>
+                      )}
+                      {selectedHost.evacuatedVmNames && selectedHost.evacuatedVmNames.length > 0 && (
+                        <li className="text-xs text-muted-foreground">
+                          Evacuated: {selectedHost.evacuatedVmNames.join(', ')}
+                        </li>
+                      )}
+                    </ul>
+                  </div>
+                )}
+
+                {selectedHostSteps.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recent activity</p>
+                    <div className="space-y-1">
+                      {selectedHostSteps
+                        .slice(-3)
+                        .reverse()
+                        .map((step) => (
+                          <div key={step.id} className="rounded-md border p-2">
+                            <div className="flex items-center justify-between text-sm font-medium">
+                              <span className="truncate">{step.step_name}</span>
+                              {getStatusBadge(getEffectiveStepStatus(step.step_status), { compact: true })}
+                            </div>
+                            <div className="text-[11px] text-muted-foreground">
+                              Duration: {formatDuration(step.step_started_at, step.step_completed_at, step.step_status)}
+                            </div>
+                            {step.step_details && (
+                              <div className="mt-1">
+                                <WorkflowStepDetails stepName={step.step_name} stepNumber={step.step_number} details={step.step_details} />
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex justify-end">
+                  <DrawerClose asChild>
+                    <Button variant="outline" size="sm">
+                      Close
+                    </Button>
+                  </DrawerClose>
+                </div>
+              </div>
+            )}
+          </DrawerContent>
+        </Drawer>
       </CardContent>
     </Card>
   );
