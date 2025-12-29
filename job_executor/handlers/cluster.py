@@ -1900,7 +1900,17 @@ class ClusterHandler(BaseHandler):
                     continue
                 
                 if vcenter_host_id:
-                    # Query maintenance_mode from vcenter_hosts table
+                    # Prefer live vCenter status to catch hosts already placed in maintenance
+                    try:
+                        host_status = self.executor._get_vcenter_host_status(vcenter_host_id)
+                        if host_status and host_status.get('in_maintenance'):
+                            hosts_in_maintenance.append(host)
+                            self.log(f"  ✓ {host['name']}: Already in maintenance mode (vCenter)")
+                            continue
+                    except Exception as e:
+                        self.log(f"  ⚠️ {host['name']}: Live maintenance check failed ({e})", "WARN")
+                    
+                    # Fall back to persisted maintenance_mode flag
                     try:
                         response = requests.get(
                             f"{DSM_URL}/rest/v1/vcenter_hosts?id=eq.{vcenter_host_id}&select=maintenance_mode",
