@@ -42,6 +42,7 @@ import { launchConsole } from "@/lib/job-executor-api";
 import { useBlockerSubmission } from "./hooks/useBlockerSubmission";
 import { toast } from "sonner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { formatVCenterError } from "@/lib/vcenter-errors";
 
 interface WorkflowExecutionViewerProps {
   jobId: string;
@@ -808,7 +809,7 @@ export const WorkflowExecutionViewer = ({
           error_type: evacuationBlockers ? 'vm_evacuation_failed' : maintenanceBlockers ? 'maintenance_blocked' : 'unknown',
           stalled_duration: host.stalled_duration || host.stall_duration_seconds,
           blocking_vms: blockingVms.length > 0 ? blockingVms : undefined,
-          error_message: host.error || host.error_message
+          error_message: formatVCenterError(host.error || host.error_message)
         });
       });
 
@@ -823,7 +824,7 @@ export const WorkflowExecutionViewer = ({
         const existing = failedHostMap.get(hostName);
         if (existing) {
           if (!existing.error_message && step.step_error) {
-            existing.error_message = step.step_error;
+            existing.error_message = formatVCenterError(step.step_error);
           }
           if ((!existing.blocking_vms || existing.blocking_vms.length === 0) && step.step_details?.evacuation_blockers) {
             existing.blocking_vms = buildBlockingVmsFromEvacuation(step.step_details.evacuation_blockers);
@@ -836,7 +837,7 @@ export const WorkflowExecutionViewer = ({
             blocking_vms: step.step_details?.evacuation_blockers
               ? buildBlockingVmsFromEvacuation(step.step_details.evacuation_blockers)
               : undefined,
-            error_message: step.step_error
+            error_message: formatVCenterError(step.step_error)
           });
         }
       });
@@ -1835,7 +1836,7 @@ export const WorkflowExecutionViewer = ({
               <AlertDescription className="mt-2">
                 <div className="font-semibold mb-1">Job Failed</div>
                 <div className="font-mono text-xs whitespace-pre-wrap">
-                  {effectiveJobDetails.error}
+                  {formatVCenterError(effectiveJobDetails.error)}
                 </div>
               </AlertDescription>
             </Alert>
@@ -2271,7 +2272,7 @@ export const WorkflowExecutionViewer = ({
                           <CollapsibleContent className="mt-3">
                             {step.step_error && (
                               <Alert variant="destructive" className="mb-3">
-                                <AlertDescription>{step.step_error}</AlertDescription>
+                                <AlertDescription>{formatVCenterError(step.step_error)}</AlertDescription>
                               </Alert>
                             )}
                             {step.step_details && (
