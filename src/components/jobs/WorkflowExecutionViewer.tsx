@@ -1893,7 +1893,7 @@ export const WorkflowExecutionViewer = ({
             hostBlockers={workflowBlockers}
             onComplete={(resolutionPayload, hostOrder) => {
               const selectedPowerOffVmIds = extractSelectedVmIds(resolutionPayload);
-              startSubmission(selectedPowerOffVmIds);
+              const submissionId = startSubmission(selectedPowerOffVmIds);
               handleWizardOpenChange(false);
 
               const saveAndResume = async () => {
@@ -1928,12 +1928,12 @@ export const WorkflowExecutionViewer = ({
 
               saveAndResume()
                 .then((taskId) => {
-                  markSuccess(taskId);
+                  markSuccess(taskId, submissionId);
                   toast.success('Resolutions saved - job resuming automatically');
                 })
                 .catch((error) => {
                   console.error('Failed to save blocker resolutions:', error);
-                  markError(error?.message || 'Failed to save blocker resolutions');
+                  markError(error?.message || 'Failed to save blocker resolutions', submissionId);
                   toast.error('Failed to save blocker resolutions', {
                     description: error?.message || 'Executor did not acknowledge the submission.'
                   });
