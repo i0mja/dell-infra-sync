@@ -136,3 +136,106 @@ Edge Function request/response shapes are part of the API.
 If you must change a shape:
 - Add versioning (new function) or feature flag
 - Maintain old behavior until migrated
+
+---
+
+## Job Details Schema
+
+### Common Fields (all job types)
+
+```typescript
+interface BaseJobDetails {
+  console_log?: string[];           // Diagnostic log entries for UI
+  error?: string;                   // Error message if failed
+}
+```
+
+### rolling_cluster_update
+
+```typescript
+interface RollingClusterUpdateDetails extends BaseJobDetails {
+  // Cluster context
+  cluster_id: string;
+  cluster_name: string;
+  vcenter_id: string;
+  
+  // Progress
+  current_host?: string;
+  current_host_ip?: string;
+  current_host_server_id?: string;
+  current_step?: string;
+  hosts_total?: number;
+  hosts_completed?: number;
+  progress_pct?: number;
+  
+  // Maintenance window
+  maintenance_window_id?: string;
+  maintenance_window?: { id: string; title: string; };
+  
+  // Blocker resolution (when paused)
+  awaiting_blocker_resolution?: boolean;
+  pause_reason?: string;
+  current_blockers?: Record<string, HostBlockerAnalysis>;
+  hosts_with_blockers?: number;
+  total_critical_blockers?: number;
+  raw_blockers_backup?: Record<string, any>;  // Fallback storage
+  
+  // User resolutions (after wizard)
+  maintenance_blocker_resolutions?: Record<string, HostResolution>;
+  host_update_order?: string[];
+  
+  // Pre-flight results
+  hosts_needing_updates?: string[];
+  update_check_results?: Record<string, any>;
+}
+
+interface HostBlockerAnalysis {
+  host_name: string;
+  vcenter_host_id?: string;
+  server_id?: string;
+  blockers: Array<{
+    vm_name: string;
+    reason: string;
+    severity: 'critical' | 'warning';
+    details?: string;
+    remediation?: string;
+    auto_fixable?: boolean;
+  }>;
+  total_blockers: number;
+  critical_count: number;
+}
+
+interface HostResolution {
+  skip_host: boolean;
+  vms_to_power_off: Array<{
+    vm_name: string;
+    reason: string;
+    action: 'power_off' | 'migrate' | 'acknowledge';
+  }>;
+  update_order?: number;
+}
+```
+
+### Workflow Step Details
+
+```typescript
+interface WorkflowStepDetails {
+  // Progress
+  current_step?: string;
+  progress_pct?: number;
+  
+  // Host context
+  host_name?: string;
+  management_ip?: string;
+  
+  // Blocker scan results
+  current_blockers?: Record<string, HostBlockerAnalysis>;
+  awaiting_resolution?: boolean;
+  hosts_scanned?: number;
+  hosts_with_blockers?: number;
+  total_critical_blockers?: number;
+  
+  // Error recovery
+  recovery_available?: boolean;
+  error_details?: string;
+}

@@ -46,6 +46,7 @@ interface WorkflowExecutionViewerProps {
 
 interface WorkflowStep {
   id: string;
+  step_id?: string;
   step_number: number;
   step_name: string;
   step_status: string;
@@ -105,6 +106,14 @@ interface MaintenanceWindowMetadata {
   planned_end?: string | null;
   maintenance_type?: string | null;
   status?: string | null;
+}
+
+interface ServerMetadata {
+  serverId: string;
+  hostname: string | null;
+  ipAddress: string | null;
+  vcenterHostName: string | null;
+  nodeRole: string | null;
 }
 
 export const WorkflowExecutionViewer = ({ 
@@ -266,12 +275,15 @@ export const WorkflowExecutionViewer = ({
         setInternalJobStatus(data.status);
         setInternalJobDetails(data.details);
         setJobTargetScope(data.target_scope);
-        if (data.details) {
-          setCurrentOperation(data.details);
+        
+        // Cast details to any to access dynamic properties
+        const details = data.details as any;
+        if (details) {
+          setCurrentOperation(details);
         }
 
-        const maintenanceWindowId = data.details?.maintenance_window_id || data.details?.maintenance_window?.id;
-        const maintenanceWindowTitle = data.details?.maintenance_window_title || data.details?.maintenance_window?.title;
+        const maintenanceWindowId = details?.maintenance_window_id || details?.maintenance_window?.id;
+        const maintenanceWindowTitle = details?.maintenance_window_title || details?.maintenance_window?.title;
 
         if (maintenanceWindowId) {
           const { data: maintenanceWindowData, error: maintenanceWindowError } = await supabase
@@ -288,9 +300,9 @@ export const WorkflowExecutionViewer = ({
             });
           } else {
             setMaintenanceWindow(maintenanceWindowData || null);
-            if (maintenanceWindowData && !data.details?.maintenance_window) {
+            if (maintenanceWindowData && !details?.maintenance_window) {
               setInternalJobDetails({
-                ...(data.details || {}),
+                ...(details || {}),
                 maintenance_window: maintenanceWindowData,
               });
             }
