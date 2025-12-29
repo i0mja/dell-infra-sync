@@ -1905,10 +1905,12 @@ class VCenterMixin:
         start_time = time.time()
         host_name = host_id
         max_retries = 2
-        
+
         # Progress monitoring settings
         progress_check_interval = 30  # Check VM count every 30 seconds
         stall_timeout = 300  # 5 minutes with no progress = stalled
+        # After all VMs evacuate, give vCenter extra time to finalize maintenance mode
+        post_evacuation_grace = max(300, min(1800, int(timeout * 0.5)))
 
         try:
             # Fetch host details from database
@@ -2074,8 +2076,10 @@ class VCenterMixin:
             last_vm_count = vms_before
             last_progress_time = time.time()
             last_log_time = time.time()
+            evacuation_completed_at = None
+            grace_logged = False
             vm_count_history = [vms_before]
-            
+
             while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
                 time.sleep(2)
                 elapsed = time.time() - start_time
@@ -2100,6 +2104,11 @@ class VCenterMixin:
                             self.log(f"    Evacuating: {last_vm_count} → {current_vms} VMs ({progress_pct}% complete, {int(elapsed)}s elapsed)")
                             last_progress_time = time.time()
                             last_vm_count = current_vms
+                            if current_vms == 0 and not evacuation_completed_at:
+                                evacuation_completed_at = time.time()
+                                self.log(
+                                    f"    All VMs evacuated. Waiting up to {post_evacuation_grace}s for vCenter to finalize maintenance mode..."
+                                )
                         elif active_migrations > 0:
                             # VM count same, but migrations in progress - still making progress
                             migration_names = ', '.join([m['vm_name'] for m in migration_info['migrations'][:3]])
@@ -2157,6 +2166,19 @@ class VCenterMixin:
                 
                 # Check absolute timeout (but only if no progress is being made)
                 if elapsed > timeout:
+                    # Allow extra grace after evacuation is complete for vCenter to flip runtime flags
+                    allowed_timeout = timeout
+                    if evacuation_completed_at:
+                        allowed_timeout += post_evacuation_grace
+                        if elapsed <= allowed_timeout:
+                            if not grace_logged:
+                                grace_logged = True
+                                remaining = int(allowed_timeout - elapsed)
+                                self.log(
+                                    f"    All VMs evacuated; waiting up to {remaining}s additional for vCenter to finalize maintenance mode"
+                                )
+                            continue
+
                     # If we're still making progress, continue
                     if stall_duration < stall_timeout and last_vm_count > 0:
                         self.log(f"    Timeout extended: VMs still migrating ({last_vm_count} remaining)")
