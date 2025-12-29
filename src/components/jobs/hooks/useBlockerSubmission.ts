@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface BlockerSubmissionState {
   selectedVmIds: string[];
@@ -7,12 +7,13 @@ export interface BlockerSubmissionState {
   submitError: string | null;
   submitStartedAt: number | null;
   timedOut: boolean;
+  activeSubmissionId: number | null;
 }
 
 export interface BlockerSubmissionControls {
-  startSubmission: (vmIds: string[]) => void;
-  markSuccess: (taskId: string) => void;
-  markError: (message: string) => void;
+  startSubmission: (vmIds: string[]) => number;
+  markSuccess: (taskId: string, submissionId?: number | null) => void;
+  markError: (message: string, submissionId?: number | null) => void;
   cancelSubmission: () => void;
   resetSubmissionState: () => void;
 }
@@ -31,28 +32,60 @@ export const useBlockerSubmission = (
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitStartedAt, setSubmitStartedAt] = useState<number | null>(null);
   const [timedOut, setTimedOut] = useState(false);
+  const [activeSubmissionId, setActiveSubmissionId] = useState<number | null>(null);
+  const submissionCounterRef = useRef(0);
 
   const startSubmission = useCallback((vmIds: string[]) => {
+    const nextSubmissionId = submissionCounterRef.current + 1;
+    submissionCounterRef.current = nextSubmissionId;
+
     setSelectedVmIds(vmIds);
+    setActiveSubmissionId(nextSubmissionId);
     setIsSubmitting(true);
     setPendingTaskId(null);
     setSubmitError(null);
     setTimedOut(false);
     setSubmitStartedAt(Date.now());
+    return nextSubmissionId;
   }, []);
 
-  const markSuccess = useCallback((taskId: string) => {
-    setPendingTaskId(taskId);
-    setIsSubmitting(false);
-    setTimedOut(false);
-    setSubmitError(null);
-  }, []);
+  const markSuccess = useCallback(
+    (taskId: string, submissionId?: number | null) => {
+      if (submissionId !== undefined && submissionId !== activeSubmissionId) {
+        return;
+      }
 
-  const markError = useCallback((message: string) => {
-    setSubmitError(message);
-    setIsSubmitting(false);
-    setTimedOut(false);
-  }, []);
+      // If no active submission exists, ignore stale completions
+      if (submissionId === undefined && activeSubmissionId === null && !isSubmitting) {
+        return;
+      }
+
+      setPendingTaskId(taskId);
+      setIsSubmitting(false);
+      setTimedOut(false);
+      setSubmitError(null);
+      setActiveSubmissionId(null);
+    },
+    [activeSubmissionId, isSubmitting]
+  );
+
+  const markError = useCallback(
+    (message: string, submissionId?: number | null) => {
+      if (submissionId !== undefined && submissionId !== activeSubmissionId) {
+        return;
+      }
+
+      if (submissionId === undefined && activeSubmissionId === null && !isSubmitting) {
+        return;
+      }
+
+      setSubmitError(message);
+      setIsSubmitting(false);
+      setTimedOut(false);
+      setActiveSubmissionId(null);
+    },
+    [activeSubmissionId, isSubmitting]
+  );
 
   const cancelSubmission = useCallback(() => {
     setIsSubmitting(false);
@@ -60,14 +93,16 @@ export const useBlockerSubmission = (
     setSubmitStartedAt(null);
     setSubmitError(null);
     setTimedOut(false);
+    setActiveSubmissionId(null);
   }, []);
 
   const resetSubmissionState = useCallback(() => {
     setIsSubmitting(false);
     setPendingTaskId(null);
-    setSubmitError(null);
     setTimedOut(false);
     setSubmitStartedAt(null);
+    setSubmitError(null);
+    setActiveSubmissionId(null);
   }, []);
 
   useEffect(() => {
@@ -91,6 +126,7 @@ export const useBlockerSubmission = (
     submitError,
     submitStartedAt,
     timedOut,
+    activeSubmissionId,
     startSubmission,
     markSuccess,
     markError,

@@ -14,30 +14,35 @@ describe("useBlockerSubmission", () => {
   it("captures selected VM ids and marks submission in progress", () => {
     const { result } = renderHook(() => useBlockerSubmission(10000));
 
+    let submissionId: number;
     act(() => {
-      result.current.startSubmission(["vm-1", "vm-2"]);
+      submissionId = result.current.startSubmission(["vm-1", "vm-2"]);
     });
 
+    expect(submissionId).toBe(1);
     expect(result.current.selectedVmIds).toEqual(["vm-1", "vm-2"]);
     expect(result.current.isSubmitting).toBe(true);
     expect(result.current.pendingTaskId).toBeNull();
+    expect(result.current.activeSubmissionId).toBe(1);
   });
 
   it("records success and stops blocking overlay", () => {
     const { result } = renderHook(() => useBlockerSubmission());
 
+    let submissionId: number;
     act(() => {
-      result.current.startSubmission(["vm-1"]);
+      submissionId = result.current.startSubmission(["vm-1"]);
     });
 
     act(() => {
-      result.current.markSuccess("task-123");
+      result.current.markSuccess("task-123", submissionId);
     });
 
     expect(result.current.isSubmitting).toBe(false);
     expect(result.current.pendingTaskId).toBe("task-123");
     expect(result.current.submitError).toBeNull();
     expect(result.current.timedOut).toBe(false);
+    expect(result.current.activeSubmissionId).toBeNull();
   });
 
   it("times out long submissions and surfaces retry messaging", () => {
@@ -59,8 +64,9 @@ describe("useBlockerSubmission", () => {
   it("allows cancel without losing VM selection", () => {
     const { result } = renderHook(() => useBlockerSubmission(10000));
 
+    let submissionId: number;
     act(() => {
-      result.current.startSubmission(["vm-1", "vm-2"]);
+      submissionId = result.current.startSubmission(["vm-1", "vm-2"]);
     });
 
     act(() => {
@@ -70,21 +76,68 @@ describe("useBlockerSubmission", () => {
     expect(result.current.isSubmitting).toBe(false);
     expect(result.current.pendingTaskId).toBeNull();
     expect(result.current.selectedVmIds).toEqual(["vm-1", "vm-2"]);
+    expect(result.current.activeSubmissionId).toBeNull();
+    expect(submissionId).toBe(1);
   });
 
   it("captures explicit errors and keeps selection for retries", () => {
     const { result } = renderHook(() => useBlockerSubmission());
 
+    let submissionId: number;
     act(() => {
-      result.current.startSubmission(["vm-1"]);
+      submissionId = result.current.startSubmission(["vm-1"]);
     });
 
     act(() => {
-      result.current.markError("Failed to submit");
+      result.current.markError("Failed to submit", submissionId);
     });
 
     expect(result.current.isSubmitting).toBe(false);
     expect(result.current.submitError).toBe("Failed to submit");
     expect(result.current.selectedVmIds).toEqual(["vm-1"]);
+    expect(result.current.activeSubmissionId).toBeNull();
+  });
+
+  it("ignores stale completions after a cancellation or retry", () => {
+    const { result } = renderHook(() => useBlockerSubmission());
+
+    let firstSubmissionId: number;
+    act(() => {
+      firstSubmissionId = result.current.startSubmission(["vm-1"]);
+    });
+
+    act(() => {
+      result.current.cancelSubmission();
+    });
+
+    act(() => {
+      result.current.markSuccess("task-ignored", firstSubmissionId);
+    });
+
+    expect(result.current.pendingTaskId).toBeNull();
+    expect(result.current.isSubmitting).toBe(false);
+    expect(result.current.submitError).toBeNull();
+
+    let secondSubmissionId: number;
+    act(() => {
+      secondSubmissionId = result.current.startSubmission(["vm-2"]);
+    });
+
+    act(() => {
+      result.current.markError("stale error", firstSubmissionId);
+    });
+
+    expect(result.current.isSubmitting).toBe(true);
+    expect(result.current.pendingTaskId).toBeNull();
+    expect(result.current.submitError).toBeNull();
+    expect(result.current.activeSubmissionId).toBe(secondSubmissionId);
+
+    act(() => {
+      result.current.markSuccess("task-200", secondSubmissionId);
+    });
+
+    expect(result.current.pendingTaskId).toBe("task-200");
+    expect(result.current.isSubmitting).toBe(false);
+    expect(result.current.activeSubmissionId).toBeNull();
   });
 });
