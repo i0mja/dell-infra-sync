@@ -1448,7 +1448,7 @@ class ClusterHandler(BaseHandler):
                     self._log_workflow_step(job['id'], 'prepare', 3, 'Enter Maintenance Mode', 'failed',
                                           server_id=server_id, host_id=vcenter_host_id,
                                           step_error=maintenance_result.get('error'),
-                                          step_details={'evacuation_blockers': maintenance_result.get('evacuation_blockers')})
+                                          step_details=maintenance_result)
                     workflow_results['evacuation_blockers'] = maintenance_result.get('evacuation_blockers')
                     raise Exception(f"Failed to enter maintenance mode: {maintenance_result.get('error')}")
                 

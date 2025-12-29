@@ -29,6 +29,13 @@ export const WorkflowStepDetails = ({ stepName, stepNumber, details }: WorkflowS
   const vmwareHighlights = useMemo(() => buildVmwareHighlights(details), [details]);
   const redfishSummaries = useMemo(() => buildRedfishSummaries(details), [details]);
   const genericPairs = useMemo(() => buildGenericPairs(details), [details]);
+  const showMaintenanceView = useMemo(
+    () =>
+      (stepName && stepName.toLowerCase().includes("maintenance")) ||
+      !!details?.active_migrations ||
+      !!details?.vms_remaining,
+    [stepName, details?.active_migrations, details?.vms_remaining]
+  );
 
   // Detect step type based on content and render appropriately
 
@@ -67,6 +74,8 @@ export const WorkflowStepDetails = ({ stepName, stepNumber, details }: WorkflowS
   // 5. Fallback - render formatted details as key-value pairs and summaries
   return (
     <div className="space-y-3">
+      {showMaintenanceView && <MaintenanceEvacuationView details={details} />}
+
       {vmwareHighlights.length > 0 && (
         <SummaryList title="VMware context" icon={<ShieldCheck className="h-4 w-4" />} items={vmwareHighlights} />
       )}
@@ -383,6 +392,89 @@ const SummaryList = ({ title, icon, items }: { title: string; icon: React.ReactN
   );
 };
 
+const MaintenanceEvacuationView = ({ details }: { details: any }) => {
+  const remainingVms = useMemo(() => (Array.isArray(details?.vms_remaining) ? details.vms_remaining : []), [details?.vms_remaining]);
+  const activeMigrations = useMemo(
+    () => (Array.isArray(details?.active_migrations) ? details.active_migrations : []),
+    [details?.active_migrations]
+  );
+  const stalled =
+    !activeMigrations.length &&
+    remainingVms.length > 0 &&
+    (details?.status?.includes("timeout") || (details?.stall_duration_seconds ?? 0) > 0);
+  const bannerText = stalled
+    ? "Stalled (no tasks)"
+    : activeMigrations.length > 0
+      ? "Evacuation in progress (migration tasks running)"
+      : "Evacuation monitoring";
+  const bannerTone = stalled
+    ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-200"
+    : activeMigrations.length > 0
+      ? "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-200"
+      : "border-border/50 bg-muted/60";
+  const lastProgress = details?.last_progress_timestamp
+    ? new Date(details.last_progress_timestamp).toLocaleString()
+    : null;
+
+  return (
+    <div className="space-y-3">
+      <div className={`rounded-md border p-3 text-sm ${bannerTone}`}>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 font-semibold">
+            {stalled ? <AlertTriangle className="h-4 w-4" /> : <RefreshCw className="h-4 w-4" />}
+            <span>{bannerText}</span>
+          </div>
+          {lastProgress && <span className="text-xs text-muted-foreground">Last progress: {lastProgress}</span>}
+        </div>
+        {details?.human_readable_status && (
+          <p className="mt-1 text-xs text-muted-foreground">{details.human_readable_status}</p>
+        )}
+        {details?.stall_duration_seconds !== undefined && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Stall timer: {details.stall_duration_seconds}s
+          </p>
+        )}
+      </div>
+
+      {remainingVms.length > 0 && (
+        <div className="space-y-2 rounded-md border border-border/50 bg-muted/50 p-3">
+          <div className="text-sm font-semibold">Remaining VMs</div>
+          <ul className="space-y-1 text-sm text-muted-foreground">
+            {remainingVms.map((vm: any, idx: number) => (
+              <li key={`${vm.id || vm.name || "vm"}-${idx}`} className="flex items-center justify-between gap-2">
+                <span className="font-medium text-foreground">{vm.name || "VM"}</span>
+                <span className="text-xs text-muted-foreground">
+                  {vm.reason || vm.power_state || "powered on"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {activeMigrations.length > 0 && (
+        <div className="space-y-2 rounded-md border border-border/50 bg-muted/50 p-3">
+          <div className="text-sm font-semibold">Active migrations</div>
+          <ul className="space-y-1 text-sm text-muted-foreground">
+            {activeMigrations.map((task: any, idx: number) => (
+              <li key={`${task.task_key || task.vm_name || "migration"}-${idx}`} className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <ArrowRight className="h-3 w-3 text-muted-foreground" />
+                  <span className="font-medium text-foreground">{task.vm_name || "VM migration"}</span>
+                  {task.destination && <span className="text-xs text-muted-foreground">→ {task.destination}</span>}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {task.progress !== undefined ? `${task.progress}%` : task.state || "running"}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const buildVmwareHighlights = (details: any): string[] => {
   const highlights: string[] = [];
 
@@ -400,6 +492,14 @@ const buildVmwareHighlights = (details: any): string[] => {
 
   if (details.vms_remaining?.length) {
     highlights.push(`${details.vms_remaining.length} VMs waiting for evacuation`);
+  }
+
+  if (details.active_migrations?.length) {
+    highlights.push(`${details.active_migrations.length} migration task(s) observed`);
+  }
+
+  if (details.human_readable_status) {
+    highlights.push(details.human_readable_status);
   }
 
   if (details.ha_disabled || details.disable_ha) {
@@ -428,6 +528,8 @@ const buildVmwareHighlights = (details: any): string[] => {
 const buildRedfishSummaries = (details: any): string[] => {
   const summaries: string[] = [];
   const jobs = details.firmware_jobs || details.jobs || details.redfish_jobs;
+  const activeJobs = details.active_jobs;
+  const jobResult = details.job_result;
 
   if (Array.isArray(jobs)) {
     jobs.forEach((job: any) => {
@@ -442,6 +544,35 @@ const buildRedfishSummaries = (details: any): string[] => {
       if (status) parts.push(status);
       summaries.push(parts.join(" · "));
     });
+  }
+
+  if (Array.isArray(activeJobs)) {
+    activeJobs.forEach((job: any) => {
+      const name = job.name || job.id || "Active job";
+      const status = job.status || job.state || job.JobState;
+      const percent = job.percent_complete ?? job.PercentComplete;
+      const parts = [name];
+      if (percent !== undefined) parts.push(`${percent}%`);
+      if (status) parts.push(status);
+      summaries.push(parts.join(" · "));
+    });
+  }
+
+  if (jobResult) {
+    const name = jobResult.Name || jobResult.name || "Job result";
+    const state = jobResult.JobState || jobResult.state || jobResult.job_state;
+    const percent = jobResult.PercentComplete ?? jobResult.percent_complete;
+    const message = jobResult.Message || jobResult.message;
+
+    const parts = [name];
+    if (state) parts.push(state);
+    if (percent !== undefined) parts.push(`${percent}%`);
+    if (message) parts.push(message);
+    summaries.push(parts.join(" · "));
+  }
+
+  if (details.task_uri) {
+    summaries.push(`Tracking firmware task ${details.task_uri}`);
   }
 
   if (details.reboot_required) {
@@ -459,7 +590,19 @@ const buildRedfishSummaries = (details: any): string[] => {
 };
 
 const buildGenericPairs = (details: any): Record<string, any> => {
-  const excludeKeys = ["_internal", "raw_response", "debug", "payload", "evacuated_vms", "vms_remaining", "jobs", "firmware_jobs", "redfish_jobs", "update_payload"];
+  const excludeKeys = [
+    "_internal",
+    "raw_response",
+    "debug",
+    "payload",
+    "evacuated_vms",
+    "vms_remaining",
+    "active_migrations",
+    "jobs",
+    "firmware_jobs",
+    "redfish_jobs",
+    "update_payload",
+  ];
   const pairs: Record<string, any> = {};
 
   Object.entries(details || {}).forEach(([key, value]) => {
