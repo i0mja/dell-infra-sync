@@ -2413,13 +2413,18 @@ class VCenterMixin:
                         )
                         return {'success': False, 'error': error_msg, **payload}
 
-                if elapsed > hard_deadline and len(latest_remaining_vms) > 0:
+                if elapsed > hard_deadline:
                     if self._host_in_maintenance(content, host_obj):
                         forced_success = True
                         break
                     evacuation_blockers = self._get_evacuation_blockers(host_obj, host_name)
                     remaining_with_reasons = evacuation_blockers.get('vms_remaining') or latest_remaining_vms
                     error_msg = f'Maintenance mode timeout after {int(elapsed)}s'
+                    human_status = (
+                        "Timed out waiting for host to enter maintenance despite no VMs remaining"
+                        if len(remaining_with_reasons) == 0
+                        else error_msg
+                    )
                     payload = self._build_maintenance_status_payload(
                         host_name,
                         vms_before,
@@ -2428,7 +2433,7 @@ class VCenterMixin:
                         progress_state,
                         status="timeout",
                         stall_duration=progress_state.get("stall_duration_seconds", 0),
-                        human_status=error_msg,
+                        human_status=human_status,
                         evacuation_blockers=evacuation_blockers
                     )
                     self.log_vcenter_activity(
