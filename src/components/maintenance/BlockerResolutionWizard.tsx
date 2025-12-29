@@ -81,40 +81,44 @@ export function BlockerResolutionWizard({
   const [priorities, setPriorities] = useState<HostPriorityScore[]>([]);
   const [scanning, setScanning] = useState(true);
 
+  const buildEmptyResolution = () => ({
+    vms_to_power_off: [],
+    vms_acknowledged: [],
+    skip_host: false,
+  });
+
   // Initialize resolutions and calculate priorities
   useEffect(() => {
-    if (open && hostBlockers) {
-      // Initialize empty resolutions for each host
-      const initialResolutions: HostResolutions = {};
-      for (const hostId of Object.keys(hostBlockers)) {
-        initialResolutions[hostId] = {
-          vms_to_power_off: [],
-          vms_acknowledged: [],
-          skip_host: false,
-        };
-      }
-      setResolutions(initialResolutions);
-      
-      // Calculate initial priorities
-      const initialPriorities = calculateHostPriorities(hostBlockers);
-      setPriorities(initialPriorities);
-      setHostOrder(initialPriorities.map(p => p.hostId));
-      
-      // Simulate scanning
-      setScanning(true);
-      setTimeout(() => setScanning(false), 1500);
-      setCurrentStepIndex(0);
-    }
-  }, [open, hostBlockers]);
+    if (!hostBlockers) return;
 
-  // Recalculate priorities when resolutions change
+    setResolutions((prev) => {
+      const next: HostResolutions = {};
+
+      for (const hostId of Object.keys(hostBlockers)) {
+        next[hostId] = prev[hostId] || buildEmptyResolution();
+      }
+
+      return next;
+    });
+  }, [hostBlockers]);
+
   useEffect(() => {
-    if (Object.keys(resolutions).length > 0) {
-      const newPriorities = calculateHostPriorities(hostBlockers, resolutions);
-      setPriorities(newPriorities);
-      setHostOrder(newPriorities.filter(p => !resolutions[p.hostId]?.skip_host).map(p => p.hostId));
-    }
-  }, [resolutions, hostBlockers]);
+    if (!open) return;
+
+    setScanning(true);
+    const timer = setTimeout(() => setScanning(false), 1500);
+    setCurrentStepIndex(0);
+
+    return () => clearTimeout(timer);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || Object.keys(hostBlockers || {}).length === 0) return;
+
+    const nextPriorities = calculateHostPriorities(hostBlockers, resolutions);
+    setPriorities(nextPriorities);
+    setHostOrder(nextPriorities.filter(p => !resolutions[p.hostId]?.skip_host).map(p => p.hostId));
+  }, [open, hostBlockers, resolutions]);
 
   const summary = getBlockersSummary(hostBlockers);
 
