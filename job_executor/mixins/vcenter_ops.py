@@ -19,6 +19,7 @@ from job_executor.config import (
     VCENTER_PASSWORD
 )
 from job_executor.utils import _safe_json_parse, utc_now_iso
+from job_executor.mixins.vcenter_errors import parse_vcenter_error
 
 
 class VCenterMixin:
@@ -2447,15 +2448,29 @@ class VCenterMixin:
                     }
 
             if task.info.state == vim.TaskInfo.State.error and not forced_success:
-                error_msg = str(task.info.error) if task.info.error else 'Unknown error'
+                raw_error = task.info.error
+                friendly_msg, error_info = parse_vcenter_error(raw_error)
+                
+                # Determine if this is a user-cancelled operation
+                is_cancelled = error_info and error_info.get('fault_type') == 'vmodl.fault.RequestCanceled'
+                
                 self.log_vcenter_activity(
                     operation="enter_maintenance_mode",
                     endpoint=host_name,
                     success=False,
                     response_time_ms=int((time.time() - start_time) * 1000),
-                    error=f'Maintenance mode failed: {error_msg}'
+                    error=f'Maintenance mode failed: {friendly_msg}',
+                    details={
+                        'error_info': error_info,
+                        'was_cancelled': is_cancelled,
+                    }
                 )
-                return {'success': False, 'error': f'Maintenance mode failed: {error_msg}'}
+                return {
+                    'success': False, 
+                    'error': f'Maintenance mode failed: {friendly_msg}',
+                    'was_cancelled': is_cancelled,
+                    'error_details': error_info,
+                }
             
             # Verify maintenance mode active
             final_remaining_vms = self._get_remaining_vms_on_host(host_obj)
