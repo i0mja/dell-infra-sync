@@ -47,4 +47,23 @@ describe("WorkflowStepDetails", () => {
 
     expect(screen.getByText(/iDRAC Update · BIOS · 50% · Running/i)).toBeInTheDocument();
   });
+
+  it("renders maintenance evacuation context with migrations and remaining VMs", () => {
+    render(
+      <WorkflowStepDetails
+        stepName="Maintenance"
+        stepNumber={4}
+        details={{
+          active_migrations: [{ vm_name: "vm-01", task_key: "task-1", progress: 20, state: "running" }],
+          vms_remaining: [{ name: "vm-02", reason: "Waiting for capacity" }],
+          human_readable_status: "Evacuation in progress",
+          stall_duration_seconds: 120,
+        }}
+      />
+    );
+
+    expect(screen.getAllByText(/Evacuation in progress/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/vm-01/i)).toBeInTheDocument();
+    expect(screen.getByText(/Remaining VMs/i)).toBeInTheDocument();
+  });
 });

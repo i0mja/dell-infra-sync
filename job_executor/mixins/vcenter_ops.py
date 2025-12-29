@@ -1,12 +1,13 @@
 """VCenter operations mixin for Job Executor"""
 
+import os
 import ssl
 import time
 import requests
 from typing import Dict, List, Optional
 from datetime import datetime
 from pyVim.connect import SmartConnect, Disconnect
-from pyVmomi import vim
+from pyVmomi import vim, vmodl
 import atexit
 
 from job_executor.config import (
@@ -1774,7 +1775,161 @@ class VCenterMixin:
         
         return blockers
 
-    def _get_active_migration_tasks(self, content, host_obj) -> dict:
+    def _host_in_maintenance(self, content, host_obj) -> bool:
+        """Check if host is already in maintenance mode with a fresh property read."""
+        try:
+            runtime = getattr(host_obj, "runtime", None)
+            if runtime and getattr(runtime, "inMaintenanceMode", False):
+                return True
+        except Exception:
+            pass
+
+        try:
+            pc = content.propertyCollector
+            obj_spec = vmodl.query.PropertyCollector.ObjectSpec(obj=host_obj)
+            prop_spec = vmodl.query.PropertyCollector.PropertySpec(
+                type=vim.HostSystem,
+                pathSet=["summary.runtime.inMaintenanceMode", "runtime.inMaintenanceMode"],
+            )
+            filter_spec = vmodl.query.PropertyCollector.FilterSpec(
+                objectSet=[obj_spec],
+                propSet=[prop_spec]
+            )
+            results = pc.RetrieveProperties(specSet=[filter_spec])
+            for res in results:
+                for prop in res.propSet:
+                    if prop.name.endswith("inMaintenanceMode") and bool(prop.val):
+                        return True
+        except Exception as e:
+            self.log(f"    Warning: Could not refresh maintenance mode state: {e}", "DEBUG")
+
+        return False
+
+    def _get_remaining_vms_on_host(self, host_obj) -> List[Dict]:
+        """Return powered-on VMs currently running on the host with basic metadata."""
+        remaining_vms: List[Dict] = []
+        try:
+            for vm in getattr(host_obj, "vm", []):
+                try:
+                    if getattr(vm.runtime, "powerState", None) != "poweredOn":
+                        continue
+                except Exception:
+                    continue
+
+                vm_entry = {
+                    "name": getattr(vm, "name", "unknown"),
+                    "power_state": "poweredOn",
+                }
+                try:
+                    vm_entry["id"] = str(vm._moId)
+                except Exception:
+                    pass
+                remaining_vms.append(vm_entry)
+        except Exception as e:
+            self.log(f"    Warning: Could not enumerate remaining VMs: {e}", "DEBUG")
+
+        return remaining_vms
+
+    def _update_evacuation_progress_state(
+        self,
+        progress_state: Dict,
+        current_vm_count: int,
+        active_tasks: Dict,
+        host_in_maintenance: bool,
+        stall_timeout: int,
+        operator_wait_timeout: int,
+        now: Optional[float] = None
+    ) -> Dict:
+        """
+        Track progress signals for maintenance evacuation in a testable, side-effect-free way.
+
+        Progress is detected when:
+        - VM count decreases
+        - Migration tasks appear/change/complete
+        - Host transitions into maintenance mode
+        """
+        now = now or time.time()
+        updated = dict(progress_state)
+        previous_tasks = progress_state.get("last_tasks", {})
+        progress_reason = None
+
+        # Detect maintenance mode flip immediately
+        if host_in_maintenance:
+            progress_reason = "maintenance_mode"
+        elif current_vm_count < progress_state.get("last_vm_count", current_vm_count):
+            progress_reason = "vm_count"
+        elif active_tasks != previous_tasks:
+            if active_tasks:
+                progress_reason = "task_activity"
+            elif previous_tasks:
+                progress_reason = "tasks_completed"
+
+        if progress_reason:
+            updated["last_progress_time"] = now
+            updated["last_progress_reason"] = progress_reason
+            updated["waiting_for_operator"] = False
+            updated["waiting_started_at"] = None
+
+        updated["last_tasks"] = active_tasks
+        updated["last_vm_count"] = current_vm_count
+
+        stall_duration = now - updated.get("last_progress_time", now)
+        updated["stall_duration_seconds"] = int(stall_duration)
+
+        if (
+            stall_duration >= stall_timeout
+            and current_vm_count > 0
+            and len(active_tasks) == 0
+        ):
+            if not updated.get("waiting_for_operator"):
+                updated["waiting_for_operator"] = True
+                updated["waiting_started_at"] = now
+
+        if updated.get("waiting_for_operator") and updated.get("waiting_started_at"):
+            updated["operator_wait_elapsed"] = int(now - updated["waiting_started_at"])
+        else:
+            updated["operator_wait_elapsed"] = 0
+
+        updated["operator_wait_timed_out"] = (
+            updated.get("waiting_for_operator", False)
+            and updated.get("operator_wait_elapsed", 0) >= operator_wait_timeout
+        )
+
+        return updated
+
+    def _build_maintenance_status_payload(
+        self,
+        host_name: str,
+        vms_before: int,
+        remaining_vms: List[Dict],
+        active_migrations: List[Dict],
+        progress_state: Dict,
+        status: str,
+        stall_duration: int = 0,
+        human_status: Optional[str] = None,
+        evacuation_blockers: Optional[Dict] = None,
+    ) -> Dict:
+        """Normalize structured payload returned to UI for maintenance mode operations."""
+        last_progress_ts = progress_state.get("last_progress_time", time.time())
+        return {
+            'host': host_name,
+            'status': status,
+            'vms_evacuated': max(0, vms_before - len(remaining_vms)),
+            'vms_remaining': remaining_vms,
+            'active_migrations': active_migrations or [],
+            'last_progress_timestamp': datetime.fromtimestamp(last_progress_ts).isoformat(),
+            'stall_duration_seconds': stall_duration,
+            'human_readable_status': human_status,
+            'evacuation_blockers': evacuation_blockers,
+        }
+
+    def _get_active_migration_tasks(
+        self,
+        content,
+        host_obj,
+        previous_snapshot: Optional[Dict] = None,
+        remaining_vm_ids: Optional[set] = None
+    ) -> dict:
         """Check for active vMotion/DRS migration tasks for VMs on this host.
         
         DRS evacuates VMs in batches/chunks. This method detects when migrations
@@ -1796,14 +1951,17 @@ class VCenterMixin:
                         'progress': int
                     }
                 ]
-            }
+            'snapshot': {task_key: {'state': str, 'progress': int}},
+            'has_changes': bool
         """
         active_migrations = []
+        snapshot = {}
+        previous_snapshot = previous_snapshot or {}
         
         try:
             task_manager = content.taskManager
             if not task_manager or not task_manager.recentTask:
-                return {'count': 0, 'migrations': []}
+                return {'count': 0, 'migrations': [], 'snapshot': {}, 'has_changes': False}
             
             # Get set of VM moIds on this host for matching
             host_vm_ids = set()
@@ -1812,6 +1970,10 @@ class VCenterMixin:
                     host_vm_ids.add(str(vm._moId))
             except:
                 pass
+
+            if remaining_vm_ids:
+                # Only consider migrations for remaining VMs if provided
+                host_vm_ids = host_vm_ids.intersection(remaining_vm_ids)
             
             # Migration-related task patterns
             migration_patterns = ['relocate', 'migrate', 'drs', 'vmotion']
@@ -1827,6 +1989,8 @@ class VCenterMixin:
                     if task_state not in ['running', 'queued']:
                         continue
                     
+                    task_key = str(getattr(task_info, "key", None) or getattr(task, "_moId", None) or id(task))
+
                     # Get task name/description
                     task_name = ''
                     if hasattr(task_info, 'descriptionId') and task_info.descriptionId:
@@ -1848,13 +2012,24 @@ class VCenterMixin:
                         if entity_id in host_vm_ids:
                             vm_name = task_info.entityName or 'Unknown VM'
                             progress = task_info.progress if task_info.progress else 0
+                            destination = None
+                            try:
+                                if hasattr(task_info, "result") and isinstance(task_info.result, vim.HostSystem):
+                                    destination = getattr(task_info.result, "name", None) or str(task_info.result)
+                                elif hasattr(task_info, "reason") and getattr(task_info.reason, "host", None):
+                                    destination = getattr(task_info.reason.host, "name", None)
+                            except Exception:
+                                destination = None
                             
                             active_migrations.append({
                                 'vm_name': vm_name,
+                                'task_key': task_key,
                                 'task_name': task_name,
                                 'state': task_state,
-                                'progress': progress
+                                'progress': progress,
+                                'destination': destination
                             })
+                            snapshot[task_key] = {'state': task_state, 'progress': progress}
                         else:
                             # Also check if the entity is a VM and its current host matches
                             # (for cases where moId matching fails)
@@ -1865,13 +2040,22 @@ class VCenterMixin:
                                         if vm_host and str(vm_host._moId) == str(host_obj._moId):
                                             vm_name = task_info.entityName or entity.name or 'Unknown VM'
                                             progress = task_info.progress if task_info.progress else 0
+                                            destination = None
+                                            try:
+                                                if hasattr(task_info, "result") and isinstance(task_info.result, vim.HostSystem):
+                                                    destination = getattr(task_info.result, "name", None) or str(task_info.result)
+                                            except Exception:
+                                                destination = None
                                             
                                             active_migrations.append({
                                                 'vm_name': vm_name,
+                                                'task_key': task_key,
                                                 'task_name': task_name,
                                                 'state': task_state,
-                                                'progress': progress
+                                                'progress': progress,
+                                                'destination': destination
                                             })
+                                            snapshot[task_key] = {'state': task_state, 'progress': progress}
                             except:
                                 pass
                                 
@@ -1882,9 +2066,12 @@ class VCenterMixin:
         except Exception as e:
             self.log(f"    Warning: Could not check migration tasks: {e}", "DEBUG")
         
+        has_changes = snapshot != previous_snapshot
         return {
             'count': len(active_migrations),
-            'migrations': active_migrations
+            'migrations': active_migrations,
+            'snapshot': snapshot,
+            'has_changes': has_changes
         }
 
     def enter_vcenter_maintenance_mode(self, host_id: str, timeout: int = 1800, _retry_count: int = 0) -> dict:
@@ -1907,8 +2094,9 @@ class VCenterMixin:
         max_retries = 2
 
         # Progress monitoring settings
-        progress_check_interval = 30  # Check VM count every 30 seconds
-        stall_timeout = 300  # 5 minutes with no progress = stalled
+        progress_check_interval = max(10, int(os.getenv("VCENTER_MAINTENANCE_PROGRESS_INTERVAL", "15")))  # Seconds
+        stall_timeout = int(os.getenv("VCENTER_MAINTENANCE_STALL_TIMEOUT", "900"))  # Default 15 minutes
+        operator_wait_timeout = int(os.getenv("VCENTER_OPERATOR_WAIT_TIMEOUT", str(stall_timeout * 2)))
         # After all VMs evacuate, give vCenter extra time to finalize maintenance mode
         post_evacuation_grace = max(300, min(1800, int(timeout * 0.5)))
 
@@ -2073,135 +2261,192 @@ class VCenterMixin:
             self.log(f"  Entering maintenance mode (max timeout: {timeout}s, stall detection: {stall_timeout}s)...")
             
             # Progress monitoring state
-            last_vm_count = vms_before
-            last_progress_time = time.time()
+            progress_state = {
+                'last_vm_count': vms_before,
+                'last_tasks': {},
+                'last_progress_time': time.time(),
+                'waiting_for_operator': False,
+                'waiting_started_at': None,
+                'last_progress_reason': 'start'
+            }
             last_log_time = time.time()
             evacuation_completed_at = None
-            grace_logged = False
-            vm_count_history = [vms_before]
+            latest_remaining_vms: List[Dict] = self._get_remaining_vms_on_host(host_obj)
+            latest_migration_info = {'count': 0, 'migrations': [], 'snapshot': {}, 'has_changes': False}
+            waiting_logged = False
+            forced_success = False
+            hard_deadline = timeout + operator_wait_timeout + post_evacuation_grace
 
             while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
                 time.sleep(2)
-                elapsed = time.time() - start_time
-                
-                # Check VM count every 30 seconds for progress monitoring
-                if time.time() - last_log_time >= progress_check_interval:
+                now = time.time()
+                elapsed = now - start_time
+
+                if now - last_log_time >= progress_check_interval:
                     try:
-                        current_vms = len([vm for vm in host_obj.vm if vm.runtime.powerState == 'poweredOn'])
-                        vm_count_history.append(current_vms)
-                        
-                        # Calculate progress
+                        host_in_maintenance = self._host_in_maintenance(content, host_obj)
+                        latest_remaining_vms = self._get_remaining_vms_on_host(host_obj)
+                        current_vms = len(latest_remaining_vms)
+                        previous_vm_count = progress_state.get("last_vm_count", current_vms)
+                        remaining_vm_ids = {vm.get("id") for vm in latest_remaining_vms if vm.get("id")}
+                        latest_migration_info = self._get_active_migration_tasks(
+                            content,
+                            host_obj,
+                            previous_snapshot=progress_state.get("last_tasks", {}),
+                            remaining_vm_ids=remaining_vm_ids
+                        )
+                        progress_state = self._update_evacuation_progress_state(
+                            progress_state=progress_state,
+                            current_vm_count=current_vms,
+                            active_tasks=latest_migration_info.get("snapshot", {}),
+                            host_in_maintenance=host_in_maintenance,
+                            stall_timeout=stall_timeout,
+                            operator_wait_timeout=operator_wait_timeout,
+                            now=now
+                        )
+
+                        stall_duration = progress_state.get("stall_duration_seconds", 0)
                         vms_evacuated = vms_before - current_vms
                         progress_pct = int((vms_evacuated / vms_before) * 100) if vms_before > 0 else 100
-                        
-                        # Check for active vMotion migrations (DRS evacuates in batches)
-                        migration_info = self._get_active_migration_tasks(content, host_obj)
-                        active_migrations = migration_info['count']
-                        
-                        # Check if progress is being made
-                        if current_vms < last_vm_count:
-                            # VM count decreased - progress made
-                            self.log(f"    Evacuating: {last_vm_count} → {current_vms} VMs ({progress_pct}% complete, {int(elapsed)}s elapsed)")
-                            last_progress_time = time.time()
-                            last_vm_count = current_vms
+
+                        if host_in_maintenance and current_vms == 0:
+                            self.log("    Host already in maintenance mode; finalizing...", "INFO")
+                            forced_success = True
+                            break
+
+                        if current_vms < previous_vm_count:
+                            self.log(f"    Evacuating: {previous_vm_count} → {current_vms} VMs ({progress_pct}% complete, {int(elapsed)}s elapsed)")
                             if current_vms == 0 and not evacuation_completed_at:
-                                evacuation_completed_at = time.time()
+                                evacuation_completed_at = now
                                 self.log(
                                     f"    All VMs evacuated. Waiting up to {post_evacuation_grace}s for vCenter to finalize maintenance mode..."
                                 )
-                        elif active_migrations > 0:
-                            # VM count same, but migrations in progress - still making progress
-                            migration_names = ', '.join([m['vm_name'] for m in migration_info['migrations'][:3]])
-                            if len(migration_info['migrations']) > 3:
-                                migration_names += f" +{len(migration_info['migrations']) - 3} more"
-                            self.log(f"    Migrating: {active_migrations} vMotions in progress ({current_vms} VMs remaining) - {migration_names}")
-                            last_progress_time = time.time()  # Reset stall timer - migrations are active
-                        elif current_vms == last_vm_count and current_vms > 0:
-                            # No VM count change and no active migrations - potentially stalled
-                            stall_duration = int(time.time() - last_progress_time)
+                            waiting_logged = False
+                        elif latest_migration_info.get('count', 0) > 0:
+                            migration_names = ', '.join([m.get('vm_name', 'VM') for m in latest_migration_info['migrations'][:3]])
+                            if len(latest_migration_info['migrations']) > 3:
+                                migration_names += f" +{len(latest_migration_info['migrations']) - 3} more"
+                            self.log(f"    Migrating: {latest_migration_info['count']} task(s) active ({current_vms} VMs remaining) - {migration_names}")
+                            waiting_logged = False
+                        elif progress_state.get("waiting_for_operator"):
+                            wait_msg = (
+                                f"Waiting for operator to migrate remaining VMs ({current_vms} remaining, "
+                                f"{stall_duration}s without progress). Will keep polling for "
+                                f"{max(operator_wait_timeout - progress_state.get('operator_wait_elapsed', 0), 0)}s."
+                            )
+                            if not waiting_logged:
+                                self.log(f"    {wait_msg}", "WARN")
+                                waiting_logged = True
+                            else:
+                                self.log(f"    {wait_msg}", "DEBUG")
+                        else:
                             self.log(f"    Waiting: {current_vms} VMs remaining ({stall_duration}s since last activity)")
-                        
-                        last_log_time = time.time()
-                        
+                        last_log_time = now
+
                     except Exception as vm_count_err:
                         self.log(f"    Warning: Could not check VM count: {vm_count_err}", "WARN")
-                        last_log_time = time.time()
-                
-                # Check for stall condition (no progress for 5 minutes AND no active migrations)
-                stall_duration = time.time() - last_progress_time
-                if stall_duration > stall_timeout and last_vm_count > 0:
-                    # Double-check for active migrations before declaring stalled
-                    try:
-                        migration_info = self._get_active_migration_tasks(content, host_obj)
-                        if migration_info['count'] > 0:
-                            # Migrations still running - not actually stalled
-                            self.log(f"    Still migrating: {migration_info['count']} active vMotions (stall timer reset)")
-                            last_progress_time = time.time()
-                            continue
-                    except:
-                        pass
-                    
-                    # Truly stalled - no migrations in progress
+                        last_log_time = now
+
+                # Evaluate stall/wait conditions outside of log cadence for responsiveness
+                if progress_state.get("operator_wait_timed_out") and len(latest_remaining_vms) > 0:
+                    if self._host_in_maintenance(content, host_obj):
+                        forced_success = True
+                        break
                     evacuation_blockers = self._get_evacuation_blockers(host_obj, host_name)
-                    
-                    error_msg = f'VM evacuation stalled: No progress for {int(stall_duration)}s with {last_vm_count} VMs remaining and no active migrations'
+                    remaining_with_reasons = evacuation_blockers.get('vms_remaining') or latest_remaining_vms
+                    error_msg = (
+                        f"VM evacuation stalled after waiting {progress_state.get('operator_wait_elapsed', 0)}s for operator intervention "
+                        f"({len(remaining_with_reasons)} VM(s) still on host)"
+                    )
                     self.log(f"  ✗ {error_msg}", "ERROR")
-                    
+                    payload = self._build_maintenance_status_payload(
+                        host_name,
+                        vms_before,
+                        remaining_with_reasons,
+                        latest_migration_info.get("migrations", []),
+                        progress_state,
+                        status="waiting_for_operator_timeout",
+                        stall_duration=progress_state.get("stall_duration_seconds", 0),
+                        human_status="Evacuation stalled with no active migrations; operator wait timed out",
+                        evacuation_blockers=evacuation_blockers
+                    )
                     self.log_vcenter_activity(
                         operation="enter_maintenance_mode",
                         endpoint=host_name,
                         success=False,
                         response_time_ms=int(elapsed * 1000),
-                        error=error_msg
+                        error=error_msg,
+                        details=payload
                     )
                     return {
-                        'success': False, 
+                        'success': False,
                         'error': error_msg,
-                        'evacuation_blockers': evacuation_blockers,
-                        'vms_evacuated': vms_before - last_vm_count,
-                        'vms_remaining': last_vm_count,
-                        'stall_duration_seconds': int(stall_duration),
+                        **payload,
+                        'vms_remaining_count': len(remaining_with_reasons),
                         'total_elapsed_seconds': int(elapsed)
                     }
-                
-                # Check absolute timeout (but only if no progress is being made)
-                if elapsed > timeout:
-                    # Allow extra grace after evacuation is complete for vCenter to flip runtime flags
-                    allowed_timeout = timeout
-                    if evacuation_completed_at:
-                        allowed_timeout += post_evacuation_grace
-                        if elapsed <= allowed_timeout:
-                            if not grace_logged:
-                                grace_logged = True
-                                remaining = int(allowed_timeout - elapsed)
-                                self.log(
-                                    f"    All VMs evacuated; waiting up to {remaining}s additional for vCenter to finalize maintenance mode"
-                                )
-                            continue
 
-                    # If we're still making progress, continue
-                    if stall_duration < stall_timeout and last_vm_count > 0:
-                        self.log(f"    Timeout extended: VMs still migrating ({last_vm_count} remaining)")
-                    else:
-                        evacuation_blockers = self._get_evacuation_blockers(host_obj, host_name)
-                        
+                # Allow extra grace after evacuation for maintenance flag propagation
+                if evacuation_completed_at:
+                    if now - evacuation_completed_at > post_evacuation_grace:
+                        if self._host_in_maintenance(content, host_obj):
+                            forced_success = True
+                            break
+                        error_msg = "Host did not report maintenance mode after VMs evacuated"
+                        payload = self._build_maintenance_status_payload(
+                            host_name,
+                            vms_before,
+                            latest_remaining_vms,
+                            latest_migration_info.get("migrations", []),
+                            progress_state,
+                            status="finalization_timeout",
+                            stall_duration=progress_state.get("stall_duration_seconds", 0),
+                            human_status=error_msg
+                        )
                         self.log_vcenter_activity(
                             operation="enter_maintenance_mode",
                             endpoint=host_name,
                             success=False,
                             response_time_ms=int(elapsed * 1000),
-                            error=f'Maintenance mode timeout after {int(elapsed)}s'
+                            error=error_msg,
+                            details=payload
                         )
-                        return {
-                            'success': False, 
-                            'error': f'Maintenance mode timeout after {int(elapsed)}s',
-                            'evacuation_blockers': evacuation_blockers,
-                            'vms_evacuated': vms_before - last_vm_count,
-                            'vms_remaining': last_vm_count,
-                            'total_elapsed_seconds': int(elapsed)
-                        }
+                        return {'success': False, 'error': error_msg, **payload}
 
-            if task.info.state == vim.TaskInfo.State.error:
+                if elapsed > hard_deadline and len(latest_remaining_vms) > 0:
+                    if self._host_in_maintenance(content, host_obj):
+                        forced_success = True
+                        break
+                    evacuation_blockers = self._get_evacuation_blockers(host_obj, host_name)
+                    remaining_with_reasons = evacuation_blockers.get('vms_remaining') or latest_remaining_vms
+                    error_msg = f'Maintenance mode timeout after {int(elapsed)}s'
+                    payload = self._build_maintenance_status_payload(
+                        host_name,
+                        vms_before,
+                        remaining_with_reasons,
+                        latest_migration_info.get("migrations", []),
+                        progress_state,
+                        status="timeout",
+                        stall_duration=progress_state.get("stall_duration_seconds", 0),
+                        human_status=error_msg,
+                        evacuation_blockers=evacuation_blockers
+                    )
+                    self.log_vcenter_activity(
+                        operation="enter_maintenance_mode",
+                        endpoint=host_name,
+                        success=False,
+                        response_time_ms=int(elapsed * 1000),
+                        error=error_msg,
+                        details=payload
+                    )
+                    return {
+                        'success': False,
+                        'error': error_msg,
+                        **payload,
+                        'total_elapsed_seconds': int(elapsed)
+                    }
+
+            if task.info.state == vim.TaskInfo.State.error and not forced_success:
                 error_msg = str(task.info.error) if task.info.error else 'Unknown error'
                 self.log_vcenter_activity(
                     operation="enter_maintenance_mode",
@@ -2213,10 +2458,44 @@ class VCenterMixin:
                 return {'success': False, 'error': f'Maintenance mode failed: {error_msg}'}
             
             # Verify maintenance mode active
-            vms_after = len([vm for vm in host_obj.vm if vm.runtime.powerState == 'poweredOn'])
+            final_remaining_vms = self._get_remaining_vms_on_host(host_obj)
+            vms_after = len(final_remaining_vms)
+            in_maintenance = self._host_in_maintenance(content, host_obj)
             time_taken = int(time.time() - start_time)
-            
+
+            if not in_maintenance and not forced_success:
+                error_msg = "Host did not enter maintenance mode"
+                payload = self._build_maintenance_status_payload(
+                    host_name,
+                    vms_before,
+                    final_remaining_vms,
+                    latest_migration_info.get("migrations", []),
+                    progress_state,
+                    status="unexpected_state",
+                    stall_duration=progress_state.get("stall_duration_seconds", 0),
+                    human_status=error_msg
+                )
+                self.log_vcenter_activity(
+                    operation="enter_maintenance_mode",
+                    endpoint=host_name,
+                    success=False,
+                    response_time_ms=int((time.time() - start_time) * 1000),
+                    error=error_msg,
+                    details=payload
+                )
+                return {'success': False, 'error': error_msg, **payload}
+
             self.log(f"  [OK] Maintenance mode active ({vms_before - vms_after} VMs evacuated in {time_taken}s)")
+            payload = self._build_maintenance_status_payload(
+                host_name,
+                vms_before,
+                final_remaining_vms,
+                latest_migration_info.get("migrations", []),
+                progress_state,
+                status="completed",
+                stall_duration=progress_state.get("stall_duration_seconds", 0),
+                human_status="Host in maintenance mode"
+            )
             
             # Update database
             requests.patch(
@@ -2231,14 +2510,15 @@ class VCenterMixin:
                 endpoint=host_name,
                 success=True,
                 response_time_ms=int((time.time() - start_time) * 1000),
-                details={'in_maintenance': True, 'vms_evacuated': vms_before - vms_after, 'time_taken_seconds': time_taken}
+                details={**payload, 'in_maintenance': True, 'time_taken_seconds': time_taken}
             )
 
             return {
                 'success': True,
                 'in_maintenance': True,
                 'vms_evacuated': vms_before - vms_after,
-                'time_taken_seconds': time_taken
+                'time_taken_seconds': time_taken,
+                **payload
             }
 
         except vim.fault.NotAuthenticated as auth_err:
