@@ -509,6 +509,10 @@ export const WorkflowExecutionViewer = ({
     return Boolean(awaitingResolutionFlag || (scanComplete && hasBlockers && effectiveJobStatus === 'running'));
   }, [effectiveJobDetails, effectiveJobStatus, steps]);
 
+  const workflowHostResults = useMemo(() => {
+    return effectiveJobDetails?.workflow_results?.host_results ?? [];
+  }, [effectiveJobDetails?.workflow_results?.host_results]);
+
   const hostRoleMap = useMemo(() => {
     const map: Record<string, { nodeRole?: string | null; vcenterHostName?: string | null }> = {};
     workflowHostResults.forEach((host: any) => {
@@ -567,10 +571,6 @@ export const WorkflowExecutionViewer = ({
 
     return Array.from(ids);
   }, [steps, effectiveJobDetails?.workflow_results?.host_results]);
-
-  const workflowHostResults = useMemo(() => {
-    return effectiveJobDetails?.workflow_results?.host_results ?? [];
-  }, [effectiveJobDetails?.workflow_results?.host_results]);
 
   const serverIdsKey = useMemo(() => serverIdsForMetadata.slice().sort().join(','), [serverIdsForMetadata]);
   const hostRoleKey = useMemo(() => JSON.stringify(hostRoleMap), [hostRoleMap]);
