@@ -45,6 +45,11 @@ interface HealthTest {
   export_path?: string;
   has_crossmnt?: boolean;
   child_datasets?: string[];
+  // Data transfer test fields
+  transfer_time_ms?: number;
+  source_content?: string;
+  dest_content?: string;
+  mismatch_type?: 'content_mismatch' | 'missing_on_dest' | 'transfer_failed';
 }
 
 interface HealthResults {
@@ -69,9 +74,11 @@ const TEST_LABELS: Record<string, { label: string; icon: React.ReactNode }> = {
   ssh_connectivity: { label: "SSH Connectivity", icon: <Server className="h-4 w-4" /> },
   zfs_pool_health: { label: "ZFS Pool Health", icon: <HardDrive className="h-4 w-4" /> },
   nfs_export_visibility: { label: "NFS Export Visibility", icon: <FolderOpen className="h-4 w-4" /> },
+  data_transfer_test: { label: "Data Transfer Test", icon: <HardDrive className="h-4 w-4" /> },
   pool_capacity: { label: "Pool Capacity", icon: <Activity className="h-4 w-4" /> },
   cross_site_ssh: { label: "Cross-Site SSH", icon: <Link2 className="h-4 w-4" /> },
   syncoid_cron: { label: "Replication Schedule", icon: <Clock className="h-4 w-4" /> },
+  snapshot_sync_status: { label: "Snapshot Sync Status", icon: <RefreshCw className="h-4 w-4" /> },
   last_sync: { label: "Last Sync", icon: <RefreshCw className="h-4 w-4" /> },
 };
 
@@ -248,6 +255,25 @@ export function ZfsTargetHealthDialog({
                                 Missing crossmnt - child datasets invisible
                               </Badge>
                             )}
+                          </div>
+                        )}
+                        {/* Data transfer test details */}
+                        {test.name === "data_transfer_test" && !test.success && (
+                          <div className="text-xs mt-2 space-y-2">
+                            {test.transfer_time_ms && (
+                              <p className="text-muted-foreground">Transfer time: {test.transfer_time_ms}ms</p>
+                            )}
+                            <div className="bg-destructive/10 border border-destructive/20 rounded p-2">
+                              <p className="font-medium text-destructive mb-1">Possible causes:</p>
+                              <ul className="list-disc list-inside space-y-0.5 text-muted-foreground">
+                                <li>Stale test datasets from previous checks</li>
+                                <li>Interrupted ZFS send/receive operation</li>
+                                <li>Network timeout during transfer</li>
+                              </ul>
+                            </div>
+                            <p className="text-muted-foreground italic">
+                              Click "Repair" to clean up stale data and re-test
+                            </p>
                           </div>
                         )}
                       </div>
