@@ -1048,6 +1048,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
             'exchange_ssh_keys': self.replication_handler.execute_exchange_ssh_keys,
             'sync_protection_config': self.replication_handler.execute_sync_protection_config,
             'check_zfs_target_health': self.replication_handler.execute_check_zfs_target_health,
+            'repair_data_transfer': self.replication_handler.execute_repair_data_transfer,
             'create_dr_shell': self.replication_handler.execute_create_dr_shell,
             # Failover handlers (using dedicated FailoverHandler)
             'failover_preflight_check': self.failover_handler.execute_failover_preflight_check,
