@@ -188,7 +188,11 @@ The `rolling_cluster_update` workflow has these step types:
    - Reboot and wait for reconnection
    - Exit maintenance mode
 
-6. **Re-enable HA** (`step_name: 'Re-enable HA on cluster: {name}'`)
+6. **DRS Rebalance Wait** (`step_name: 'Wait for DRS rebalance: {cluster}'`, optional)
+   - Waits for active DRS/vMotion tasks to quiesce before proceeding to the next host
+   - Configurable timeout and quiet period; fails the host step if the cluster never settles
+
+7. **Re-enable HA** (`step_name: 'Re-enable HA on cluster: {name}'`)
    - Restores vSphere HA after all hosts updated
 
 ## Scheduled Jobs

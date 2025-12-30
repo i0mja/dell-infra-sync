@@ -2075,6 +2075,111 @@ class VCenterMixin:
             'has_changes': has_changes
         }
 
+    def wait_for_cluster_rebalance(
+        self,
+        cluster_name: str,
+        timeout: int = 300,
+        quiet_period: int = 30,
+        poll_interval: int = 10,
+        source_vcenter_id: Optional[str] = None
+    ) -> Dict:
+        """Wait for DRS/vMotion to quiesce so capacity can free up.
+
+        This is a best-effort helper that watches for active migration tasks
+        across all hosts in a cluster. It returns success only after the
+        cluster has been quiet (no migrations) for the configured quiet period.
+
+        Args:
+            cluster_name: Name of the vCenter cluster
+            timeout: Max seconds to wait
+            quiet_period: Required consecutive seconds of zero active migrations
+            poll_interval: Seconds between polls
+            source_vcenter_id: Optional vCenter ID override
+        """
+
+        try:
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            from job_executor.utils import _safe_json_parse
+            from pyVmomi import vim
+
+            # Look up vCenter settings for the cluster
+            vcenter_settings = None
+            if source_vcenter_id:
+                vcenter_settings = self.get_vcenter_settings(source_vcenter_id)
+            else:
+                # Fetch default vCenter settings
+                response = requests.get(
+                    f"{DSM_URL}/rest/v1/vcenter_settings?select=*&limit=1",
+                    headers={'apikey': SERVICE_ROLE_KEY, 'Authorization': f'Bearer {SERVICE_ROLE_KEY}'},
+                    verify=VERIFY_SSL
+                )
+                if response.status_code == 200:
+                    settings = _safe_json_parse(response)
+                    if settings:
+                        vcenter_settings = settings[0]
+
+            vc = self.connect_vcenter(settings=vcenter_settings)
+            if not vc:
+                return {'success': False, 'error': 'vCenter connection failed'}
+
+            content = vc.RetrieveContent()
+            cluster_obj = None
+            for dc in content.rootFolder.childEntity:
+                if hasattr(dc, 'hostFolder'):
+                    for cluster in dc.hostFolder.childEntity:
+                        if isinstance(cluster, vim.ClusterComputeResource) and cluster.name == cluster_name:
+                            cluster_obj = cluster
+                            break
+                if cluster_obj:
+                    break
+
+            if not cluster_obj:
+                return {'success': False, 'error': f"Cluster '{cluster_name}' not found"}
+
+            start = time.time()
+            quiet_start = None
+            last_snapshot = {}
+            last_active = []
+
+            while (time.time() - start) < timeout:
+                active_migrations = []
+                for host_obj in cluster_obj.host:
+                    migrations = self._get_active_migration_tasks(
+                        content,
+                        host_obj,
+                        previous_snapshot=last_snapshot.get(host_obj._moId, {}) if last_snapshot else None
+                    )
+                    if migrations.get('migrations'):
+                        active_migrations.extend(migrations['migrations'])
+                    if migrations.get('snapshot') is not None:
+                        last_snapshot[str(host_obj._moId)] = migrations.get('snapshot')
+
+                last_active = active_migrations
+                if not active_migrations:
+                    if quiet_start is None:
+                        quiet_start = time.time()
+                    if (time.time() - quiet_start) >= quiet_period:
+                        waited = int(time.time() - start)
+                        return {
+                            'success': True,
+                            'waited_seconds': waited,
+                            'quiet_period_seconds': quiet_period
+                        }
+                else:
+                    quiet_start = None
+
+                time.sleep(poll_interval)
+
+            return {
+                'success': False,
+                'error': f"Timed out after {timeout}s waiting for DRS rebalance",
+                'active_migrations': last_active
+            }
+
+        except Exception as e:
+            self.log(f"  Rebalance wait failed: {e}", "DEBUG")
+            return {'success': False, 'error': str(e)}
+
     def enter_vcenter_maintenance_mode(self, host_id: str, timeout: int = 1800, _retry_count: int = 0) -> dict:
         """Put ESXi host into maintenance mode with progress monitoring.
         
