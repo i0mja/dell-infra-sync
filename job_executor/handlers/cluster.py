@@ -2751,134 +2751,113 @@ class ClusterHandler(BaseHandler):
                             self.log(f"  [1/{host_steps_total}] Maintenance mode skipped (no vCenter link)")
                         
                         # STEP 2: Apply firmware updates
-                        current_step_number = base_step + 2
-                        current_step_name = f"Apply firmware updates: {host['name']}"
-                        current_step_in_progress = True
-                        self._log_workflow_step(
-                            job['id'], 'rolling_cluster_update',
-                            step_number=current_step_number,
-                            step_name=current_step_name,
-                            status='running',
-                            server_id=host['server_id'],
-                            step_started_at=utc_now_iso()
-                        )
-                        
-                        self.log(f"  [2/{host_steps_total}] Applying firmware updates...")
-                        self.update_job_details_field(job['id'], {
-                            'current_step': f'Applying firmware updates: {host["name"]}'
-                        })
-                        
-                        # Clear stale iDRAC jobs before firmware update to prevent RED014/JCP042 errors
-                        clear_stale_jobs = details.get('clear_stale_jobs_before_update', True)
-                        if clear_stale_jobs:
-                            self.log(f"    Checking for stale iDRAC jobs that could block updates...")
-                            try:
-                                clear_result = dell_ops.clear_stale_idrac_jobs(
+                        max_catalog_passes = max(1, details.get('max_catalog_passes', 2 if firmware_source == 'dell_online_catalog' else 1))
+                        for update_pass in range(1, max_catalog_passes + 1):
+                            pass_suffix = f" (pass {update_pass}/{max_catalog_passes})" if max_catalog_passes > 1 else ""
+                            current_step_number = base_step + 2
+                            current_step_name = f"Apply firmware updates: {host['name']}{pass_suffix}"
+                            current_step_in_progress = True
+                            self._log_workflow_step(
+                                job['id'], 'rolling_cluster_update',
+                                step_number=current_step_number,
+                                step_name=current_step_name,
+                                status='running',
+                                server_id=host['server_id'],
+                                step_started_at=utc_now_iso()
+                            )
+                            
+                            self.log(f"  [2/{host_steps_total}] Applying firmware updates{pass_suffix}...")
+                            self.update_job_details_field(job['id'], {
+                                'current_step': f'Applying firmware updates: {host["name"]}{pass_suffix}'
+                            })
+                            
+                            # Clear stale iDRAC jobs before firmware update to prevent RED014/JCP042 errors
+                            clear_stale_jobs = details.get('clear_stale_jobs_before_update', True)
+                            if clear_stale_jobs:
+                                self.log(f"    Checking for stale iDRAC jobs that could block updates...")
+                                try:
+                                    clear_result = dell_ops.clear_stale_idrac_jobs(
+                                        ip=server['ip_address'],
+                                        username=username,
+                                        password=password,
+                                        clear_failed=True,
+                                        clear_completed_errors=True,
+                                        clear_old_scheduled=details.get('clear_old_scheduled_jobs', False),
+                                        stale_age_hours=details.get('stale_job_max_age_hours', 24),
+                                        server_id=host['server_id'],
+                                        job_id=job['id'],
+                                        user_id=job['created_by']
+                                    )
+                                    
+                                    if clear_result.get('cleared_count', 0) > 0:
+                                        self.log(f"    ✓ Cleared {clear_result['cleared_count']} stale jobs from queue")
+                                        for cleared_job in clear_result.get('cleared_jobs', [])[:5]:
+                                            self.log(f"      - {cleared_job['id']}: {cleared_job.get('name', 'Unknown')} ({cleared_job.get('state')})")
+                                    else:
+                                        self.log(f"    ✓ Job queue is clean - no stale jobs to clear")
+                                        
+                                except Exception as clear_error:
+                                    self.log(f"    ⚠ Error clearing stale jobs (non-fatal): {clear_error}", "WARN")
+                                    # Continue with firmware update - this is not a fatal error
+                            
+                            # Mark firmware as in progress (for cancellation safety)
+                            cleanup_state['firmware_in_progress'] = True
+                            
+                            # Apply firmware based on source (firmware_source already set in STEP 0)
+                            reboot_required = False  # Track if reboot is actually needed
+                            
+                            if firmware_source == 'dell_online_catalog':
+                                dell_catalog_url = details.get('dell_catalog_url', 'https://downloads.dell.com/catalog/Catalog.xml')
+                                component_filter = details.get('component', None)
+                                
+                                self.log(f"    Using Dell online catalog: {dell_catalog_url}")
+                                update_result = dell_ops.update_firmware_from_catalog(
                                     ip=server['ip_address'],
                                     username=username,
                                     password=password,
-                                    clear_failed=True,
-                                    clear_completed_errors=True,
-                                    clear_old_scheduled=details.get('clear_old_scheduled_jobs', False),
-                                    stale_age_hours=details.get('stale_job_max_age_hours', 24),
+                                    catalog_url=dell_catalog_url,
+                                    apply_update=True,
+                                    reboot_needed=True,
                                     server_id=host['server_id'],
-                                    job_id=job['id'],
                                     user_id=job['created_by']
                                 )
                                 
-                                if clear_result.get('cleared_count', 0) > 0:
-                                    self.log(f"    ✓ Cleared {clear_result['cleared_count']} stale jobs from queue")
-                                    for cleared_job in clear_result.get('cleared_jobs', [])[:5]:
-                                        self.log(f"      - {cleared_job['id']}: {cleared_job.get('name', 'Unknown')} ({cleared_job.get('state')})")
-                                else:
-                                    self.log(f"    ✓ Job queue is clean - no stale jobs to clear")
-                                    
-                            except Exception as clear_error:
-                                self.log(f"    ⚠ Error clearing stale jobs (non-fatal): {clear_error}", "WARN")
-                                # Continue with firmware update - this is not a fatal error
-                        
-                        # Mark firmware as in progress (for cancellation safety)
-                        cleanup_state['firmware_in_progress'] = True
-                        
-                        # Apply firmware based on source (firmware_source already set in STEP 0)
-                        reboot_required = False  # Track if reboot is actually needed
-                        
-                        if firmware_source == 'dell_online_catalog':
-                            dell_catalog_url = details.get('dell_catalog_url', 'https://downloads.dell.com/catalog/Catalog.xml')
-                            component_filter = details.get('component', None)
-                            
-                            self.log(f"    Using Dell online catalog: {dell_catalog_url}")
-                            update_result = dell_ops.update_firmware_from_catalog(
-                                ip=server['ip_address'],
-                                username=username,
-                                password=password,
-                                catalog_url=dell_catalog_url,
-                                apply_update=True,
-                                reboot_needed=True,
-                                server_id=host['server_id'],
-                                user_id=job['created_by']
-                            )
-                            
-                            if not update_result.get('success'):
-                                error_msg = update_result.get('error', 'Unknown error')
-                                # Detect common air-gapped/network issues
-                                if any(indicator in str(error_msg).lower() for indicator in ['internal error', 'red004', 'unable to complete', 'network', 'connection']):
-                                    self.log(f"    ❌ Catalog download failed - likely network unreachable", "ERROR")
-                                    self.log(f"    💡 Hint: For air-gapped networks, use 'local_repository' instead of 'dell_online_catalog'", "WARN")
-                                    raise Exception(
-                                        f"Catalog download failed - iDRAC cannot reach {dell_catalog_url}. "
-                                        f"For air-gapped networks, use 'Local Repository' firmware source instead. "
-                                        f"Original error: {error_msg}"
-                                    )
-                                raise Exception(f"Firmware catalog update failed: {error_msg}")
-                            
-                            # Extract job ID and poll for completion
-                            repo_job_id = update_result.get('job_id')
-                            repo_task_uri = update_result.get('task_uri')
-                            
-                            if repo_job_id or repo_task_uri:
-                                self.log(f"    Repository scan job created: {repo_job_id or repo_task_uri}")
-                                self.log(f"    Waiting for catalog scan and update scheduling...")
-                                
-                                # Get stall recovery settings from job details
-                                stall_timeout = details.get('stall_timeout_minutes', 10) * 60
-                                max_stall_retries = details.get('max_stall_retries', 2)
-                                stall_recovery_action = details.get('stall_recovery_action', 'reboot')
-                                
-                                # Poll the repository update job with recovery
-                                try:
-                                    if repo_job_id and repo_job_id.startswith('JID_'):
-                                        # Poll using job endpoint with stall recovery
-                                        job_result = dell_ops.wait_for_job_with_recovery(
-                                            ip=server['ip_address'],
-                                            username=username,
-                                            password=password,
-                                            job_id_str=repo_job_id,
-                                            timeout=2700,  # 45 minutes total
-                                            poll_interval=15,
-                                            stall_timeout=stall_timeout,
-                                            max_stall_retries=max_stall_retries,
-                                            stall_recovery_action=stall_recovery_action,
-                                            operation_name='Repository Firmware Update',
-                                            parent_job_id=job['id'],
-                                            server_id=host['server_id'],
-                                            user_id=job['created_by']
+                                if not update_result.get('success'):
+                                    error_msg = update_result.get('error', 'Unknown error')
+                                    # Detect common air-gapped/network issues
+                                    if any(indicator in str(error_msg).lower() for indicator in ['internal error', 'red004', 'unable to complete', 'network', 'connection']):
+                                        self.log(f"    ❌ Catalog download failed - likely network unreachable", "ERROR")
+                                        self.log(f"    💡 Hint: For air-gapped networks, use 'local_repository' instead of 'dell_online_catalog'", "WARN")
+                                        raise Exception(
+                                            f"Catalog download failed - iDRAC cannot reach {dell_catalog_url}. "
+                                            f"For air-gapped networks, use 'Local Repository' firmware source instead. "
+                                            f"Original error: {error_msg}"
                                         )
-                                        
-                                        # Log if recovery was needed
-                                        if job_result.get('recovery_attempts', 0) > 0:
-                                            self.log(f"    ℹ️ Job required {job_result['recovery_attempts']} recovery attempt(s)")
-                                            
-                                    elif repo_task_uri:
-                                        # Extract job ID from task URI if present
-                                        if '/Jobs/' in repo_task_uri:
-                                            extracted_job_id = repo_task_uri.split('/Jobs/')[-1]
+                                    raise Exception(f"Firmware catalog update failed: {error_msg}")
+                                
+                                # Extract job ID and poll for completion
+                                repo_job_id = update_result.get('job_id')
+                                repo_task_uri = update_result.get('task_uri')
+                                
+                                if repo_job_id or repo_task_uri:
+                                    self.log(f"    Repository scan job created: {repo_job_id or repo_task_uri}")
+                                    self.log(f"    Waiting for catalog scan and update scheduling...")
+                                    
+                                    # Get stall recovery settings from job details
+                                    stall_timeout = details.get('stall_timeout_minutes', 10) * 60
+                                    max_stall_retries = details.get('max_stall_retries', 2)
+                                    stall_recovery_action = details.get('stall_recovery_action', 'reboot')
+                                    
+                                    # Poll the repository update job with recovery
+                                    try:
+                                        if repo_job_id and repo_job_id.startswith('JID_'):
+                                            # Poll using job endpoint with stall recovery
                                             job_result = dell_ops.wait_for_job_with_recovery(
                                                 ip=server['ip_address'],
                                                 username=username,
                                                 password=password,
-                                                job_id_str=extracted_job_id,
-                                                timeout=2700,
+                                                job_id_str=repo_job_id,
+                                                timeout=2700,  # 45 minutes total
                                                 poll_interval=15,
                                                 stall_timeout=stall_timeout,
                                                 max_stall_retries=max_stall_retries,
@@ -2888,194 +2867,248 @@ class ClusterHandler(BaseHandler):
                                                 server_id=host['server_id'],
                                                 user_id=job['created_by']
                                             )
-                                        else:
-                                            # Poll using task endpoint (no stall recovery for tasks)
-                                            job_result = dell_ops.helpers.wait_for_task(
-                                                ip=server['ip_address'],
-                                                username=username,
-                                                password=password,
-                                                task_uri=repo_task_uri,
-                                                timeout=1800,
-                                                poll_interval=15,
-                                                operation_name='Repository Firmware Update',
-                                                job_id=job['id'],
-                                                server_id=host['server_id'],
-                                                user_id=job['created_by']
-                                            )
-                                    else:
-                                        job_result = {}
-                                    
-                                    # Check the result to determine if updates were applied
-                                    job_message = job_result.get('Message', '').lower()
-                                    job_state = job_result.get('JobState', '')
-                                    
-                                    self.log(f"    Repository job state: {job_state}, message: {job_result.get('Message', 'N/A')}")
-                                    
-                                    # Dell messages that indicate no updates needed
-                                    no_update_indicators = [
-                                        'no applicable',
-                                        'no updates',
-                                        'already at latest',
-                                        'current version',
-                                        'up to date',
-                                        'no new updates'
-                                    ]
-                                    
-                                    if any(indicator in job_message for indicator in no_update_indicators):
-                                        self.log(f"    ℹ️ No firmware updates needed - server is already up to date")
-                                        update_result['no_updates_needed'] = True
-                                        reboot_required = False
-                                    elif job_state == 'Completed':
-                                        # Repository scan completed - now check for SCHEDULED jobs
-                                        # Dell InstallFromRepository does NOT auto-reboot - it schedules jobs
-                                        self.log(f"    Checking for scheduled iDRAC jobs...")
-                                        
-                                        try:
-                                            pending_check = dell_ops.get_pending_idrac_jobs(
-                                                ip=server['ip_address'],
-                                                username=username,
-                                                password=password,
-                                                server_id=host['server_id'],
-                                                job_id=job['id'],
-                                                user_id=job['created_by']
-                                            )
                                             
-                                            scheduled_jobs = pending_check.get('jobs', [])
-                                            # Look for ALL active firmware (JID_) or reboot (RID_) jobs
-                                            # FIX: Include Running, Downloading, New - not just Scheduled!
-                                            active_states = ['Scheduled', 'Running', 'Downloading', 'New', 'Starting', 'Waiting']
-                                            active_updates = [
-                                                j for j in scheduled_jobs 
-                                                if j.get('status') in active_states and 
-                                                   (j.get('id', '').startswith('JID_') or j.get('id', '').startswith('RID_'))
-                                            ]
-                                            
-                                            if active_updates:
-                                                self.log(f"    Found {len(active_updates)} active update job(s):")
-                                                for sj in active_updates[:5]:  # Show first 5
-                                                    self.log(f"      - {sj.get('id')}: {sj.get('name', 'Unknown')} ({sj.get('status')})")
+                                            # Log if recovery was needed
+                                            if job_result.get('recovery_attempts', 0) > 0:
+                                                self.log(f"    ℹ️ Job required {job_result['recovery_attempts']} recovery attempt(s)")
                                                 
-                                                # Check for iDRAC firmware updates (require iDRAC restart, not just system reboot)
-                                                idrac_fw_updates = [j for j in active_updates if 'idrac' in j.get('name', '').lower()]
-                                                if idrac_fw_updates:
-                                                    self.log(f"    ⚠ iDRAC firmware update detected - will require iDRAC restart")
-                                                    update_result['idrac_fw_update_pending'] = True
-                                                
-                                                # Track active jobs for later verification
-                                                update_result['active_jobs'] = [{'id': j.get('id'), 'name': j.get('name'), 'status': j.get('status')} for j in active_updates]
-                                                
-                                                # If jobs are already Running/Downloading, don't reboot yet - wait for them
-                                                running_jobs = [j for j in active_updates if j.get('status') in ['Running', 'Downloading']]
-                                                if running_jobs:
-                                                    self.log(f"    Jobs already in progress - will wait for completion...")
-                                                    reboot_required = True  # Will need reboot after jobs complete
-                                                    update_result['jobs_in_progress'] = True
-                                                else:
-                                                    # Jobs are Scheduled - trigger reboot to apply staged updates
-                                                    self.log(f"    Triggering GracefulRestart to apply staged updates...")
-                                                    reboot_result = dell_ops.graceful_reboot(
-                                                        ip=server['ip_address'],
-                                                        username=username,
-                                                        password=password,
-                                                        server_id=host['server_id'],
-                                                        job_id=job['id'],
-                                                        user_id=job['created_by']
-                                                    )
-                                                    
-                                                    if reboot_result.get('success'):
-                                                        self.log(f"    ✓ GracefulRestart triggered successfully")
-                                                        reboot_required = True
-                                                        update_result['reboot_triggered'] = True
-                                                    else:
-                                                        self.log(f"    ⚠ GracefulRestart failed: {reboot_result.get('error')}", "WARN")
-                                                        # Still wait - the jobs are scheduled and may execute on next reboot
-                                                        reboot_required = True
-                                            else:
-                                                # No active jobs - server may already be up to date
-                                                self.log(f"    ℹ️ No active update jobs found - server may already be up to date")
-                                                update_result['no_updates_needed'] = True
-                                                reboot_required = False
-                                                
-                                        except Exception as pending_error:
-                                            self.log(f"    ⚠ Error checking pending jobs: {pending_error}", "WARN")
-                                            # Fallback: check job message for reboot indicator
-                                            if 'reboot' in job_message or 'restart' in job_message or 'pending' in job_message:
-                                                self.log(f"    Job message indicates reboot pending - triggering reboot")
-                                                try:
-                                                    dell_ops.graceful_reboot(
-                                                        ip=server['ip_address'],
-                                                        username=username,
-                                                        password=password,
-                                                        server_id=host['server_id'],
-                                                        job_id=job['id'],
-                                                        user_id=job['created_by']
-                                                    )
-                                                except:
-                                                    pass
-                                                reboot_required = True
-                                            else:
-                                                self.log(f"    ✓ Firmware update job completed: {job_result.get('Message', 'Success')}")
-                                                reboot_required = True
-                                    elif job_state == 'Failed':
-                                        # Detect catalog download failure in air-gapped environment
-                                        original_message = job_result.get('Message', '')
-                                        if any(indicator in original_message.lower() for indicator in ['internal error', 'red004', 'unable to complete']):
-                                            self.log(f"    ❌ Firmware update job failed with internal error", "ERROR")
-                                            if firmware_source == 'dell_online_catalog':
-                                                self.log(f"    💡 The iDRAC cannot reach downloads.dell.com", "WARN")
-                                                self.log(f"    💡 For air-gapped networks, configure a local firmware repository", "WARN")
-                                                raise Exception(
-                                                    f"Catalog download failed - iDRAC cannot reach Dell servers. "
-                                                    f"For air-gapped networks, use 'Local Repository' firmware source instead."
+                                        elif repo_task_uri:
+                                            # Extract job ID from task URI if present
+                                            if '/Jobs/' in repo_task_uri:
+                                                extracted_job_id = repo_task_uri.split('/Jobs/')[-1]
+                                                job_result = dell_ops.wait_for_job_with_recovery(
+                                                    ip=server['ip_address'],
+                                                    username=username,
+                                                    password=password,
+                                                    job_id_str=extracted_job_id,
+                                                    timeout=2700,
+                                                    poll_interval=15,
+                                                    stall_timeout=stall_timeout,
+                                                    max_stall_retries=max_stall_retries,
+                                                    stall_recovery_action=stall_recovery_action,
+                                                    operation_name='Repository Firmware Update',
+                                                    parent_job_id=job['id'],
+                                                    server_id=host['server_id'],
+                                                    user_id=job['created_by']
                                                 )
-                                        raise Exception(f"Firmware update failed: {original_message}")
-                                    else:
-                                        self.log(f"    ✓ Firmware update job completed with state: {job_state}")
+                                            else:
+                                                # Poll using task endpoint (no stall recovery for tasks)
+                                                job_result = dell_ops.helpers.wait_for_task(
+                                                    ip=server['ip_address'],
+                                                    username=username,
+                                                    password=password,
+                                                    task_uri=repo_task_uri,
+                                                    timeout=1800,
+                                                    poll_interval=15,
+                                                    operation_name='Repository Firmware Update',
+                                                    job_id=job['id'],
+                                                    server_id=host['server_id'],
+                                                    user_id=job['created_by']
+                                                )
+                                        else:
+                                            job_result = {}
+                                        
+                                        # Check the result to determine if updates were applied
+                                        job_message = job_result.get('Message', '').lower()
+                                        job_state = job_result.get('JobState', '')
+                                        
+                                        self.log(f"    Repository job state: {job_state}, message: {job_result.get('Message', 'N/A')}")
+                                        
+                                        # Dell messages that indicate no updates needed
+                                        no_update_indicators = [
+                                            'no applicable',
+                                            'no updates',
+                                            'already at latest',
+                                            'current version',
+                                            'up to date',
+                                            'no new updates'
+                                        ]
+                                        
+                                        if any(indicator in job_message for indicator in no_update_indicators):
+                                            self.log(f"    ℹ️ No firmware updates needed - server is already up to date")
+                                            update_result['no_updates_needed'] = True
+                                            reboot_required = False
+                                        elif job_state == 'Completed':
+                                            # Repository scan completed - now check for SCHEDULED jobs
+                                            # Dell InstallFromRepository does NOT auto-reboot - it schedules jobs
+                                            self.log(f"    Checking for scheduled iDRAC jobs...")
+                                            
+                                            try:
+                                                pending_check = dell_ops.get_pending_idrac_jobs(
+                                                    ip=server['ip_address'],
+                                                    username=username,
+                                                    password=password,
+                                                    server_id=host['server_id'],
+                                                    job_id=job['id'],
+                                                    user_id=job['created_by']
+                                                )
+                                                
+                                                scheduled_jobs = pending_check.get('jobs', [])
+                                                # Look for ALL active firmware (JID_) or reboot (RID_) jobs
+                                                # FIX: Include Running, Downloading, New - not just Scheduled!
+                                                active_states = ['Scheduled', 'Running', 'Downloading', 'New', 'Starting', 'Waiting']
+                                                active_updates = [
+                                                    j for j in scheduled_jobs 
+                                                    if j.get('status') in active_states and 
+                                                       (j.get('id', '').startswith('JID_') or j.get('id', '').startswith('RID_'))
+                                                ]
+                                                
+                                                if active_updates:
+                                                    self.log(f"    Found {len(active_updates)} active update job(s):")
+                                                    for sj in active_updates[:5]:  # Show first 5
+                                                        self.log(f"      - {sj.get('id')}: {sj.get('name', 'Unknown')} ({sj.get('status')})")
+                                                    
+                                                    # Check for iDRAC firmware updates (require iDRAC restart, not just system reboot)
+                                                    idrac_fw_updates = [j for j in active_updates if 'idrac' in j.get('name', '').lower()]
+                                                    if idrac_fw_updates:
+                                                        self.log(f"    ⚠ iDRAC firmware update detected - will require iDRAC restart")
+                                                        update_result['idrac_fw_update_pending'] = True
+                                                    
+                                                    # Track active jobs for later verification
+                                                    update_result['active_jobs'] = [{'id': j.get('id'), 'name': j.get('name'), 'status': j.get('status')} for j in active_updates]
+                                                    
+                                                    # If jobs are already Running/Downloading, don't reboot yet - wait for them
+                                                    running_jobs = [j for j in active_updates if j.get('status') in ['Running', 'Downloading']]
+                                                    if running_jobs:
+                                                        self.log(f"    Jobs already in progress - will wait for completion...")
+                                                        reboot_required = True  # Will need reboot after jobs complete
+                                                        
+                                                        # Wait for all jobs to finish
+                                                        pending_jobs = dell_ops.wait_for_all_jobs_complete(
+                                                            ip=server['ip_address'],
+                                                            username=username,
+                                                            password=password,
+                                                            timeout=3600,
+                                                            poll_interval=30,
+                                                            server_id=host['server_id'],
+                                                            job_id=job['id'],
+                                                            user_id=job['created_by']
+                                                        )
+                                                        
+                                                        if not pending_jobs.get('success', False):
+                                                            self.log(f"    ⚠ Warning: Some jobs did not complete within timeout", "WARN")
+                                                            for pj in pending_jobs.get('pending_jobs', [])[:5]:
+                                                                self.log(f"      - {pj.get('id')}: {pj.get('status')} ({pj.get('name', 'Unknown')})", "WARN")
+                                                        else:
+                                                            self.log(f"    ✓ All pending jobs completed")
+                                                            update_result['job_wait_result'] = pending_jobs
+                                                    else:
+                                                        self.log(f"    Scheduling {len(active_updates)} firmware job(s) for reboot...")
+                                                        reboot_required = True
+                                                else:
+                                                    self.log(f"    ℹ️ No active firmware jobs found after repository scan")
+                                                    update_result['no_updates_needed'] = True
+                                            except Exception as pending_err:
+                                                self.log(f"    ⚠ Could not inspect scheduled iDRAC jobs: {pending_err}", "WARN")
+                                                reboot_required = True
+                                        elif job_state in ['Failed', 'Exception']:
+                                            # Check for common iDRAC errors related to catalog downloads
+                                            lower_msg = job_message.lower()
+                                            network_indicators = ['network', 'connection', 'unable to connect', 'download', 'red004', 'internal error']
+                                            if any(indicator in lower_msg for indicator in network_indicators):
+                                                self.log(f"    ❌ Repository job failed - network or download issue", "ERROR")
+                                                self.log(f"    💡 Suggestion: Switch to 'Local Repository' firmware source for air-gapped environments", "WARN")
+                                                raise Exception(
+                                                    f"Repository scan failed due to network/download issue. "
+                                                    f"Switch to 'Local Repository' source or check connectivity to Dell catalog. "
+                                                    f"Original message: {job_result.get('Message', 'Unknown error')}"
+                                                )
+                                            else:
+                                                raise Exception(f"Repository job failed: {job_result.get('Message', 'Unknown error')}")
+                                        else:
+                                            # Default: assume reboot required if job completed without explicit indicators
+                                            reboot_required = True
+                                            update_result['job_result'] = job_result
+                                        
+                                    except Exception as poll_error:
+                                        self.log(f"    ⚠ Error polling repository job: {poll_error}", "WARN")
+                                        # Assume updates were applied if we can't poll
                                         reboot_required = True
-                                    
-                                    update_result['job_result'] = job_result
-                                    
-                                except Exception as poll_error:
-                                    self.log(f"    ⚠ Error polling repository job: {poll_error}", "WARN")
-                                    # Assume updates were applied if we can't poll
+                                else:
+                                    self.log(f"    ⚠ No job ID returned from catalog update - cannot track progress", "WARN")
+                                    # Assume updates were applied
                                     reboot_required = True
-                            else:
-                                self.log(f"    ⚠ No job ID returned from catalog update - cannot track progress", "WARN")
-                                # Assume updates were applied
-                                reboot_required = True
-                            
-                        elif firmware_source == 'local_repository':
-                            # Query firmware packages from library and apply applicable ones
-                            self.log(f"    Using local firmware repository...")
-                            
-                            server_model = server.get('model', '')
-                            component_filter = details.get('component_filter', ['all'])
-                            
-                            # Get applicable firmware packages from library
-                            applicable_packages = self._get_applicable_firmware_packages(
-                                server_model=server_model,
-                                component_filter=component_filter
-                            )
-                            
-                            if not applicable_packages:
-                                raise Exception(
-                                    f"No firmware packages in library for model '{server_model}'. "
-                                    f"Upload DUP files in Settings → Firmware Library, or use 'Dell Online Catalog' source."
+                                
+                            elif firmware_source == 'local_repository':
+                                # Query firmware packages from library and apply applicable ones
+                                self.log(f"    Using local firmware repository...")
+                                
+                                server_model = server.get('model', '')
+                                component_filter = details.get('component_filter', ['all'])
+                                
+                                # Get applicable firmware packages from library
+                                applicable_packages = self._get_applicable_firmware_packages(
+                                    server_model=server_model,
+                                    component_filter=component_filter
                                 )
-                            
-                            self.log(f"    Found {len(applicable_packages)} applicable package(s) for {server_model or 'this server'}")
-                            packages_applied = 0
-                            update_result = {'success': True, 'packages_applied': []}
-                            
-                            for pkg in applicable_packages:
-                                firmware_uri = pkg.get('served_url') or pkg.get('local_path')
+                                
+                                if not applicable_packages:
+                                    raise Exception(
+                                        f"No firmware packages in library for model '{server_model}'. "
+                                        f"Upload DUP files in Settings → Firmware Library, or use 'Dell Online Catalog' source."
+                                    )
+                                
+                                self.log(f"    Found {len(applicable_packages)} applicable package(s) for {server_model or 'this server'}")
+                                packages_applied = 0
+                                update_result = {'success': True, 'packages_applied': []}
+                                
+                                for pkg in applicable_packages:
+                                    firmware_uri = pkg.get('served_url') or pkg.get('local_path')
+                                    if not firmware_uri:
+                                        self.log(f"      ⚠ Package {pkg['filename']} has no URL - skipping", "WARN")
+                                        continue
+                                    
+                                    self.log(f"      Applying: {pkg.get('component_type', 'Unknown')} v{pkg['dell_version']} ({pkg['filename']})")
+                                    
+                                    pkg_result = dell_ops.update_firmware_simple(
+                                        ip=server['ip_address'],
+                                        username=username,
+                                        password=password,
+                                        firmware_uri=firmware_uri,
+                                        apply_time='Immediate',
+                                        job_id=job['id'],
+                                        server_id=host['server_id']
+                                    )
+                                    
+                                    if pkg_result.get('success'):
+                                        packages_applied += 1
+                                        update_result['packages_applied'].append({
+                                            'filename': pkg['filename'],
+                                            'component': pkg.get('component_type'),
+                                            'version': pkg['dell_version']
+                                        })
+                                        self.log(f"        ✓ Package applied successfully")
+                                    else:
+                                        error_msg = pkg_result.get('error', 'Unknown error')
+                                        # Check if package is not applicable (not an error)
+                                        if 'already' in error_msg.lower() or 'not applicable' in error_msg.lower():
+                                            self.log(f"        ℹ Package not needed: {error_msg}")
+                                        else:
+                                            self.log(f"        ✗ Package failed: {error_msg}", "WARN")
+                                
+                                if packages_applied > 0:
+                                    self.log(f"    ✓ Applied {packages_applied} firmware package(s)")
+                                    reboot_required = True
+                                else:
+                                    self.log(f"    ℹ No firmware packages were applicable - server may be up to date")
+                                    update_result['no_updates_needed'] = True
+                                
+                            else:
+                                # Manual/legacy mode - requires explicit firmware_uri
+                                firmware_uri = details.get('firmware_uri')
+                                if not firmware_uri and firmware_updates:
+                                    firmware_uri = firmware_updates[0].get('firmware_uri')
+                                
                                 if not firmware_uri:
-                                    self.log(f"      ⚠ Package {pkg['filename']} has no URL - skipping", "WARN")
-                                    continue
+                                    raise Exception(
+                                        "No firmware URI specified. Either:\n"
+                                        "1. Upload DUP files in Settings → Firmware Library and use 'Local Repository'\n"
+                                        "2. Use 'Dell Online Catalog' source (requires internet access)\n"
+                                        "3. Specify firmware_uri manually in job details"
+                                    )
                                 
-                                self.log(f"      Applying: {pkg.get('component_type', 'Unknown')} v{pkg['dell_version']} ({pkg['filename']})")
-                                
-                                pkg_result = dell_ops.update_firmware_simple(
+                                self.log(f"    Using firmware package: {firmware_uri}")
+                                update_result = dell_ops.update_firmware_simple(
                                     ip=server['ip_address'],
                                     username=username,
                                     password=password,
@@ -3085,412 +3118,316 @@ class ClusterHandler(BaseHandler):
                                     server_id=host['server_id']
                                 )
                                 
-                                if pkg_result.get('success'):
-                                    packages_applied += 1
-                                    update_result['packages_applied'].append({
-                                        'filename': pkg['filename'],
-                                        'component': pkg.get('component_type'),
-                                        'version': pkg['dell_version']
-                                    })
-                                    self.log(f"        ✓ Package applied successfully")
-                                else:
-                                    error_msg = pkg_result.get('error', 'Unknown error')
-                                    # Check if package is not applicable (not an error)
-                                    if 'already' in error_msg.lower() or 'not applicable' in error_msg.lower():
-                                        self.log(f"        ℹ Package not needed: {error_msg}")
-                                    else:
-                                        self.log(f"        ✗ Package failed: {error_msg}", "WARN")
-                            
-                            if packages_applied > 0:
-                                self.log(f"    ✓ Applied {packages_applied} firmware package(s)")
+                                if not update_result.get('success'):
+                                    raise Exception(f"Firmware update failed: {update_result.get('error')}")
+                                
+                                # Manual firmware updates always require reboot
                                 reboot_required = True
-                            else:
-                                self.log(f"    ℹ No firmware packages were applicable - server may be up to date")
-                                update_result['no_updates_needed'] = True
                             
-                        else:
-                            # Manual/legacy mode - requires explicit firmware_uri
-                            firmware_uri = details.get('firmware_uri')
-                            if not firmware_uri and firmware_updates:
-                                firmware_uri = firmware_updates[0].get('firmware_uri')
-                            
-                            if not firmware_uri:
-                                raise Exception(
-                                    "No firmware URI specified. Either:\n"
-                                    "1. Upload DUP files in Settings → Firmware Library and use 'Local Repository'\n"
-                                    "2. Use 'Dell Online Catalog' source (requires internet access)\n"
-                                    "3. Specify firmware_uri manually in job details"
-                                )
-                            
-                            self.log(f"    Using firmware package: {firmware_uri}")
-                            update_result = dell_ops.update_firmware_simple(
-                                ip=server['ip_address'],
-                                username=username,
-                                password=password,
-                                firmware_uri=firmware_uri,
-                                apply_time='Immediate',
-                                job_id=job['id'],
-                                server_id=host['server_id']
-                            )
-                            
-                            if not update_result.get('success'):
-                                raise Exception(f"Firmware update failed: {update_result.get('error')}")
-                            
-                            # Manual firmware updates always require reboot
-                            reboot_required = True
-                        
-                        self.log(f"    ✓ Firmware update step completed (reboot_required={reboot_required})")
-                        update_result['reboot_required'] = reboot_required
-                        host_result['no_updates_needed'] = update_result.get('no_updates_needed', False)
-                        self._log_workflow_step(
-                            job['id'], 'rolling_cluster_update',
-                            step_number=current_step_number,
-                            step_name=current_step_name,
-                            status='completed',
-                            server_id=host['server_id'],
-                            step_details=update_result,
-                            step_completed_at=utc_now_iso()
-                        )
-                        current_step_in_progress = False
-                        host_result['steps'].append('firmware_update')
-                        
-                        # STEP 3: Reboot and wait for system to come online (only if reboot required)
-                        if reboot_required:
-                            current_step_number = base_step + 3
-                            current_step_name = f"Reboot and wait: {host['name']}"
-                            current_step_in_progress = True
+                            self.log(f"    ✓ Firmware update step completed (reboot_required={reboot_required})")
+                            update_result['reboot_required'] = reboot_required
+                            update_result['update_pass'] = update_pass
+                            host_result['no_updates_needed'] = update_result.get('no_updates_needed', False)
                             self._log_workflow_step(
                                 job['id'], 'rolling_cluster_update',
                                 step_number=current_step_number,
                                 step_name=current_step_name,
-                                status='running',
+                                status='completed',
                                 server_id=host['server_id'],
-                                step_started_at=utc_now_iso()
+                                step_details=update_result,
+                                step_completed_at=utc_now_iso()
                             )
+                            current_step_in_progress = False
+                            host_result['steps'].append('firmware_update' if update_pass == 1 else f'firmware_update_pass_{update_pass}')
                             
-                            self.log(f"  [3/{host_steps_total}] Waiting for system reboot...")
-                            
-                            # Immediate status update when entering wait loop
-                            reboot_wait_started = utc_now_iso()
-                            esxi_target = host.get('name') or server['ip_address']
-                            self.update_job_details_field(job['id'], {
-                                'current_step': f'Waiting for server to reboot: {host["name"]}',
-                                'reboot_wait_started': reboot_wait_started,
-                                'reboot_wait_target': esxi_target
-                            })
-                            
-                            self.log(f"    Initial wait: 3 minutes for BIOS POST and reboot...")
-                            self._append_console_log(job['id'], f"Starting reboot wait for {host['name']}", "INFO")
-                            time.sleep(180)  # Wait 3 minutes for reboot to start (BIOS POST can be slow)
-                            
-                            # Wait for system to come back online - phase 1: iDRAC, phase 2: ESXi
-                            max_attempts = 180  # 30 minutes (180 * 10s) - enough for BIOS updates
-                            idrac_online = False
-                            esxi_online = False
-                            esxi_timeout = 5  # Dynamic timeout adjustment
-                            fallback_ip = host.get('management_ip')  # IP fallback option
-                            esxi_access_method = 'hostname'  # Track what worked
-                            vcenter_fallback_used = False
-                            
-                            for attempt in range(max_attempts):
-                                # Check for cancellation during reboot wait (no graceful cancel during reboot)
-                                cancel_result = self._check_and_handle_cancellation(job, cleanup_state, check_graceful=False)
-                                if cancel_result == 'cancelled':
-                                    self.update_job_status(job['id'], 'cancelled', details={
-                                        'cancelled_during': 'reboot_wait',
-                                        'cleanup_performed': True,
-                                        'workflow_results': workflow_results
-                                    })
-                                    return
+                            # STEP 3: Reboot and wait for system to come online (only if reboot required)
+                            reboot_step_name = f"Reboot and wait: {host['name']}{pass_suffix}"
+                            if reboot_required:
+                                current_step_number = base_step + 3
+                                current_step_in_progress = True
+                                self._log_workflow_step(
+                                    job['id'], 'rolling_cluster_update',
+                                    step_number=current_step_number,
+                                    step_name=reboot_step_name,
+                                    status='running',
+                                    server_id=host['server_id'],
+                                    step_started_at=utc_now_iso()
+                                )
                                 
-                                # Phase 1: Wait for iDRAC to come back online
-                                if not idrac_online:
-                                    try:
-                                        test_session = self.executor.create_idrac_session(
-                                            server['ip_address'], username, password,
-                                            log_to_db=False
-                                        )
-                                        if test_session:
-                                            self.executor.delete_idrac_session(
-                                                test_session, 
-                                                server['ip_address'], 
-                                                host['server_id'], 
-                                                job['id']
-                                            )
-                                            idrac_online = True
-                                            self.log(f"    ✓ iDRAC back online (attempt {attempt+1}/{max_attempts})")
-                                            self._append_console_log(job['id'], f"iDRAC online after {attempt * 10}s", "INFO")
-                                    except Exception as idrac_err:
-                                        # Log iDRAC errors every minute to console_log
-                                        if attempt % 6 == 0:
-                                            error_msg = f"iDRAC check failed: {type(idrac_err).__name__}: {idrac_err}"
-                                            self.log(f"      {error_msg}", "DEBUG")
-                                            self._append_console_log(job['id'], error_msg, "DEBUG")
+                                self.log(f"  [3/{host_steps_total}] Waiting for system reboot{pass_suffix}...")
                                 
-                                # Phase 2: Wait for ESXi to be accessible (only after iDRAC is up)
-                                if idrac_online and not esxi_online:
-                                    # Try primary target first
-                                    accessible, connect_time, error_msg = self._check_esxi_accessible(
-                                        esxi_target, timeout=esxi_timeout, job_id=job['id']
-                                    )
-                                    
-                                    if accessible:
-                                        esxi_online = True
-                                        self.log(f"    ✓ ESXi accessible on port 443 ({esxi_target})")
-                                        self._append_console_log(job['id'], f"ESXi accessible via {esxi_access_method}", "INFO")
-                                        
-                                        # Dynamic timeout adjustment: if connection was slow, increase timeout
-                                        if connect_time > 3:
-                                            self._append_console_log(job['id'], f"Slow connection detected ({connect_time:.1f}s)", "WARN")
-                                        
-                                        # Store what worked
-                                        self.update_job_details_field(job['id'], {
-                                            'esxi_access_method': esxi_access_method,
-                                            'esxi_access_target': esxi_target,
-                                            'esxi_connect_time_s': round(connect_time, 2)
+                                # Immediate status update when entering wait loop
+                                reboot_wait_started = utc_now_iso()
+                                esxi_target = host.get('name') or server['ip_address']
+                                self.update_job_details_field(job['id'], {
+                                    'current_step': f'Waiting for server to reboot: {host["name"]}{pass_suffix}',
+                                    'reboot_wait_started': reboot_wait_started,
+                                    'reboot_wait_target': esxi_target
+                                })
+                                
+                                self.log(f"    Initial wait: 3 minutes for BIOS POST and reboot...")
+                                self._append_console_log(job['id'], f"Starting reboot wait for {host['name']}", "INFO")
+                                time.sleep(180)  # Wait 3 minutes for reboot to start (BIOS POST can be slow)
+                                
+                                # Wait for system to come back online - phase 1: iDRAC, phase 2: ESXi
+                                max_attempts = 180  # 30 minutes (180 * 10s) - enough for BIOS updates
+                                idrac_online = False
+                                esxi_online = False
+                                esxi_timeout = 5  # Dynamic timeout adjustment
+                                fallback_ip = host.get('management_ip')  # IP fallback option
+                                esxi_access_method = 'hostname'  # Track what worked
+                                vcenter_fallback_used = False
+                                
+                                for attempt in range(max_attempts):
+                                    # Check for cancellation during reboot wait (no graceful cancel during reboot)
+                                    cancel_result = self._check_and_handle_cancellation(job, cleanup_state, check_graceful=False)
+                                    if cancel_result == 'cancelled':
+                                        self.update_job_status(job['id'], 'cancelled', details={
+                                            'cancelled_during': 'reboot_wait',
+                                            'cleanup_performed': True,
+                                            'workflow_results': workflow_results
                                         })
+                                        return
+                                    
+                                    # Phase 1: Wait for iDRAC to come back online
+                                    if not idrac_online:
+                                        try:
+                                            test_session = self.executor.create_idrac_session(
+                                                server['ip_address'], username, password,
+                                                log_to_db=False
+                                            )
+                                            if test_session:
+                                                self.executor.delete_idrac_session(
+                                                    test_session, 
+                                                    server['ip_address'], 
+                                                    host['server_id'], 
+                                                    job['id']
+                                                )
+                                                idrac_online = True
+                                                self.log(f"    ✓ iDRAC back online (attempt {attempt+1}/{max_attempts})")
+                                                self._append_console_log(job['id'], f"iDRAC online after {attempt * 10}s", "INFO")
+                                        except Exception as idrac_err:
+                                            # Log iDRAC errors every minute to console_log
+                                            if attempt % 6 == 0:
+                                                error_msg = f"iDRAC check failed: {type(idrac_err).__name__}: {idrac_err}"
+                                                self.log(f"      {error_msg}", "DEBUG")
+                                                self._append_console_log(job['id'], error_msg, "DEBUG")
+                                    
+                                    # Phase 2: Wait for ESXi to be accessible (only after iDRAC is up)
+                                    if idrac_online and not esxi_online:
+                                        # Try primary target first
+                                        accessible, connect_time, error_msg = self._check_esxi_accessible(
+                                            esxi_target, timeout=esxi_timeout, job_id=job['id']
+                                        )
+                                        
+                                        if accessible:
+                                            esxi_online = True
+                                            self.log(f"    ✓ ESXi accessible on port 443 ({esxi_target})")
+                                            self._append_console_log(job['id'], f"ESXi accessible via {esxi_access_method}", "INFO")
+                                            
+                                            # Dynamic timeout adjustment: if connection was slow, increase timeout
+                                            if connect_time > 3:
+                                                self._append_console_log(job['id'], f"Slow connection detected ({connect_time:.1f}s)", "WARN")
+                                            
+                                            # Store what worked
+                                            self.update_job_details_field(job['id'], {
+                                                'esxi_access_method': esxi_access_method,
+                                                'esxi_access_target': esxi_target,
+                                                'esxi_connect_time_s': round(connect_time, 2)
+                                            })
+                                            break
+                                        
+                                        # Fallback: Try management IP if hostname failed and IP is available
+                                        if error_msg and fallback_ip and fallback_ip != esxi_target:
+                                            accessible_ip, connect_time_ip, _ = self._check_esxi_accessible(
+                                                fallback_ip, timeout=esxi_timeout, job_id=job['id']
+                                            )
+                                            if accessible_ip:
+                                                esxi_online = True
+                                                esxi_access_method = 'management_ip'
+                                                self.log(f"    ✓ ESXi accessible via fallback IP ({fallback_ip})")
+                                                self._append_console_log(job['id'], f"ESXi accessible via fallback IP {fallback_ip}", "INFO")
+                                                self.update_job_details_field(job['id'], {
+                                                    'esxi_access_method': 'management_ip',
+                                                    'esxi_access_target': fallback_ip,
+                                                    'esxi_access_fallback_used': True,
+                                                    'esxi_connect_time_s': round(connect_time_ip, 2)
+                                                })
+                                                break
+                                        
+                                        # VCenter fallback: After 10 minutes, check vCenter status
+                                        if attempt >= 60 and attempt % 30 == 0:  # Every 5 mins after 10 min
+                                            vcenter_status = self._check_vcenter_host_status(host, job['id'])
+                                            if vcenter_status == 'connected':
+                                                self.log(f"    ⚠ Port check failing but vCenter shows 'connected' - proceeding", "WARN")
+                                                self._append_console_log(job['id'], f"vCenter reports connected, proceeding despite port check failure", "WARN")
+                                                esxi_online = True
+                                                vcenter_fallback_used = True
+                                                self.update_job_details_field(job['id'], {
+                                                    'esxi_access_method': 'vcenter_fallback',
+                                                    'esxi_access_warning': 'Port 443 check failed but vCenter reported connected',
+                                                    'vcenter_fallback_used': True
+                                                })
+                                                break
+                                            elif vcenter_status:
+                                                self._append_console_log(job['id'], f"vCenter status: {vcenter_status}", "DEBUG")
+                                    
+                                    # Heartbeat logging every minute with timestamps
+                                    if attempt % 6 == 0:
+                                        elapsed_mins = (attempt * 10) // 60
+                                        status_msg = f"Waiting for {'ESXi' if idrac_online else 'iDRAC'}: {elapsed_mins}m elapsed"
+                                        self._append_console_log(job['id'], status_msg, "INFO")
+                                        self.update_job_details_field(job['id'], {
+                                            'current_step': f'Waiting for {"ESXi" if idrac_online else "iDRAC"}: {esxi_target}',
+                                            'wait_heartbeat': utc_now_iso(),
+                                            'wait_attempt': attempt,
+                                            'wait_elapsed_mins': elapsed_mins,
+                                            'idrac_online': idrac_online,
+                                            'esxi_online': esxi_online,
+                                            'vcenter_fallback_used': vcenter_fallback_used
+                                        })
+                                    
+                                    # Once ESXi is back, break the loop
+                                    if idrac_online and esxi_online:
                                         break
                                     
-                                    # Fallback: Try management IP if hostname failed and IP is available
-                                    if error_msg and fallback_ip and fallback_ip != esxi_target:
-                                        accessible_ip, connect_time_ip, _ = self._check_esxi_accessible(
-                                            fallback_ip, timeout=esxi_timeout, job_id=job['id']
-                                        )
-                                        if accessible_ip:
-                                            esxi_online = True
-                                            esxi_access_method = 'management_ip'
-                                            self.log(f"    ✓ ESXi accessible via fallback IP ({fallback_ip})")
-                                            self._append_console_log(job['id'], f"ESXi accessible via fallback IP {fallback_ip}", "INFO")
-                                            self.update_job_details_field(job['id'], {
-                                                'esxi_access_method': 'management_ip',
-                                                'esxi_access_target': fallback_ip,
-                                                'esxi_access_fallback_used': True,
-                                                'esxi_connect_time_s': round(connect_time_ip, 2)
-                                            })
-                                            break
+                                    # Incrementally increase timeout if ESXi is slow to respond
+                                    if attempt % 12 == 0 and esxi_timeout < 10:  # Every 2 minutes, up to 10s timeout
+                                        esxi_timeout += 1
                                     
-                                    # VCenter fallback: After 10 minutes, check vCenter status
-                                    if attempt >= 60 and attempt % 30 == 0:  # Every 5 mins after 10 min
-                                        vcenter_status = self._check_vcenter_host_status(host, job['id'])
-                                        if vcenter_status == 'connected':
-                                            self.log(f"    ⚠ Port check failing but vCenter shows 'connected' - proceeding", "WARN")
-                                            self._append_console_log(job['id'], f"vCenter reports connected, proceeding despite port check failure", "WARN")
-                                            esxi_online = True
-                                            vcenter_fallback_used = True
-                                            self.update_job_details_field(job['id'], {
-                                                'esxi_access_method': 'vcenter_fallback',
-                                                'esxi_access_warning': 'Port 443 check failed but vCenter reported connected',
-                                                'vcenter_fallback_used': True
-                                            })
-                                            break
-                                        elif vcenter_status:
-                                            self._append_console_log(job['id'], f"vCenter status: {vcenter_status}", "DEBUG")
+                                    time.sleep(10)
                                 
-                                # Heartbeat logging every minute with timestamps
-                                if attempt % 6 == 0:
-                                    elapsed_mins = (attempt * 10) // 60
-                                    status_msg = f"Waiting for {'ESXi' if idrac_online else 'iDRAC'}: {elapsed_mins}m elapsed"
-                                    self._append_console_log(job['id'], status_msg, "INFO")
-                                    self.update_job_details_field(job['id'], {
-                                        'current_step': f'Waiting for {"ESXi" if idrac_online else "iDRAC"}: {esxi_target}',
-                                        'wait_heartbeat': utc_now_iso(),
-                                        'wait_attempt': attempt,
-                                        'wait_elapsed_mins': elapsed_mins,
-                                        'idrac_online': idrac_online,
-                                        'esxi_online': esxi_online,
-                                        'esxi_timeout': esxi_timeout
+                                # If ESXi never came online, raise an error
+                                if not esxi_online:
+                                    raise Exception(f"ESXi did not come back online within {max_attempts * 10 // 60} minutes")
+                                
+                                # Successful reboot and ESXi reconnection
+                                self._log_workflow_step(
+                                    job['id'], 'rolling_cluster_update',
+                                    step_number=current_step_number,
+                                    step_name=reboot_step_name,
+                                    status='completed',
+                                    server_id=host['server_id'],
+                                    step_details={
+                                        'reboot_wait_started': reboot_wait_started,
+                                        'esxi_target': esxi_target,
+                                        'vcenter_fallback_used': vcenter_fallback_used
+                                    },
+                                    step_completed_at=utc_now_iso()
+                                )
+                                current_step_in_progress = False
+                                host_result['steps'].append('reboot' if update_pass == 1 else f'reboot_pass_{update_pass}')
+                            else:
+                                # No reboot required - skip reboot wait
+                                self.log(f"  [3/{host_steps_total}] Skipping reboot wait - no updates required reboot{pass_suffix}")
+                                self._log_workflow_step(
+                                    job['id'], 'rolling_cluster_update',
+                                    step_number=base_step + 3,
+                                    step_name=reboot_step_name,
+                                    status='skipped',
+                                    server_id=host['server_id'],
+                                    step_details={'reason': 'no_updates_needed', 'update_pass': update_pass},
+                                    step_started_at=utc_now_iso(),
+                                    step_completed_at=utc_now_iso()
+                                )
+                                current_step_in_progress = False
+                            
+                            # STEP 4: Verify firmware update (only if updates were applied)
+                            verify_step_name = f"Verify update: {host['name']}{pass_suffix}"
+                            if reboot_required:
+                                current_step_number = base_step + 4
+                                current_step_in_progress = True
+                                self._log_workflow_step(
+                                    job['id'], 'rolling_cluster_update',
+                                    step_number=current_step_number,
+                                    step_name=verify_step_name,
+                                    status='running',
+                                    server_id=host['server_id'],
+                                    step_started_at=utc_now_iso()
+                                )
+                                
+                                self.log(f"  [4/{host_steps_total}] Verifying firmware update{pass_suffix}...")
+                                self.update_job_details_field(job['id'], {
+                                    'current_step': f'Verifying firmware update: {host["name"]}{pass_suffix}'
+                                })
+                                
+                                # Create new session for verification
+                                verify_session = self.executor.create_idrac_session(
+                                    server['ip_address'], username, password,
+                                    log_to_db=True, server_id=host['server_id'], job_id=job['id']
+                                )
+                                
+                                if verify_session:
+                                    new_fw_inventory = dell_ops.get_firmware_inventory(
+                                        ip=server['ip_address'],
+                                        username=username,
+                                        password=password,
+                                        server_id=host['server_id'],
+                                        job_id=job['id']
+                                    )
+                                    
+                                    self.executor.delete_idrac_session(
+                                        verify_session, 
+                                        server['ip_address'], 
+                                        host['server_id'], 
+                                        job['id']
+                                    )
+                                    
+                                    self.log(f"    ✓ Firmware inventory refreshed")
+                                
+                                self._log_workflow_step(
+                                    job['id'], 'rolling_cluster_update',
+                                    step_number=current_step_number,
+                                    step_name=verify_step_name,
+                                    status='completed',
+                                    server_id=host['server_id'],
+                                    step_details={'verified': True, 'update_pass': update_pass},
+                                    step_completed_at=utc_now_iso()
+                                )
+                                current_step_in_progress = False
+                                host_result['steps'].append('verify' if update_pass == 1 else f'verify_pass_{update_pass}')
+                            else:
+                                # Skip verification for no-updates case
+                                self.log(f"  [4/{host_steps_total}] Skipping verification - no updates were applied{pass_suffix}")
+                                self._log_workflow_step(
+                                    job['id'], 'rolling_cluster_update',
+                                    step_number=base_step + 4,
+                                    step_name=verify_step_name,
+                                    status='skipped',
+                                    server_id=host['server_id'],
+                                    step_details={'reason': 'no_updates_applied', 'update_pass': update_pass},
+                                    step_started_at=utc_now_iso(),
+                                    step_completed_at=utc_now_iso()
+                                )
+                                current_step_in_progress = False
+                            
+                            # Optional post-update rescan to catch sequential catalog updates
+                            if firmware_source == 'dell_online_catalog' and update_pass < max_catalog_passes:
+                                try:
+                                    dell_catalog_url = details.get('dell_catalog_url', 'https://downloads.dell.com/catalog/Catalog.xml')
+                                    rescan_result = dell_ops.check_available_catalog_updates(
+                                        ip=server['ip_address'],
+                                        username=username,
+                                        password=password,
+                                        catalog_url=dell_catalog_url,
+                                        server_id=host['server_id'],
+                                        job_id=job['id'],
+                                        user_id=job['created_by']
+                                    )
+                                    remaining_updates = rescan_result.get('available_updates', [])
+                                    host_result.setdefault('post_update_rescans', []).append({
+                                        'pass': update_pass,
+                                        'remaining_updates': len(remaining_updates)
                                     })
-                                
-                                # Safety valve: detailed logging after 15 minutes
-                                if attempt == 90:
-                                    warn_msg = f"Extended wait (15 min): iDRAC={idrac_online}, ESXi={esxi_online}, target={esxi_target}"
-                                    self.log(f"    ⚠ {warn_msg}", "WARN")
-                                    self._append_console_log(job['id'], warn_msg, "WARN")
-                                
-                                # Progress logging every 30 seconds
-                                if attempt > 0 and attempt % 3 == 0:
-                                    elapsed = (attempt + 1) * 10
-                                    status = "Waiting for iDRAC..." if not idrac_online else "Waiting for ESXi..."
-                                    self.log(f"    [{elapsed}s] {status}")
-                                
-                                time.sleep(10)
+                                    if remaining_updates:
+                                        self.log(f"    ⚠ Post-update rescan found {len(remaining_updates)} additional update(s); running catalog pass {update_pass + 1}/{max_catalog_passes}...")
+                                        continue
+                                    else:
+                                        self.log(f"    ✓ Post-update rescan shows no remaining updates")
+                                except Exception as rescan_err:
+                                    self.log(f"    ⚠ Post-update rescan failed: {rescan_err}", "WARN")
                             
-                            if not esxi_online:
-                                timeout_msg = f"Timeout waiting for host after {max_attempts * 10}s"
-                                self._append_console_log(job['id'], timeout_msg, "ERROR")
-                                raise Exception(timeout_msg)
-                            
-                            # Post-reboot job verification: Check for failed firmware jobs
-                            self.log(f"    Checking for failed firmware jobs...")
-                            try:
-                                failed_jobs = dell_ops.get_failed_idrac_jobs(
-                                    ip=server['ip_address'],
-                                    username=username,
-                                    password=password,
-                                    job_id=job['id'],
-                                    server_id=host['server_id']
-                                )
-                                
-                                if failed_jobs:
-                                    self.log(f"    ⚠ Found {len(failed_jobs)} failed firmware jobs:", "WARN")
-                                    failed_job_ids = []
-                                    for fj in failed_jobs[:5]:  # Show first 5
-                                        self.log(f"      - {fj['id']}: {fj['message']}", "WARN")
-                                        failed_job_ids.append(fj['id'])
-                                    
-                                    # Track partial failure but continue
-                                    host_result['failed_jobs'] = failed_job_ids
-                                    host_result['partial_failure'] = True
-                                    
-                                    # Check if retry is configured
-                                    max_firmware_retries = details.get('max_firmware_retries', 0)
-                                    retry_wait_seconds = details.get('retry_wait_seconds', 180)
-                                    
-                                    if max_firmware_retries > 0 and host_result.get('firmware_retry_count', 0) < max_firmware_retries:
-                                        self.log(f"    Retry {host_result.get('firmware_retry_count', 0) + 1}/{max_firmware_retries}: Re-triggering failed updates...")
-                                        host_result['firmware_retry_count'] = host_result.get('firmware_retry_count', 0) + 1
-                                        
-                                        # Clear failed jobs from queue
-                                        dell_ops.clear_idrac_job_queue(
-                                            ip=server['ip_address'],
-                                            username=username,
-                                            password=password,
-                                            force=True,
-                                            server_id=host['server_id']
-                                        )
-                                        time.sleep(retry_wait_seconds)
-                                        # Note: Full retry would require re-running firmware apply step
-                                        # For now just log the failure and continue
-                                else:
-                                    self.log(f"    ✓ No failed firmware jobs detected")
-                            except Exception as verify_err:
-                                self.log(f"    ⚠ Could not verify job status: {verify_err}", "WARN")
-                            
-                            # CRITICAL: Wait for ALL pending iDRAC jobs to complete
-                            # This catches iDRAC firmware updates that run independently of system reboot
-                            self.log(f"    Checking for remaining iDRAC jobs...")
-                            try:
-                                jobs_complete_result = dell_ops.wait_for_all_jobs_complete(
-                                    ip=server['ip_address'],
-                                    username=username,
-                                    password=password,
-                                    timeout=1200,  # 20 minutes for iDRAC FW updates
-                                    poll_interval=30,
-                                    server_id=host['server_id'],
-                                    job_id=job['id'],
-                                    user_id=job['created_by']
-                                )
-                                
-                                if not jobs_complete_result.get('success'):
-                                    pending = jobs_complete_result.get('pending_jobs', [])
-                                    self.log(f"    ⚠ Warning: {len(pending)} job(s) still pending after wait:", "WARN")
-                                    for pj in pending[:5]:
-                                        self.log(f"      - {pj.get('id')}: {pj.get('status')} - {pj.get('name', 'Unknown')}", "WARN")
-                                    host_result['jobs_still_pending'] = [j.get('id') for j in pending]
-                                else:
-                                    self.log(f"    ✓ All iDRAC jobs completed successfully")
-                                    host_result['all_jobs_completed'] = True
-                                    
-                                # Track completed jobs for UI display
-                                host_result['firmware_updates_applied'] = jobs_complete_result.get('completed_jobs', [])
-                            except Exception as wait_err:
-                                self.log(f"    ⚠ Error waiting for jobs: {wait_err}", "WARN")
-                        else:
-                            # No reboot required - skip reboot wait
-                            self.log(f"  [3/{host_steps_total}] Skipping reboot wait - no updates required reboot")
-                            self._log_workflow_step(
-                                job['id'], 'rolling_cluster_update',
-                                step_number=base_step + 3,
-                                step_name=f"Reboot and wait: {host['name']}",
-                                status='skipped',
-                                server_id=host['server_id'],
-                                step_details={'reason': 'no_updates_needed'},
-                                step_started_at=utc_now_iso(),
-                                step_completed_at=utc_now_iso()
-                            )
-                            current_step_in_progress = False
-                        
-                        if reboot_required:
-                            self._log_workflow_step(
-                                job['id'], 'rolling_cluster_update',
-                                step_number=current_step_number,
-                                step_name=current_step_name,
-                                status='completed',
-                                server_id=host['server_id'],
-                                step_completed_at=utc_now_iso()
-                            )
-                            current_step_in_progress = False
-                            host_result['steps'].append('reboot')
-                        
-                        # STEP 4: Verify firmware update (only if updates were applied)
-                        if reboot_required:
-                            current_step_number = base_step + 4
-                            current_step_name = f"Verify update: {host['name']}"
-                            current_step_in_progress = True
-                            self._log_workflow_step(
-                                job['id'], 'rolling_cluster_update',
-                                step_number=current_step_number,
-                                step_name=current_step_name,
-                                status='running',
-                                server_id=host['server_id'],
-                                step_started_at=utc_now_iso()
-                            )
-                            
-                            self.log(f"  [4/{host_steps_total}] Verifying firmware update...")
-                            self.update_job_details_field(job['id'], {
-                                'current_step': f'Verifying firmware update: {host["name"]}'
-                            })
-                            
-                            # Create new session for verification
-                            verify_session = self.executor.create_idrac_session(
-                                server['ip_address'], username, password,
-                                log_to_db=True, server_id=host['server_id'], job_id=job['id']
-                            )
-                            
-                            if verify_session:
-                                new_fw_inventory = dell_ops.get_firmware_inventory(
-                                    ip=server['ip_address'],
-                                    username=username,
-                                    password=password,
-                                    server_id=host['server_id'],
-                                    job_id=job['id']
-                                )
-                                
-                                self.executor.delete_idrac_session(
-                                    verify_session, 
-                                    server['ip_address'], 
-                                    host['server_id'], 
-                                    job['id']
-                                )
-                                
-                                self.log(f"    ✓ Firmware inventory refreshed")
-                            
-                            self._log_workflow_step(
-                                job['id'], 'rolling_cluster_update',
-                                step_number=current_step_number,
-                                step_name=current_step_name,
-                                status='completed',
-                                server_id=host['server_id'],
-                                step_details={'verified': True},
-                                step_completed_at=utc_now_iso()
-                            )
-                            current_step_in_progress = False
-                            host_result['steps'].append('verify')
-                        else:
-                            # Skip verification for no-updates case
-                            self.log(f"  [4/{host_steps_total}] Skipping verification - no updates were applied")
-                            self._log_workflow_step(
-                                job['id'], 'rolling_cluster_update',
-                                step_number=base_step + 4,
-                                step_name=f"Verify update: {host['name']}",
-                                status='skipped',
-                                server_id=host['server_id'],
-                                step_details={'reason': 'no_updates_applied'},
-                                step_started_at=utc_now_iso(),
-                                step_completed_at=utc_now_iso()
-                            )
-                            current_step_in_progress = False
-                        
+                            break
                         # STEP 5: Exit maintenance mode (if applicable)
                         if vcenter_host_id:
                             current_step_number = base_step + 5
