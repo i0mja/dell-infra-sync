@@ -3317,6 +3317,55 @@ class ClusterHandler(BaseHandler):
                                 )
                                 current_step_in_progress = False
                                 host_result['steps'].append('reboot' if update_pass == 1 else f'reboot_pass_{update_pass}')
+
+                                # Post-reboot: verify iDRAC job queue is healthy before proceeding
+                                post_reboot_checks = {'pass': update_pass}
+                                try:
+                                    self.log(f"    Checking iDRAC job queue after reboot{pass_suffix}...")
+                                    
+                                    failed_jobs = dell_ops.get_failed_idrac_jobs(
+                                        ip=server['ip_address'],
+                                        username=username,
+                                        password=password,
+                                        job_id=job['id'],
+                                        server_id=host['server_id'],
+                                        user_id=job['created_by']
+                                    )
+                                    post_reboot_checks['failed_jobs'] = failed_jobs
+                                    
+                                    if failed_jobs:
+                                        self.log(f"    ❌ Detected {len(failed_jobs)} failed iDRAC job(s) after reboot:", "ERROR")
+                                        for fj in failed_jobs[:5]:
+                                            self.log(f"      - {fj.get('id')}: {fj.get('name', 'Unknown')} ({fj.get('job_state')}) - {fj.get('message', '')}", "ERROR")
+                                        raise Exception("Failed iDRAC jobs detected after reboot; investigate before continuing")
+                                    
+                                    job_wait_result = dell_ops.wait_for_all_jobs_complete(
+                                        ip=server['ip_address'],
+                                        username=username,
+                                        password=password,
+                                        timeout=1800,
+                                        poll_interval=30,
+                                        server_id=host['server_id'],
+                                        job_id=job['id'],
+                                        user_id=job['created_by']
+                                    )
+                                    post_reboot_checks['job_wait_result'] = job_wait_result
+                                    
+                                    if not job_wait_result.get('success', False):
+                                        pending_jobs = job_wait_result.get('pending_jobs', [])
+                                        if pending_jobs:
+                                            self.log(f"    ⚠ {len(pending_jobs)} iDRAC job(s) still active after reboot:", "WARN")
+                                            for pj in pending_jobs[:5]:
+                                                self.log(f"      - {pj.get('id')}: {pj.get('status', 'Unknown')} ({pj.get('name', 'Unknown')})", "WARN")
+                                        raise Exception("iDRAC jobs still running after reboot; aborting verification")
+                                    
+                                    self.log(f"    ✓ iDRAC job queue clear after reboot{pass_suffix}")
+                                except Exception as idrac_check_err:
+                                    post_reboot_checks['error'] = str(idrac_check_err)
+                                    host_result.setdefault('idrac_job_checks', []).append(post_reboot_checks)
+                                    raise
+                                else:
+                                    host_result.setdefault('idrac_job_checks', []).append(post_reboot_checks)
                             else:
                                 # No reboot required - skip reboot wait
                                 self.log(f"  [3/{host_steps_total}] Skipping reboot wait - no updates required reboot{pass_suffix}")
