@@ -149,7 +149,7 @@ const Layout = () => {
     </>
   );
 
-  const edgeToEdgeRoutes = ["/servers", "/vcenter", "/activity", "/maintenance-planner", "/reports", "/settings"];
+  const edgeToEdgeRoutes = ["/", "/servers", "/vcenter", "/activity", "/maintenance-planner", "/reports", "/settings"];
   const useEdgeToEdgeLayout = edgeToEdgeRoutes.some((path) =>
     location.pathname.startsWith(path)
   );

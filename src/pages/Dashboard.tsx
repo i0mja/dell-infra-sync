@@ -10,7 +10,7 @@ import { QuickActionsWidget } from "@/components/dashboard/QuickActionsWidget";
 
 const Dashboard = () => {
   return (
-    <div className="container mx-auto p-6 space-y-6">
+    <div className="h-full overflow-auto p-6 space-y-6">
       {/* Header with Fleet Health Score */}
       <DashboardHeader />
 
