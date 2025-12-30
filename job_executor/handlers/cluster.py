@@ -1681,6 +1681,9 @@ class ClusterHandler(BaseHandler):
             min_healthy_hosts = details.get('min_healthy_hosts', 2)
             continue_on_failure = details.get('continue_on_failure', False)
             auto_select_latest = details.get('auto_select_latest', True)
+            rebalance_wait_enabled = details.get('rebalance_wait_enabled', True)
+            rebalance_wait_timeout = details.get('rebalance_wait_timeout', 420)  # 7 minutes
+            rebalance_quiet_period = details.get('rebalance_quiet_period', 45)
             
             workflow_results['update_scope'] = update_scope
             
@@ -1814,7 +1817,7 @@ class ClusterHandler(BaseHandler):
                 base_steps += 1  # HA re-enable at end
             if backup_scp:
                 base_steps += 1  # SCP backups
-            steps_per_host = 7  # check_updates, maintenance, firmware, reboot, verify, exit_maintenance, power_on
+            steps_per_host = 8 if (cluster_name and rebalance_wait_enabled) else 7  # + rebalance wait
             expected_total_steps = base_steps + (len(eligible_hosts) * steps_per_host)
             
             # Track workflow step counter for sequential numbering
@@ -2330,6 +2333,7 @@ class ClusterHandler(BaseHandler):
                     self.log("-" * 60)
                     
                     base_step = 1000 + (host_index * 10)  # Steps 1010, 1020, 1030...
+                    host_steps_total = 7 + (1 if (cluster_name and rebalance_wait_enabled) else 0)
                     
                     # Update job details with current host information for UI display
                     self.update_job_details_field(job['id'], {
@@ -2403,7 +2407,7 @@ class ClusterHandler(BaseHandler):
                             
                             if preflight_checked and cached_updates is not None:
                                 # Use cached results from pre-flight
-                                self.log(f"  [0/6] Using pre-flight update check results...")
+                                self.log(f"  [0/{host_steps_total}] Using pre-flight update check results...")
                                 self.update_job_details_field(job['id'], {
                                     'current_step': f'Using cached update check: {host["name"]}'
                                 })
@@ -2469,7 +2473,7 @@ class ClusterHandler(BaseHandler):
                                 host_result['steps'].append('check_updates_cached')
                             else:
                                 # No cached results - run fresh update check
-                                self.log(f"  [0/6] Checking for available updates...")
+                                self.log(f"  [0/{host_steps_total}] Checking for available updates...")
                                 self.update_job_details_field(job['id'], {
                                     'current_step': f'Checking for available updates: {host["name"]}'
                                 })
@@ -2562,7 +2566,7 @@ class ClusterHandler(BaseHandler):
                                     current_step_in_progress = False
                         else:
                             # For non-catalog sources, skip the pre-check
-                            self.log(f"  [0/6] Update pre-check skipped (using {firmware_source})")
+                            self.log(f"  [0/{host_steps_total}] Update pre-check skipped (using {firmware_source})")
                         
                         # STEP 1: Enter maintenance mode (if vCenter linked)
                         if vcenter_host_id:
@@ -2579,7 +2583,7 @@ class ClusterHandler(BaseHandler):
                                 step_started_at=utc_now_iso()
                             )
                             
-                            self.log(f"  [1/6] Entering maintenance mode...")
+                            self.log(f"  [1/{host_steps_total}] Entering maintenance mode...")
                             self.update_job_details_field(job['id'], {
                                 'current_step': f'Entering maintenance mode: {host["name"]}'
                             })
@@ -2744,7 +2748,7 @@ class ClusterHandler(BaseHandler):
                             current_step_in_progress = False
                             host_result['steps'].append('enter_maintenance')
                         else:
-                            self.log(f"  [1/6] Maintenance mode skipped (no vCenter link)")
+                            self.log(f"  [1/{host_steps_total}] Maintenance mode skipped (no vCenter link)")
                         
                         # STEP 2: Apply firmware updates
                         current_step_number = base_step + 2
@@ -2759,7 +2763,7 @@ class ClusterHandler(BaseHandler):
                             step_started_at=utc_now_iso()
                         )
                         
-                        self.log(f"  [2/6] Applying firmware updates...")
+                        self.log(f"  [2/{host_steps_total}] Applying firmware updates...")
                         self.update_job_details_field(job['id'], {
                             'current_step': f'Applying firmware updates: {host["name"]}'
                         })
@@ -3164,7 +3168,7 @@ class ClusterHandler(BaseHandler):
                                 step_started_at=utc_now_iso()
                             )
                             
-                            self.log(f"  [3/6] Waiting for system reboot...")
+                            self.log(f"  [3/{host_steps_total}] Waiting for system reboot...")
                             
                             # Immediate status update when entering wait loop
                             reboot_wait_started = utc_now_iso()
@@ -3393,7 +3397,7 @@ class ClusterHandler(BaseHandler):
                                 self.log(f"    ⚠ Error waiting for jobs: {wait_err}", "WARN")
                         else:
                             # No reboot required - skip reboot wait
-                            self.log(f"  [3/6] Skipping reboot wait - no updates required reboot")
+                            self.log(f"  [3/{host_steps_total}] Skipping reboot wait - no updates required reboot")
                             self._log_workflow_step(
                                 job['id'], 'rolling_cluster_update',
                                 step_number=base_step + 3,
@@ -3432,7 +3436,7 @@ class ClusterHandler(BaseHandler):
                                 step_started_at=utc_now_iso()
                             )
                             
-                            self.log(f"  [4/6] Verifying firmware update...")
+                            self.log(f"  [4/{host_steps_total}] Verifying firmware update...")
                             self.update_job_details_field(job['id'], {
                                 'current_step': f'Verifying firmware update: {host["name"]}'
                             })
@@ -3474,7 +3478,7 @@ class ClusterHandler(BaseHandler):
                             host_result['steps'].append('verify')
                         else:
                             # Skip verification for no-updates case
-                            self.log(f"  [4/6] Skipping verification - no updates were applied")
+                            self.log(f"  [4/{host_steps_total}] Skipping verification - no updates were applied")
                             self._log_workflow_step(
                                 job['id'], 'rolling_cluster_update',
                                 step_number=base_step + 4,
@@ -3502,7 +3506,7 @@ class ClusterHandler(BaseHandler):
                                 step_started_at=utc_now_iso()
                             )
                             
-                            self.log(f"  [5/7] Waiting for vCenter to see host as connected...")
+                            self.log(f"  [5/{host_steps_total}] Waiting for vCenter to see host as connected...")
                             self.update_job_details_field(job['id'], {
                                 'current_step': f'Waiting for vCenter reconnection: {host["name"]}'
                             })
@@ -3515,7 +3519,7 @@ class ClusterHandler(BaseHandler):
                             else:
                                 self.log(f"    ⚠ Warning: Host not showing connected in vCenter yet", "WARN")
                             
-                            self.log(f"  [5/7] Exiting maintenance mode...")
+                            self.log(f"  [5/{host_steps_total}] Exiting maintenance mode...")
                             self.update_job_details_field(job['id'], {
                                 'current_step': f'Exiting maintenance mode: {host["name"]}'
                             })
@@ -3543,7 +3547,7 @@ class ClusterHandler(BaseHandler):
                             current_step_in_progress = False
                             host_result['steps'].append('exit_maintenance')
                         else:
-                            self.log(f"  [5/7] Exit maintenance skipped (no vCenter link)")
+                            self.log(f"  [5/{host_steps_total}] Exit maintenance skipped (no vCenter link)")
                         
                         # STEP 6: Power on VMs that were powered off for maintenance
                         vms_to_power_on = cleanup_state.get('vms_to_power_on', {}).get(host['server_id'])
@@ -3562,7 +3566,7 @@ class ClusterHandler(BaseHandler):
                             )
                             
                             vm_names_to_power_on = vms_to_power_on.get('vm_names', [])
-                            self.log(f"  [6/7] Powering on {len(vm_names_to_power_on)} VM(s) that were shut down for maintenance...")
+                            self.log(f"  [6/{host_steps_total}] Powering on {len(vm_names_to_power_on)} VM(s) that were shut down for maintenance...")
                             self.update_job_details_field(job['id'], {
                                 'current_step': f'Powering on VMs: {host["name"]}'
                             })
@@ -3601,7 +3605,77 @@ class ClusterHandler(BaseHandler):
                             current_step_in_progress = False
                             host_result['steps'].append('power_on_vms')
                         elif vms_to_power_on:
-                            self.log(f"  [6/7] VM power-on skipped (no vCenter link)")
+                            self.log(f"  [6/{host_steps_total}] VM power-on skipped (no vCenter link)")
+                        
+                        # STEP 7: Wait for cluster rebalance/quiet (optional, cluster-only)
+                        if cluster_name and rebalance_wait_enabled:
+                            current_step_number = base_step + 7
+                            current_step_name = f"Wait for DRS rebalance: {cluster_name}"
+                            current_step_in_progress = True
+                            self._log_workflow_step(
+                                job['id'], 'rolling_cluster_update',
+                                step_number=current_step_number,
+                                step_name=current_step_name,
+                                status='running',
+                                server_id=host['server_id'],
+                                step_started_at=utc_now_iso()
+                            )
+
+                            self.log(
+                                f"  [7/{host_steps_total}] Waiting for DRS to rebalance/settle "
+                                f"({rebalance_wait_timeout}s timeout, {rebalance_quiet_period}s quiet)..."
+                            )
+                            self.update_job_details_field(job['id'], {
+                                'current_step': f'Waiting for DRS rebalance: {cluster_name}'
+                            })
+
+                            rebalance_result = self.executor.wait_for_cluster_rebalance(
+                                cluster_name,
+                                timeout=rebalance_wait_timeout,
+                                quiet_period=rebalance_quiet_period,
+                                source_vcenter_id=source_vcenter_id
+                            )
+
+                            if rebalance_result.get('success'):
+                                self.log(
+                                    f"    ✓ DRS rebalance complete (waited {rebalance_result.get('waited_seconds', 0)}s, "
+                                    f"quiet {rebalance_quiet_period}s)"
+                                )
+                            else:
+                                error_msg = rebalance_result.get('error', 'DRS rebalance did not complete')
+                                active = rebalance_result.get('active_migrations', [])
+                                if active:
+                                    self.log(f"    ⚠ Active migrations still running ({len(active)})", "WARN")
+                                    for mig in active[:3]:
+                                        self.log(
+                                            f"      - {mig.get('vm_name')} → {mig.get('destination', 'unknown')} "
+                                            f"({mig.get('state')})",
+                                            "WARN"
+                                        )
+                                self._log_workflow_step(
+                                    job['id'], 'rolling_cluster_update',
+                                    step_number=current_step_number,
+                                    step_name=current_step_name,
+                                    status='failed',
+                                    server_id=host['server_id'],
+                                    step_details=rebalance_result,
+                                    step_error=error_msg,
+                                    step_completed_at=utc_now_iso()
+                                )
+                                current_step_in_progress = False
+                                raise Exception(error_msg)
+
+                            self._log_workflow_step(
+                                job['id'], 'rolling_cluster_update',
+                                step_number=current_step_number,
+                                step_name=current_step_name,
+                                status='completed',
+                                server_id=host['server_id'],
+                                step_details=rebalance_result,
+                                step_completed_at=utc_now_iso()
+                            )
+                            current_step_in_progress = False
+                            host_result['steps'].append('rebalance_wait')
                         
                         # Clear current server and firmware tracking
                         cleanup_state['current_server'] = None
