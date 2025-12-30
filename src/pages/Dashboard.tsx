@@ -1,31 +1,41 @@
-import { FleetStatusBar } from "@/components/dashboard/FleetStatusBar";
-import { IssuesBanner } from "@/components/dashboard/IssuesBanner";
-import { RecentActivityWidget } from "@/components/dashboard/RecentActivityWidget";
+import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
+import { InfrastructureStatusStrip } from "@/components/dashboard/InfrastructureStatusStrip";
+import { PriorityAlertCenter } from "@/components/dashboard/PriorityAlertCenter";
+import { ClusterTopologyMap } from "@/components/dashboard/ClusterTopologyMap";
+import { OperationsCommandPanel } from "@/components/dashboard/OperationsCommandPanel";
+import { TrendAnalytics } from "@/components/dashboard/TrendAnalytics";
 import { ServerCoverageWidget } from "@/components/dashboard/ServerCoverageWidget";
+import { RecentActivityWidget } from "@/components/dashboard/RecentActivityWidget";
 import { QuickActionsWidget } from "@/components/dashboard/QuickActionsWidget";
-import { OperationsCard } from "@/components/dashboard/OperationsCard";
 
 const Dashboard = () => {
   return (
     <div className="container mx-auto p-6 space-y-6">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-bold">Fleet Management Dashboard</h1>
-        <p className="text-muted-foreground max-w-3xl">
-          Real-time visibility across the Dell server infrastructure
-        </p>
-      </div>
+      {/* Header with Fleet Health Score */}
+      <DashboardHeader />
 
-      <FleetStatusBar />
+      {/* Infrastructure Status Strip */}
+      <InfrastructureStatusStrip />
       
-      <IssuesBanner />
+      {/* Priority Alerts */}
+      <PriorityAlertCenter />
 
-      <div className="grid md:grid-cols-2 gap-6">
-        <RecentActivityWidget />
-        <OperationsCard />
+      {/* Main Content Grid */}
+      <div className="grid lg:grid-cols-2 gap-6">
+        {/* Cluster Topology */}
+        <ClusterTopologyMap />
+        
+        {/* Operations Command Panel */}
+        <OperationsCommandPanel />
       </div>
 
-      <div className="grid md:grid-cols-2 gap-6">
+      {/* Trends */}
+      <TrendAnalytics />
+
+      {/* Bottom Widgets */}
+      <div className="grid md:grid-cols-3 gap-6">
         <ServerCoverageWidget />
+        <RecentActivityWidget />
         <QuickActionsWidget />
       </div>
     </div>
