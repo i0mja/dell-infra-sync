@@ -4239,10 +4239,10 @@ chmod 600 ~/.ssh/authorized_keys
             ssh = paramiko.SSHClient()
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             
-            pkey = None
-            if creds.get('key_data'):
-                from io import StringIO
-                pkey = paramiko.RSAKey.from_private_key(StringIO(creds['key_data']))
+            pkey = self._load_private_key(
+                key_path=creds.get('key_path'),
+                key_data=creds.get('key_data')
+            )
             
             ssh.connect(
                 hostname=creds['hostname'],
