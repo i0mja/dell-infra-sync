@@ -80,6 +80,7 @@ const REPAIR_JOB_TYPES: Record<string, string> = {
   cross_site_ssh: 'repair_cross_site_ssh',
   syncoid_cron: 'repair_syncoid_cron',
   nfs_export_visibility: 'repair_nfs_export',
+  data_transfer_test: 'repair_data_transfer',
 };
 
 export function ZfsTargetHealthDialog({

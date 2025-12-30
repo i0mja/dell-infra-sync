@@ -5018,6 +5018,8 @@ export type Database = {
         | "failover_preflight_check"
         | "group_failover"
         | "scheduled_vcenter_sync"
+        | "repair_data_transfer"
+        | "repair_nfs_export"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -5242,6 +5244,8 @@ export const Constants = {
         "failover_preflight_check",
         "group_failover",
         "scheduled_vcenter_sync",
+        "repair_data_transfer",
+        "repair_nfs_export",
       ],
       operation_type: [
         "idrac_api",

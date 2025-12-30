@@ -14,7 +14,8 @@ import {
   Clock,
   Copy,
   Check,
-  Timer
+  Timer,
+  FolderOpen
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { useState } from "react";
@@ -40,6 +41,10 @@ interface HealthTest {
   source_snapshot?: string;
   dest_snapshot?: string;
   sync_lag_hours?: number;
+  // NFS export visibility fields
+  export_path?: string;
+  has_crossmnt?: boolean;
+  child_datasets?: string[];
 }
 
 interface StepResult {
@@ -72,6 +77,7 @@ interface ZfsHealthCheckResultsProps {
 const TEST_LABELS: Record<string, { label: string; icon: React.ElementType }> = {
   ssh_connectivity: { label: "SSH Connectivity", icon: Wifi },
   zfs_pool_health: { label: "ZFS Pool Health", icon: HardDrive },
+  nfs_export_visibility: { label: "NFS Export Visibility", icon: FolderOpen },
   cross_site_ssh: { label: "Cross-Site Replication Link", icon: Link2 },
   syncoid_cron: { label: "Syncoid Schedule", icon: Clock },
   data_transfer_test: { label: "Data Transfer Test", icon: HardDrive },
@@ -83,6 +89,8 @@ const REPAIR_JOB_TYPES: Record<string, string> = {
   cross_site_ssh: "repair_cross_site_ssh",
   syncoid_cron: "repair_syncoid_cron",
   snapshot_sync_status: "run_replication_sync",
+  data_transfer_test: "repair_data_transfer",
+  nfs_export_visibility: "repair_nfs_export",
 };
 
 export function ZfsHealthCheckResults({ details }: ZfsHealthCheckResultsProps) {
@@ -430,6 +438,22 @@ export function ZfsHealthCheckResults({ details }: ZfsHealthCheckResultsProps) {
                               className="text-xs mt-1"
                             >
                               {test.sync_lag_hours}h behind
+                            </Badge>
+                          )}
+                        </div>
+                      )}
+                      {/* NFS export visibility details */}
+                      {test.name === "nfs_export_visibility" && (
+                        <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
+                          {test.export_path && (
+                            <p>Export: <span className="font-mono">{test.export_path}</span></p>
+                          )}
+                          {test.child_datasets && test.child_datasets.length > 0 && (
+                            <p>Child datasets: {test.child_datasets.length}</p>
+                          )}
+                          {!test.success && test.child_datasets && test.child_datasets.length > 0 && !test.has_crossmnt && (
+                            <Badge variant="destructive" className="text-xs mt-1">
+                              Missing crossmnt - child datasets invisible
                             </Badge>
                           )}
                         </div>
