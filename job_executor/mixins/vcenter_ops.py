@@ -2123,13 +2123,21 @@ class VCenterMixin:
                 return {'success': False, 'error': 'vCenter connection failed'}
 
             content = vc.RetrieveContent()
+
+            def _find_cluster_in_folder(folder, name):
+                for entity in getattr(folder, 'childEntity', []):
+                    if isinstance(entity, vim.ClusterComputeResource) and entity.name == name:
+                        return entity
+                    if isinstance(entity, vim.Folder):
+                        nested_cluster = _find_cluster_in_folder(entity, name)
+                        if nested_cluster:
+                            return nested_cluster
+                return None
+
             cluster_obj = None
             for dc in content.rootFolder.childEntity:
                 if hasattr(dc, 'hostFolder'):
-                    for cluster in dc.hostFolder.childEntity:
-                        if isinstance(cluster, vim.ClusterComputeResource) and cluster.name == cluster_name:
-                            cluster_obj = cluster
-                            break
+                    cluster_obj = _find_cluster_in_folder(dc.hostFolder, cluster_name)
                 if cluster_obj:
                     break
 
