@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -61,6 +61,13 @@ interface HealthResults {
   tests: HealthTest[];
 }
 
+interface RepairResult {
+  success: boolean;
+  repair_log: string[];
+  message?: string;
+  testName: string;
+}
+
 interface ZfsTargetHealthDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -100,6 +107,58 @@ export function ZfsTargetHealthDialog({
 }: ZfsTargetHealthDialogProps) {
   const { toast } = useToast();
   const [repairingTest, setRepairingTest] = useState<string | null>(null);
+  const [activeRepairJobId, setActiveRepairJobId] = useState<string | null>(null);
+  const [repairResult, setRepairResult] = useState<RepairResult | null>(null);
+
+  // Subscribe to repair job updates
+  useEffect(() => {
+    if (!activeRepairJobId) return;
+
+    const channel = supabase
+      .channel(`repair-job-${activeRepairJobId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'jobs',
+          filter: `id=eq.${activeRepairJobId}`,
+        },
+        (payload) => {
+          const job = payload.new as any;
+          if (job.status === 'completed' || job.status === 'failed') {
+            const details = job.details || {};
+            setRepairResult({
+              success: details.success ?? job.status === 'completed',
+              repair_log: details.repair_log || [],
+              message: details.message,
+              testName: repairingTest || '',
+            });
+            setActiveRepairJobId(null);
+            setRepairingTest(null);
+            
+            // Auto-refresh health check after repair
+            if (onRefresh) {
+              setTimeout(() => onRefresh(), 1000);
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [activeRepairJobId, repairingTest, onRefresh]);
+
+  // Clear repair result when dialog closes
+  useEffect(() => {
+    if (!open) {
+      setRepairResult(null);
+      setRepairingTest(null);
+      setActiveRepairJobId(null);
+    }
+  }, [open]);
 
   if (!healthResults) {
     return null;
@@ -116,11 +175,16 @@ export function ZfsTargetHealthDialog({
       return;
     }
 
+    // Clear previous result if repairing same test
+    if (repairResult?.testName === testName) {
+      setRepairResult(null);
+    }
+
     setRepairingTest(testName);
     try {
       const { data: { user } } = await supabase.auth.getUser();
 
-      const { error } = await supabase.from("jobs").insert({
+      const { data, error } = await supabase.from("jobs").insert({
         job_type: jobType as any,
         status: "pending",
         created_by: user?.id,
@@ -131,21 +195,23 @@ export function ZfsTargetHealthDialog({
           zfs_pool: healthResults.zfs_pool,
           failed_test: testName,
         },
-      });
+      }).select('id');
 
       if (error) throw error;
 
-      toast({
-        title: "Repair job created",
-        description: `Attempting to repair ${TEST_LABELS[testName]?.label || testName}`,
-      });
+      if (data && data[0]) {
+        setActiveRepairJobId(data[0].id);
+        toast({
+          title: "Repair started",
+          description: `Repairing ${TEST_LABELS[testName]?.label || testName}...`,
+        });
+      }
     } catch (err: any) {
       toast({
         title: "Error",
         description: err.message,
         variant: "destructive",
       });
-    } finally {
       setRepairingTest(null);
     }
   };
@@ -212,88 +278,145 @@ export function ZfsTargetHealthDialog({
               <h4 className="text-sm font-medium text-muted-foreground">Health Tests</h4>
               {healthResults.tests.map((test) => {
                 const testConfig = TEST_LABELS[test.name] || { label: test.name, icon: <Activity className="h-4 w-4" /> };
+                const isRepairing = repairingTest === test.name && activeRepairJobId;
+                const hasRepairResult = repairResult?.testName === test.name;
                 
                 return (
                   <div
                     key={test.name}
-                    className="flex items-center justify-between p-3 rounded-lg border"
+                    className="p-3 rounded-lg border"
                   >
-                    <div className="flex items-center gap-3">
-                      <div className={test.success ? "text-green-500" : "text-red-500"}>
-                        {test.success ? (
-                          <CheckCircle2 className="h-5 w-5" />
-                        ) : (
-                          <XCircle className="h-5 w-5" />
-                        )}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          {testConfig.icon}
-                          <span className="font-medium text-sm">{testConfig.label}</span>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className={test.success ? "text-green-500" : "text-red-500"}>
+                          {test.success ? (
+                            <CheckCircle2 className="h-5 w-5" />
+                          ) : (
+                            <XCircle className="h-5 w-5" />
+                          )}
                         </div>
-                        {test.message && (
-                          <p className="text-xs text-muted-foreground mt-0.5 max-w-[280px] truncate" title={test.message}>
-                            {test.message}
-                          </p>
-                        )}
-                        {test.partner_name && (
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            Partner: {test.partner_name} ({test.partner_hostname})
-                          </p>
-                        )}
-                        {/* NFS export visibility details */}
-                        {test.name === "nfs_export_visibility" && (
-                          <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
-                            {test.export_path && (
-                              <p>Export: <span className="font-mono">{test.export_path}</span></p>
-                            )}
-                            {test.child_datasets && test.child_datasets.length > 0 && (
-                              <p>Child datasets: {test.child_datasets.length}</p>
-                            )}
-                            {!test.success && test.child_datasets && test.child_datasets.length > 0 && !test.has_crossmnt && (
-                              <Badge variant="destructive" className="text-xs mt-1">
-                                Missing crossmnt - child datasets invisible
-                              </Badge>
-                            )}
+                        <div>
+                          <div className="flex items-center gap-2">
+                            {testConfig.icon}
+                            <span className="font-medium text-sm">{testConfig.label}</span>
                           </div>
-                        )}
-                        {/* Data transfer test details */}
-                        {test.name === "data_transfer_test" && !test.success && (
-                          <div className="text-xs mt-2 space-y-2">
-                            {test.transfer_time_ms && (
-                              <p className="text-muted-foreground">Transfer time: {test.transfer_time_ms}ms</p>
-                            )}
-                            <div className="bg-destructive/10 border border-destructive/20 rounded p-2">
-                              <p className="font-medium text-destructive mb-1">Possible causes:</p>
-                              <ul className="list-disc list-inside space-y-0.5 text-muted-foreground">
-                                <li>Stale test datasets from previous checks</li>
-                                <li>Interrupted ZFS send/receive operation</li>
-                                <li>Network timeout during transfer</li>
-                              </ul>
-                            </div>
-                            <p className="text-muted-foreground italic">
-                              Click "Repair" to clean up stale data and re-test
+                          {test.message && (
+                            <p className="text-xs text-muted-foreground mt-0.5 max-w-[280px] truncate" title={test.message}>
+                              {test.message}
                             </p>
+                          )}
+                          {test.partner_name && (
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              Partner: {test.partner_name} ({test.partner_hostname})
+                            </p>
+                          )}
+                          {/* NFS export visibility details */}
+                          {test.name === "nfs_export_visibility" && (
+                            <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
+                              {test.export_path && (
+                                <p>Export: <span className="font-mono">{test.export_path}</span></p>
+                              )}
+                              {test.child_datasets && test.child_datasets.length > 0 && (
+                                <p>Child datasets: {test.child_datasets.length}</p>
+                              )}
+                              {!test.success && test.child_datasets && test.child_datasets.length > 0 && !test.has_crossmnt && (
+                                <Badge variant="destructive" className="text-xs mt-1">
+                                  Missing crossmnt - child datasets invisible
+                                </Badge>
+                              )}
+                            </div>
+                          )}
+                          {/* Data transfer test details */}
+                          {test.name === "data_transfer_test" && !test.success && !hasRepairResult && (
+                            <div className="text-xs mt-2 space-y-2">
+                              {test.transfer_time_ms && (
+                                <p className="text-muted-foreground">Transfer time: {test.transfer_time_ms}ms</p>
+                              )}
+                              <div className="bg-destructive/10 border border-destructive/20 rounded p-2">
+                                <p className="font-medium text-destructive mb-1">Possible causes:</p>
+                                <ul className="list-disc list-inside space-y-0.5 text-muted-foreground">
+                                  <li>Stale test datasets from previous checks</li>
+                                  <li>Interrupted ZFS send/receive operation</li>
+                                  <li>Network timeout during transfer</li>
+                                </ul>
+                              </div>
+                              <p className="text-muted-foreground italic">
+                                Click "Repair" to clean up stale data and re-test
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      {!test.success && test.repairable && !isRepairing && !hasRepairResult && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleRepair(test.name)}
+                          disabled={!!repairingTest}
+                        >
+                          <Wrench className="h-4 w-4 mr-1" />
+                          Repair
+                        </Button>
+                      )}
+                    </div>
+
+                    {/* Repair in progress indicator */}
+                    {isRepairing && (
+                      <div className="mt-3 p-3 bg-blue-500/10 border border-blue-500/20 rounded">
+                        <div className="flex items-center gap-2">
+                          <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
+                          <span className="text-sm text-blue-400">Repair in progress...</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Cleaning up stale data and re-testing transfer...
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Repair result display */}
+                    {hasRepairResult && (
+                      <div className={`mt-3 p-3 rounded border ${
+                        repairResult.success 
+                          ? 'bg-green-500/10 border-green-500/20' 
+                          : 'bg-red-500/10 border-red-500/20'
+                      }`}>
+                        <div className="flex items-center gap-2 mb-2">
+                          {repairResult.success ? (
+                            <CheckCircle2 className="h-4 w-4 text-green-400" />
+                          ) : (
+                            <XCircle className="h-4 w-4 text-red-400" />
+                          )}
+                          <span className={`text-sm font-medium ${
+                            repairResult.success ? 'text-green-400' : 'text-red-400'
+                          }`}>
+                            {repairResult.success ? 'Repair Successful' : 'Repair Failed'}
+                          </span>
+                        </div>
+                        {repairResult.message && (
+                          <p className="text-xs text-muted-foreground mb-2">{repairResult.message}</p>
+                        )}
+                        {repairResult.repair_log.length > 0 && (
+                          <div className="text-xs space-y-0.5 text-muted-foreground max-h-32 overflow-y-auto">
+                            {repairResult.repair_log.map((step, i) => (
+                              <div key={i} className="flex items-start gap-2">
+                                <span className="text-muted-foreground/50 shrink-0">•</span>
+                                <span className="break-words">{step}</span>
+                              </div>
+                            ))}
                           </div>
+                        )}
+                        {!repairResult.success && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="mt-2"
+                            onClick={() => handleRepair(test.name)}
+                          >
+                            <Wrench className="h-4 w-4 mr-1" />
+                            Retry Repair
+                          </Button>
                         )}
                       </div>
-                    </div>
-                    {!test.success && test.repairable && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleRepair(test.name)}
-                        disabled={repairingTest === test.name}
-                      >
-                        {repairingTest === test.name ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <>
-                            <Wrench className="h-4 w-4 mr-1" />
-                            Repair
-                          </>
-                        )}
-                      </Button>
                     )}
                   </div>
                 );
@@ -341,7 +464,7 @@ export function ZfsTargetHealthDialog({
             Close
           </Button>
           {onRefresh && (
-            <Button onClick={onRefresh} disabled={refreshing}>
+            <Button onClick={onRefresh} disabled={refreshing || !!activeRepairJobId}>
               {refreshing ? (
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
               ) : (
