@@ -3469,13 +3469,14 @@ chmod 600 ~/.ssh/authorized_keys
                             operation_type='data_transfer_test'
                         )
                         
+                        transfer_success = transfer_result.get('success', False)
                         results['tests'].append({
                             'name': 'data_transfer_test',
-                            'success': transfer_result.get('success', False),
+                            'success': transfer_success,
                             'message': transfer_result.get('message', 'Unknown'),
                             'transfer_time_ms': transfer_result.get('transfer_time_ms'),
                             'bytes_transferred': transfer_result.get('bytes_transferred'),
-                            'repairable': False  # Cannot auto-repair - requires investigation
+                            'repairable': not transfer_success  # Can repair by cleaning stale datasets
                         })
                         
                         add_step_result('data_transfer_test', 'success' if transfer_result.get('success') else 'failed', transfer_result.get('message', 'Unknown'), duration_ms)
@@ -4188,8 +4189,201 @@ chmod 600 ~/.ssh/authorized_keys
             )
 
     # =========================================================================
-    # Create DR Shell VM (Job Queue Handler)
+    # Repair Data Transfer (Job Queue Handler)
     # =========================================================================
+    
+    def execute_repair_data_transfer(self, job: Dict):
+        """
+        Repair data transfer test failures by cleaning up stale test datasets
+        and re-running a controlled test transfer.
+        
+        Actions:
+        1. Clean up stale health_test datasets on source
+        2. Clean up stale health_test datasets on destination (via cross-site SSH)
+        3. Re-run a fresh controlled test transfer
+        4. Verify content matches on destination
+        """
+        job_id = job['id']
+        details = job.get('details', {}) or {}
+        target_id = details.get('target_id')
+        
+        self.executor.log(f"[{job_id}] Starting data transfer repair for target {target_id}")
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso())
+        
+        repair_log = []
+        
+        def log_step(msg: str):
+            repair_log.append(msg)
+            self.executor.log(f"[{job_id}] {msg}")
+        
+        try:
+            if not target_id:
+                raise ValueError("No target_id provided in job details")
+            
+            # Get target
+            target = self._get_replication_target(target_id)
+            if not target:
+                raise ValueError(f"Replication target not found: {target_id}")
+            
+            hostname = target.get('hostname')
+            pool = target.get('zfs_pool', 'tank')
+            log_step(f"Target: {target.get('name')} ({hostname}), Pool: {pool}")
+            
+            # Get SSH credentials
+            creds = self._get_target_ssh_creds(target)
+            if not creds:
+                raise ValueError(f"No SSH credentials available for target {hostname}")
+            
+            # Connect via SSH
+            import paramiko
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            pkey = None
+            if creds.get('key_data'):
+                from io import StringIO
+                pkey = paramiko.RSAKey.from_private_key(StringIO(creds['key_data']))
+            
+            ssh.connect(
+                hostname=creds['hostname'],
+                port=creds['port'],
+                username=creds['username'],
+                pkey=pkey,
+                password=creds.get('password'),
+                timeout=30
+            )
+            
+            # Step 1: Clean up stale test datasets on source
+            log_step("Cleaning up stale test datasets on source...")
+            cleanup_cmd = f"zfs list -Ho name 2>/dev/null | grep -E 'health_test|transfer_test' | xargs -r -n1 zfs destroy -r 2>/dev/null; echo 'SOURCE_CLEANUP_DONE'"
+            stdin, stdout, stderr = ssh.exec_command(cleanup_cmd)
+            stdout.read().decode().strip()
+            log_step("Source cleanup complete")
+            
+            # Step 2: Clean up on partner/destination via cross-site SSH
+            partner_target_id = target.get('partner_target_id')
+            partner = None
+            partner_creds = None
+            
+            if partner_target_id:
+                partner = self._get_replication_target(partner_target_id)
+                if partner:
+                    partner_creds = self._get_target_ssh_creds(partner)
+                    partner_host = partner.get('hostname')
+                    log_step(f"Cleaning up stale test datasets on partner ({partner_host})...")
+                    
+                    # Use cross-site SSH to clean destination
+                    dest_cleanup_cmd = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@{partner_host} \"zfs list -Ho name 2>/dev/null | grep -E 'health_test|transfer_test' | xargs -r -n1 zfs destroy -r 2>/dev/null\"; echo 'DEST_CLEANUP_DONE'"
+                    stdin, stdout, stderr = ssh.exec_command(dest_cleanup_cmd, timeout=30)
+                    result = stdout.read().decode().strip()
+                    error = stderr.read().decode().strip()
+                    
+                    if 'DEST_CLEANUP_DONE' in result:
+                        log_step("Destination cleanup complete")
+                    else:
+                        log_step(f"Destination cleanup may have issues: {error or result}")
+            else:
+                log_step("No partner target configured - skipping destination cleanup")
+            
+            # Step 3: Re-run controlled test transfer
+            if partner and partner_creds:
+                log_step("Running fresh data transfer test...")
+                
+                test_id = int(time.time())
+                test_dataset = f"{pool}/repair_test_{test_id}"
+                test_content = f"repair_check_{test_id}"
+                partner_host = partner.get('hostname')
+                partner_pool = partner.get('zfs_pool', pool)
+                
+                # Create test dataset with content
+                create_cmd = f"""
+                    zfs create {test_dataset} && \
+                    echo '{test_content}' > /{test_dataset}/test.txt && \
+                    sync && \
+                    echo 'CREATED'
+                """
+                stdin, stdout, stderr = ssh.exec_command(create_cmd, timeout=30)
+                create_result = stdout.read().decode().strip()
+                
+                if 'CREATED' not in create_result:
+                    raise ValueError(f"Failed to create test dataset: {stderr.read().decode()}")
+                
+                log_step(f"Created test dataset: {test_dataset}")
+                
+                # Send to partner
+                send_start = time.time()
+                send_cmd = f"zfs send {test_dataset}@test_snap 2>/dev/null || (zfs snapshot {test_dataset}@test_snap && zfs send {test_dataset}@test_snap) | ssh -o StrictHostKeyChecking=no root@{partner_host} 'zfs receive -F {partner_pool}/repair_test_{test_id}' && echo 'SEND_OK'"
+                stdin, stdout, stderr = ssh.exec_command(send_cmd, timeout=120)
+                send_result = stdout.read().decode().strip()
+                send_error = stderr.read().decode().strip()
+                send_duration_ms = int((time.time() - send_start) * 1000)
+                
+                if 'SEND_OK' not in send_result:
+                    log_step(f"Transfer failed: {send_error}")
+                    # Clean up source test dataset
+                    ssh.exec_command(f"zfs destroy -r {test_dataset} 2>/dev/null")
+                    raise ValueError(f"Data transfer failed: {send_error}")
+                
+                log_step(f"Transfer complete in {send_duration_ms}ms")
+                
+                # Step 4: Verify content on destination
+                verify_cmd = f"ssh -o StrictHostKeyChecking=no root@{partner_host} 'cat /{partner_pool}/repair_test_{test_id}/test.txt 2>/dev/null'"
+                stdin, stdout, stderr = ssh.exec_command(verify_cmd, timeout=30)
+                dest_content = stdout.read().decode().strip()
+                
+                if dest_content == test_content:
+                    log_step("Content verification PASSED - data transfer is working correctly")
+                    success = True
+                else:
+                    log_step(f"Content verification FAILED - expected '{test_content}', got '{dest_content}'")
+                    success = False
+                
+                # Clean up test datasets
+                log_step("Cleaning up test datasets...")
+                ssh.exec_command(f"zfs destroy -r {test_dataset} 2>/dev/null")
+                ssh.exec_command(f"ssh -o StrictHostKeyChecking=no root@{partner_host} 'zfs destroy -r {partner_pool}/repair_test_{test_id} 2>/dev/null'")
+                
+            else:
+                log_step("No partner configured - cannot verify data transfer")
+                success = False
+            
+            ssh.close()
+            
+            if success:
+                log_step("Data transfer repair completed successfully")
+                self.update_job_status(job_id, 'completed',
+                    completed_at=utc_now_iso(),
+                    details={
+                        **details,
+                        'repair_log': repair_log,
+                        'success': True,
+                        'message': 'Data transfer repair completed - transfer verified working'
+                    }
+                )
+            else:
+                log_step("Repair completed but transfer verification failed")
+                self.update_job_status(job_id, 'failed',
+                    completed_at=utc_now_iso(),
+                    details={
+                        **details,
+                        'repair_log': repair_log,
+                        'success': False,
+                        'message': 'Transfer verification failed after repair - may require manual investigation'
+                    }
+                )
+            
+        except Exception as e:
+            self.executor.log(f"[{job_id}] Repair failed: {e}", "ERROR")
+            repair_log.append(f"Error: {str(e)}")
+            self.update_job_status(job_id, 'failed',
+                completed_at=utc_now_iso(),
+                details={
+                    **details,
+                    'repair_log': repair_log,
+                    'error': str(e)
+                }
+            )
+
     
     def execute_create_dr_shell(self, job: Dict) -> bool:
         """
