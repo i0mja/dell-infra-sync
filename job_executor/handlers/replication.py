@@ -3627,9 +3627,10 @@ chmod 600 ~/.ssh/authorized_keys
         if not PARAMIKO_AVAILABLE:
             return {'success': False, 'message': 'paramiko not installed'}
         
-        test_dataset = f"{pool}/dsm_health_test"
-        test_snapshot = f"{test_dataset}@healthcheck"
+        # Use unique timestamped dataset to avoid stale data issues
         timestamp = int(time.time())
+        test_dataset = f"{pool}/dsm_health_test_{timestamp}"
+        test_snapshot = f"{test_dataset}@healthcheck"
         test_content = f"dsm-healthcheck-{timestamp}"
         
         try:
@@ -3662,9 +3663,11 @@ chmod 600 ~/.ssh/authorized_keys
             if job_id:
                 self.executor.log(f"[{job_id}] Creating test dataset {test_dataset}")
             
-            # Create test dataset (ignore errors if exists)
-            ssh.exec_command(f"zfs create {test_dataset} 2>/dev/null || true")
-            time.sleep(0.5)
+            # Create fresh test dataset (destroy first in case of leftover from failed run)
+            ssh.exec_command(f"zfs destroy -r {test_dataset} 2>/dev/null || true")
+            time.sleep(0.2)
+            stdin, stdout, stderr = ssh.exec_command(f"zfs create {test_dataset}")
+            stdout.read()  # Wait for completion
             
             # Create test file
             ssh.exec_command(f"echo '{test_content}' > /{test_dataset}/verify.txt")
