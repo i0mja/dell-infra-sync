@@ -36,22 +36,10 @@ export const ClusterTopologyMap = () => {
 
       if (!clusterData) return [];
 
-      // Get host counts per cluster
-      const { data: hostCounts } = await supabase
-        .from('vcenter_hosts')
-        .select('cluster_id');
-
-      const hostCountMap: Record<string, number> = {};
-      hostCounts?.forEach(host => {
-        if (host.cluster_id) {
-          hostCountMap[host.cluster_id] = (hostCountMap[host.cluster_id] || 0) + 1;
-        }
-      });
-
-      // Get vCenter names
-      const vcenterIds = [...new Set(clusterData.map(c => c.vcenter_host_id).filter(Boolean))];
+      // Get vCenter names using source_vcenter_id which references vcenters table
+      const vcenterIds = [...new Set(clusterData.map(c => c.source_vcenter_id).filter(Boolean))];
       const { data: vcenters } = await supabase
-        .from('vcenter_hosts')
+        .from('vcenters')
         .select('id, name')
         .in('id', vcenterIds as string[]);
 
@@ -61,12 +49,11 @@ export const ClusterTopologyMap = () => {
       });
 
       return clusterData.map(cluster => {
-        const hostCount = hostCountMap[cluster.id] || 0;
         const cpuUsage = cluster.total_cpu_mhz && cluster.total_cpu_mhz > 0 
           ? Math.round(((cluster.used_cpu_mhz || 0) / cluster.total_cpu_mhz) * 100) 
           : 0;
-        const memoryUsage = cluster.total_memory_mb && cluster.total_memory_mb > 0 
-          ? Math.round(((cluster.used_memory_mb || 0) / cluster.total_memory_mb) * 100) 
+        const memoryUsage = cluster.total_memory_bytes && cluster.total_memory_bytes > 0 
+          ? Math.round(((cluster.used_memory_bytes || 0) / cluster.total_memory_bytes) * 100) 
           : 0;
 
         let status: 'healthy' | 'warning' | 'critical' = 'healthy';
@@ -77,9 +64,9 @@ export const ClusterTopologyMap = () => {
         return {
           id: cluster.id,
           name: cluster.cluster_name || 'Unknown',
-          vcenter_name: cluster.vcenter_host_id ? vcenterMap[cluster.vcenter_host_id] || 'Unknown' : 'Unknown',
-          host_count: hostCount,
-          vm_count: 0,
+          vcenter_name: cluster.source_vcenter_id ? vcenterMap[cluster.source_vcenter_id] || 'Unknown' : 'Unknown',
+          host_count: cluster.host_count || 0,
+          vm_count: cluster.vm_count || 0,
           ha_enabled: cluster.ha_enabled || false,
           drs_enabled: cluster.drs_enabled || false,
           cpu_usage: cpuUsage,
