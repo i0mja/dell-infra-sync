@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { SettingsSection } from "@/components/settings/SettingsSection";
-import { Network, Activity, Terminal, Database, Loader2, Key, Eye, Copy, Server, CheckCircle, XCircle, ExternalLink } from "lucide-react";
+import { Network, Activity, Terminal, Database, Loader2, Key, Eye, Copy, Server, CheckCircle, XCircle, ExternalLink, Shield, RefreshCw } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -57,10 +57,16 @@ export function SystemSettings() {
   const [serviceKeyLoading, setServiceKeyLoading] = useState(false);
   const [serviceKeyRevealed, setServiceKeyRevealed] = useState(false);
 
+  // Executor Authentication
+  const [executorSecretConfigured, setExecutorSecretConfigured] = useState<boolean | null>(null);
+  const [executorSecretLoading, setExecutorSecretLoading] = useState(false);
+  const [generatedSecret, setGeneratedSecret] = useState<string | null>(null);
+
   useEffect(() => {
     loadNetworkSettings();
     loadActivitySettings();
     fetchStaleJobCount();
+    checkExecutorSecretStatus();
   }, []);
 
   const loadNetworkSettings = async () => {
@@ -126,6 +132,45 @@ export function SystemSettings() {
       .lt('started_at', fortyEightHoursAgo);
 
     setStaleJobCount((pendingCount || 0) + (runningCount || 0));
+  };
+
+  const checkExecutorSecretStatus = async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke('set-executor-secret', {
+        body: { action: 'check' }
+      });
+      if (error) throw error;
+      setExecutorSecretConfigured(data.configured);
+    } catch (error) {
+      console.error('Failed to check executor secret status:', error);
+      setExecutorSecretConfigured(false);
+    }
+  };
+
+  const handleGenerateExecutorSecret = async () => {
+    setExecutorSecretLoading(true);
+    setGeneratedSecret(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('set-executor-secret', {
+        body: { action: 'generate' }
+      });
+      if (error) throw error;
+      
+      setExecutorSecretConfigured(true);
+      setGeneratedSecret(data.secret);
+      toast({
+        title: "Secret Generated",
+        description: "Executor authentication has been configured. Restart your Job Executor to apply.",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to generate secret",
+        variant: "destructive",
+      });
+    } finally {
+      setExecutorSecretLoading(false);
+    }
   };
 
   const handleSaveNetworkSettings = async () => {
@@ -479,6 +524,111 @@ export function SystemSettings() {
           <Button onClick={handleSaveJobExecutorUrl} disabled={loading}>
             {loading ? "Saving..." : "Save Job Executor URL"}
           </Button>
+        </div>
+      </SettingsSection>
+
+      {/* Executor Authentication */}
+      <SettingsSection
+        id="executor-auth"
+        title="Executor Authentication"
+        description="Secure communication between the Job Executor and backend"
+        icon={Shield}
+      >
+        <div className="space-y-4">
+          <Alert>
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              This secret enables HMAC authentication for job status updates. 
+              When configured here, the executor automatically retrieves it - no manual configuration needed.
+            </AlertDescription>
+          </Alert>
+
+          {/* Status indicator */}
+          {executorSecretConfigured === null ? (
+            <Alert className="border-muted">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <AlertDescription>Checking authentication status...</AlertDescription>
+            </Alert>
+          ) : executorSecretConfigured ? (
+            <Alert className="border-green-500/50 bg-green-500/10">
+              <CheckCircle className="h-4 w-4 text-green-500" />
+              <AlertDescription className="text-green-700 dark:text-green-400">
+                Executor authentication is configured
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <Alert variant="destructive">
+              <XCircle className="h-4 w-4" />
+              <AlertDescription>
+                Executor authentication not configured - job status updates will fail
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {/* Generated secret display */}
+          {generatedSecret && (
+            <div className="space-y-2 p-4 border rounded-lg bg-muted/50">
+              <Label className="text-sm font-medium">Generated Secret (shown once)</Label>
+              <div className="flex gap-2">
+                <Input
+                  type="text"
+                  value={generatedSecret}
+                  readOnly
+                  className="font-mono text-xs"
+                />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => {
+                    navigator.clipboard.writeText(generatedSecret);
+                    toast({ title: "Copied to clipboard" });
+                  }}
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Save this secret if you need a backup. The executor will automatically fetch it from the database.
+              </p>
+            </div>
+          )}
+
+          {/* Action buttons */}
+          <div className="flex gap-2">
+            <Button
+              onClick={handleGenerateExecutorSecret}
+              disabled={executorSecretLoading}
+            >
+              {executorSecretLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Generating...
+                </>
+              ) : executorSecretConfigured ? (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Regenerate Secret
+                </>
+              ) : (
+                <>
+                  <Key className="mr-2 h-4 w-4" />
+                  Generate Secret
+                </>
+              )}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={checkExecutorSecretStatus}
+            >
+              Refresh Status
+            </Button>
+          </div>
+
+          {executorSecretConfigured && !generatedSecret && (
+            <p className="text-sm text-muted-foreground">
+              After generating a new secret, restart the Job Executor to apply the changes.
+            </p>
+          )}
         </div>
       </SettingsSection>
 
