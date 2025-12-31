@@ -127,9 +127,55 @@ Deno.serve(async (req) => {
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
 
+    } else if (action === "reveal") {
+      // Reveal (decrypt) existing secret
+      const { data: settings } = await supabase
+        .from("activity_settings")
+        .select("executor_shared_secret_encrypted")
+        .maybeSingle();
+
+      if (!settings?.executor_shared_secret_encrypted) {
+        return new Response(
+          JSON.stringify({ error: "No secret configured. Generate one first." }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Get encryption key
+      const { data: encryptionKeyData } = await supabase.rpc("get_encryption_key");
+      
+      if (!encryptionKeyData) {
+        return new Response(
+          JSON.stringify({ error: "Encryption key not configured" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Decrypt the secret
+      const { data: decryptedSecret, error: decryptError } = await supabase
+        .rpc("decrypt_password", { 
+          encrypted: settings.executor_shared_secret_encrypted, 
+          key: encryptionKeyData 
+        });
+
+      if (decryptError) {
+        console.error("Decryption error:", decryptError);
+        return new Response(
+          JSON.stringify({ error: "Failed to decrypt secret" }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      console.log("Executor shared secret revealed successfully");
+
+      return new Response(
+        JSON.stringify({ secret: decryptedSecret }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+
     } else {
       return new Response(
-        JSON.stringify({ error: "Invalid action. Use 'generate' or 'check'" }),
+        JSON.stringify({ error: "Invalid action. Use 'generate', 'check', or 'reveal'" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

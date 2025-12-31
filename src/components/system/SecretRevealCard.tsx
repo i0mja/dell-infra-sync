@@ -151,10 +151,47 @@ export function SecretRevealCard({
                 )}
               </Tabs>
             )}
+
+            {/* Show regenerate button when already revealed and canRegenerate is true */}
+            {onGenerate && canRegenerate && (
+              <Button
+                onClick={onGenerate}
+                disabled={isLoading}
+                variant="outline"
+                size="sm"
+                className="mt-2"
+              >
+                <RefreshCw className="mr-2 h-3.5 w-3.5" />
+                Regenerate
+              </Button>
+            )}
           </div>
         ) : (
           <div className="flex gap-2">
-            {onGenerate && canRegenerate ? (
+            {/* Show Reveal button when secret exists but isn't revealed yet */}
+            {isConfigured && canRegenerate && (
+              <Button
+                onClick={onReveal}
+                disabled={isLoading}
+                variant="outline"
+                size="sm"
+              >
+                {isLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                    Retrieving...
+                  </>
+                ) : (
+                  <>
+                    <Eye className="mr-2 h-3.5 w-3.5" />
+                    Reveal
+                  </>
+                )}
+              </Button>
+            )}
+            
+            {/* Show Generate button when no secret exists, or for non-regeneratable secrets */}
+            {onGenerate && canRegenerate && !isConfigured && (
               <Button
                 onClick={onGenerate}
                 disabled={isLoading}
@@ -165,11 +202,6 @@ export function SecretRevealCard({
                     <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
                     Generating...
                   </>
-                ) : isConfigured ? (
-                  <>
-                    <RefreshCw className="mr-2 h-3.5 w-3.5" />
-                    Regenerate
-                  </>
                 ) : (
                   <>
                     <Key className="mr-2 h-3.5 w-3.5" />
@@ -177,7 +209,10 @@ export function SecretRevealCard({
                   </>
                 )}
               </Button>
-            ) : (
+            )}
+
+            {/* For secrets that can only be revealed (like SERVICE_ROLE_KEY) */}
+            {!canRegenerate && (
               <Button
                 onClick={onReveal}
                 disabled={isLoading}
