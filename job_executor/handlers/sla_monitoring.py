@@ -225,28 +225,53 @@ class SLAMonitoringHandler(BaseHandler):
         
         This ensures continuous monitoring by creating a new pending job
         that will run after the specified interval.
+        Also detects and recovers stale running jobs to prevent blocking.
         """
         try:
-            # First check if there's already a pending/running job of this type
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+            }
+            
+            # Check for existing pending/running jobs
             check_response = requests.get(
                 f"{DSM_URL}/rest/v1/jobs",
                 params={
                     'job_type': f'eq.{job_type}',
                     'status': 'in.(pending,running)',
-                    'select': 'id'
+                    'select': 'id,status,started_at'
                 },
-                headers={
-                    'apikey': SERVICE_ROLE_KEY,
-                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
-                },
+                headers=headers,
                 verify=VERIFY_SSL,
                 timeout=10
             )
             
-            if check_response.ok and check_response.json():
-                # Already have a pending/running job, don't create duplicate
-                self.executor.log(f"[SLA] {job_type} already has pending job, skipping reschedule")
-                return
+            if check_response.ok:
+                existing_jobs = check_response.json() or []
+                
+                for job in existing_jobs:
+                    # Check if running job is stale (> 10 minutes)
+                    if job['status'] == 'running' and job.get('started_at'):
+                        started_str = job['started_at']
+                        if started_str.endswith('Z'):
+                            started_str = started_str[:-1] + '+00:00'
+                        started = datetime.fromisoformat(started_str)
+                        if started.tzinfo is None:
+                            started = started.replace(tzinfo=timezone.utc)
+                        
+                        if datetime.now(timezone.utc) - started > timedelta(minutes=10):
+                            # Mark stale job as failed
+                            self.executor.log(f"[SLA] Recovering stale {job_type} job {job['id']}")
+                            self.update_job_status(
+                                job['id'], 'failed',
+                                completed_at=utc_now_iso(),
+                                details={'error': 'Job exceeded 10min maximum runtime', 'auto_recovered': True}
+                            )
+                            continue  # Don't count this as blocking
+                    
+                    # Found a valid pending/running job that isn't stale
+                    self.executor.log(f"[SLA] {job_type} already has pending job, skipping reschedule")
+                    return
             
             # Calculate when next job should start
             next_run = datetime.now(timezone.utc) + timedelta(seconds=interval_seconds)
@@ -266,8 +291,7 @@ class SLAMonitoringHandler(BaseHandler):
                     }
                 },
                 headers={
-                    'apikey': SERVICE_ROLE_KEY,
-                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    **headers,
                     'Content-Type': 'application/json',
                     'Prefer': 'return=minimal'
                 },
