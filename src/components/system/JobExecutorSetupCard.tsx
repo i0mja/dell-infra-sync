@@ -448,12 +448,9 @@ function CopyAllEnvVarsCard({
   const { toast } = useToast();
   const bothRevealed = serviceKeyRevealed && executorSecretRevealed;
   
-  const windowsCommand = `nssm set DellServerManagerJobExecutor AppEnvironmentExtra ^
-  "DSM_URL=${supabaseUrl}" ^
-  "SUPABASE_URL=${supabaseUrl}" ^
-  "SERVICE_ROLE_KEY=${serviceKey || '<reveal above>'}" ^
-  "EXECUTOR_SHARED_SECRET=${executorSecret || '<reveal above>'}"`;
+  const windowsCommand = `nssm set DellServerManagerJobExecutor AppEnvironmentExtra "DSM_URL=${supabaseUrl}" "SUPABASE_URL=${supabaseUrl}" "SERVICE_ROLE_KEY=${serviceKey || '<reveal above>'}" "EXECUTOR_SHARED_SECRET=${executorSecret || '<reveal above>'}"
 
+nssm restart DellServerManagerJobExecutor`;
   const linuxEnvFile = `[Service]
 Environment="DSM_URL=${supabaseUrl}"
 Environment="SUPABASE_URL=${supabaseUrl}"
