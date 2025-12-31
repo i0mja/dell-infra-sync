@@ -20,7 +20,12 @@ from typing import Dict, Tuple, Optional
 
 def get_shared_secret() -> Optional[str]:
     """Get the shared secret from environment variable."""
-    return os.getenv('EXECUTOR_SHARED_SECRET')
+    secret = os.getenv('EXECUTOR_SHARED_SECRET')
+    if not secret:
+        # Log warning to help debug missing secret
+        import logging
+        logging.warning("EXECUTOR_SHARED_SECRET not set - HMAC signing disabled. Job status updates will fail if edge function requires authentication.")
+    return secret
 
 
 def _sorted_json_stringify(obj) -> str:
