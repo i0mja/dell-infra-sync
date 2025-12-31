@@ -60,7 +60,8 @@ export function SystemSettings() {
   // Executor Authentication
   const [executorSecretConfigured, setExecutorSecretConfigured] = useState<boolean | null>(null);
   const [executorSecretLoading, setExecutorSecretLoading] = useState(false);
-  const [generatedSecret, setGeneratedSecret] = useState<string | null>(null);
+  const [executorSecret, setExecutorSecret] = useState<string | null>(null);
+  const [executorSecretRevealed, setExecutorSecretRevealed] = useState(false);
 
   useEffect(() => {
     loadNetworkSettings();
@@ -149,7 +150,8 @@ export function SystemSettings() {
 
   const handleGenerateExecutorSecret = async () => {
     setExecutorSecretLoading(true);
-    setGeneratedSecret(null);
+    setExecutorSecret(null);
+    setExecutorSecretRevealed(false);
     try {
       const { data, error } = await supabase.functions.invoke('set-executor-secret', {
         body: { action: 'generate' }
@@ -157,10 +159,11 @@ export function SystemSettings() {
       if (error) throw error;
       
       setExecutorSecretConfigured(true);
-      setGeneratedSecret(data.secret);
+      setExecutorSecret(data.secret);
+      setExecutorSecretRevealed(true);
       toast({
         title: "Secret Generated",
-        description: "Executor authentication has been configured. Restart your Job Executor to apply.",
+        description: "Copy the secret to your Job Executor .env file, then restart the executor.",
       });
     } catch (error: any) {
       toast({
@@ -539,7 +542,7 @@ export function SystemSettings() {
             <AlertCircle className="h-4 w-4" />
             <AlertDescription>
               This secret enables HMAC authentication for job status updates. 
-              When configured here, the executor automatically retrieves it - no manual configuration needed.
+              Generate the secret here, then copy it to your Job Executor's <code className="px-1 bg-muted rounded text-xs">.env</code> file.
             </AlertDescription>
           </Alert>
 
@@ -553,7 +556,7 @@ export function SystemSettings() {
             <Alert className="border-green-500/50 bg-green-500/10">
               <CheckCircle className="h-4 w-4 text-green-500" />
               <AlertDescription className="text-green-700 dark:text-green-400">
-                Executor authentication is configured
+                Executor authentication secret is configured in database
               </AlertDescription>
             </Alert>
           ) : (
@@ -565,14 +568,14 @@ export function SystemSettings() {
             </Alert>
           )}
 
-          {/* Generated secret display */}
-          {generatedSecret && (
-            <div className="space-y-2 p-4 border rounded-lg bg-muted/50">
-              <Label className="text-sm font-medium">Generated Secret (shown once)</Label>
+          {/* Secret display (like service key) */}
+          {executorSecretRevealed && executorSecret && (
+            <div className="space-y-3 p-4 border rounded-lg bg-muted/50">
+              <Label className="text-sm font-medium">Executor Shared Secret</Label>
               <div className="flex gap-2">
                 <Input
                   type="text"
-                  value={generatedSecret}
+                  value={executorSecret}
                   readOnly
                   className="font-mono text-xs"
                 />
@@ -580,16 +583,46 @@ export function SystemSettings() {
                   variant="outline"
                   size="icon"
                   onClick={() => {
-                    navigator.clipboard.writeText(generatedSecret);
-                    toast({ title: "Copied to clipboard" });
+                    navigator.clipboard.writeText(`EXECUTOR_SHARED_SECRET=${executorSecret}`);
+                    toast({ title: "Copied to clipboard", description: "Ready to paste into your .env file" });
                   }}
+                  title="Copy as environment variable"
                 >
                   <Copy className="h-4 w-4" />
                 </Button>
               </div>
-              <p className="text-xs text-muted-foreground">
-                Save this secret if you need a backup. The executor will automatically fetch it from the database.
-              </p>
+              
+              <Tabs defaultValue="linux" className="mt-3">
+                <TabsList className="h-8">
+                  <TabsTrigger value="linux" className="text-xs px-3 py-1">Linux/RHEL</TabsTrigger>
+                  <TabsTrigger value="windows" className="text-xs px-3 py-1">Windows</TabsTrigger>
+                </TabsList>
+                
+                <TabsContent value="linux" className="mt-2 space-y-2">
+                  <p className="text-xs text-muted-foreground">Add to <code className="px-1 bg-muted rounded">/opt/job-executor/.env</code>:</p>
+                  <code className="block px-2 py-1 bg-background border rounded text-xs font-mono break-all">
+                    EXECUTOR_SHARED_SECRET={executorSecret}
+                  </code>
+                  <p className="text-xs text-muted-foreground">Then restart:</p>
+                  <code className="block px-2 py-1 bg-background border rounded text-xs font-mono">
+                    sudo systemctl restart dell-job-executor
+                  </code>
+                </TabsContent>
+                
+                <TabsContent value="windows" className="mt-2 space-y-2">
+                  <p className="text-xs text-muted-foreground">Add to existing NSSM environment (append to AppEnvironmentExtra):</p>
+                  <code className="block px-2 py-1 bg-background border rounded text-xs font-mono whitespace-pre-wrap break-all">
+{`nssm set DellServerManagerJobExecutor AppEnvironmentExtra ^
+  "SERVICE_ROLE_KEY=<your-key>" ^
+  "DSM_URL=<your-url>" ^
+  "EXECUTOR_SHARED_SECRET=${executorSecret}"`}
+                  </code>
+                  <p className="text-xs text-muted-foreground">Then restart:</p>
+                  <code className="block px-2 py-1 bg-background border rounded text-xs font-mono">
+                    nssm restart DellServerManagerJobExecutor
+                  </code>
+                </TabsContent>
+              </Tabs>
             </div>
           )}
 
@@ -624,9 +657,9 @@ export function SystemSettings() {
             </Button>
           </div>
 
-          {executorSecretConfigured && !generatedSecret && (
+          {executorSecretConfigured && !executorSecretRevealed && (
             <p className="text-sm text-muted-foreground">
-              After generating a new secret, restart the Job Executor to apply the changes.
+              Click "Regenerate Secret" to get a new secret to copy to your executor.
             </p>
           )}
         </div>

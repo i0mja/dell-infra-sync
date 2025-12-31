@@ -31,68 +31,7 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const { action } = body;
 
-    // For get-decrypted action, accept SERVICE_ROLE_KEY authentication (machine-to-machine)
-    if (action === "get-decrypted") {
-      const token = authHeader.replace("Bearer ", "");
-      
-      // Verify the token is the service role key
-      if (token !== serviceRoleKey) {
-        console.log("[SECURITY] get-decrypted called without service role key: DENIED");
-        return new Response(
-          JSON.stringify({ error: "Unauthorized - service role key required" }),
-          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      console.log("[INFO] get-decrypted called with valid service role key");
-
-      // Get encrypted secret from database
-      const { data: settings } = await supabase
-        .from("activity_settings")
-        .select("executor_shared_secret_encrypted")
-        .maybeSingle();
-
-      if (!settings?.executor_shared_secret_encrypted) {
-        return new Response(
-          JSON.stringify({ error: "Secret not configured" }),
-          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      // Decrypt the secret
-      const { data: encryptionKeyData } = await supabase
-        .rpc("get_encryption_key");
-      
-      if (!encryptionKeyData) {
-        return new Response(
-          JSON.stringify({ error: "Encryption key not configured" }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      const { data: decryptedSecret, error: decryptError } = await supabase
-        .rpc("decrypt_password", { 
-          encrypted: settings.executor_shared_secret_encrypted, 
-          key: encryptionKeyData 
-        });
-
-      if (decryptError || !decryptedSecret) {
-        console.error("Decryption error:", decryptError);
-        return new Response(
-          JSON.stringify({ error: "Failed to decrypt secret" }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      console.log("[INFO] Executor shared secret retrieved and decrypted successfully");
-
-      return new Response(
-        JSON.stringify({ secret: decryptedSecret }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // For other actions (generate, check), require user authentication with admin role
+    // All actions require user authentication with admin role
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const userClient = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authHeader } }
@@ -190,7 +129,7 @@ Deno.serve(async (req) => {
 
     } else {
       return new Response(
-        JSON.stringify({ error: "Invalid action. Use 'generate', 'check', or 'get-decrypted'" }),
+        JSON.stringify({ error: "Invalid action. Use 'generate' or 'check'" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
