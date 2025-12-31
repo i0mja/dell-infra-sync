@@ -64,13 +64,18 @@ export async function verifyRequestDualAuth(
   const authHeader = req.headers.get('authorization');
   if (authHeader?.startsWith('Bearer ')) {
     try {
-      const { data: { user }, error } = await supabaseClient.auth.getUser();
+      // Extract the JWT token and pass it directly to getUser()
+      // In edge functions, getUser() without a token doesn't work - there's no session context
+      const token = authHeader.replace('Bearer ', '');
+      const { data: { user }, error } = await supabaseClient.auth.getUser(token);
       if (user && !error) {
         logger.security('Dual auth: JWT verification', true);
         return { authenticated: true, method: 'jwt', userId: user.id };
+      } else {
+        logger.debug(`JWT auth check returned no user: ${error?.message || 'unknown error'}`);
       }
     } catch (e) {
-      logger.debug('JWT auth check failed');
+      logger.debug(`JWT auth check failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
   
