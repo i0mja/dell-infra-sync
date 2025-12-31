@@ -3663,35 +3663,64 @@ chmod 600 ~/.ssh/authorized_keys
             if job_id:
                 self.executor.log(f"[{job_id}] Creating test dataset {test_dataset}")
             
-            # Create fresh test dataset (destroy first in case of leftover from failed run)
-            ssh.exec_command(f"zfs destroy -r {test_dataset} 2>/dev/null || true")
-            time.sleep(0.2)
-            stdin, stdout, stderr = ssh.exec_command(f"zfs create {test_dataset}")
-            stdout.read()  # Wait for completion
+            # Create fresh test dataset with verification (like repair function pattern)
+            create_cmd = f"""
+                zfs destroy -r {test_dataset} 2>/dev/null || true
+                zfs create {test_dataset} && \
+                echo '{test_content}' > /{test_dataset}/verify.txt && \
+                sync && \
+                echo 'DATASET_CREATED'
+            """
+            stdin, stdout, stderr = ssh.exec_command(create_cmd, timeout=30)
+            create_result = stdout.read().decode().strip()
+            create_error = stderr.read().decode().strip()
             
-            # Create test file
-            ssh.exec_command(f"echo '{test_content}' > /{test_dataset}/verify.txt")
-            time.sleep(0.5)
-            
-            # Create snapshot
-            ssh.exec_command(f"zfs destroy {test_snapshot} 2>/dev/null || true")
-            stdin, stdout, stderr = ssh.exec_command(f"zfs snapshot {test_snapshot}")
-            stdout.read()  # Wait for completion
+            if 'DATASET_CREATED' not in create_result:
+                ssh.close()
+                return {
+                    'success': False,
+                    'message': f'Failed to create test dataset',
+                    'error': create_error or create_result or 'No output from create command'
+                }
             
             if job_id:
                 self.executor.log(f"[{job_id}] Sending test snapshot to partner")
             
-            # Send to partner and time it
+            # Send to partner and time it (use inline snapshot creation like repair function)
             partner_host = partner_creds['hostname']
             partner_user = partner_creds['username']
             partner_port = partner_creds.get('port', 22)
             
             start_time = time.time()
-            send_cmd = f"zfs send {test_snapshot} 2>/dev/null | ssh -o StrictHostKeyChecking=no -p {partner_port} {partner_user}@{partner_host} 'zfs receive -Fu {test_dataset}' 2>&1"
+            # Use inline snapshot creation pattern (like repair function)
+            send_cmd = f"""
+                zfs snapshot {test_snapshot} 2>/dev/null || true
+                zfs send {test_snapshot} | ssh -o StrictHostKeyChecking=no -p {partner_port} {partner_user}@{partner_host} 'zfs receive -F {test_dataset}' && echo 'SEND_OK'
+            """
             stdin, stdout, stderr = ssh.exec_command(send_cmd, timeout=120)
             send_output = stdout.read().decode().strip()
             send_error = stderr.read().decode().strip()
             transfer_time = (time.time() - start_time) * 1000  # ms
+            
+            if job_id:
+                self.executor.log(f"[{job_id}] Send output: {send_output[:200] if send_output else 'empty'}")
+                if send_error:
+                    self.executor.log(f"[{job_id}] Send stderr: {send_error[:200]}")
+            
+            # Check if send succeeded
+            if 'SEND_OK' not in send_output:
+                # Cleanup source
+                ssh.exec_command(f"zfs destroy -r {test_dataset} 2>/dev/null || true")
+                ssh.close()
+                return {
+                    'success': False,
+                    'message': 'ZFS send/receive failed',
+                    'transfer_time_ms': round(transfer_time),
+                    'error': send_error or send_output or 'No output from send command'
+                }
+            
+            # Small delay to ensure filesystem is synced on partner
+            time.sleep(0.3)
             
             if job_id:
                 self.executor.log(f"[{job_id}] Verifying data on partner")
