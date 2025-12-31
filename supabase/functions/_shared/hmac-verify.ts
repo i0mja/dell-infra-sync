@@ -12,9 +12,88 @@
  * - Tampering (any payload modification invalidates signature)
  */
 
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { logger } from './logger.ts';
 
 const MAX_AGE_SECONDS = 300; // 5 minutes - requests older than this are rejected
+
+// Cache the shared secret to avoid repeated database queries
+let _cachedSecret: string | null = null;
+let _secretFetched = false;
+
+/**
+ * Get the shared secret from environment variable or database.
+ * Caches the result to avoid repeated database queries.
+ */
+async function getSharedSecret(): Promise<string | null> {
+  // First check environment variable (takes precedence)
+  const envSecret = Deno.env.get('EXECUTOR_SHARED_SECRET');
+  if (envSecret) {
+    return envSecret;
+  }
+  
+  // Return cached database secret if already fetched
+  if (_secretFetched) {
+    return _cachedSecret;
+  }
+  
+  // Mark as fetched to avoid repeated DB calls
+  _secretFetched = true;
+  
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    
+    if (!supabaseUrl || !serviceRoleKey) {
+      logger.warn('Cannot fetch secret from database - missing SUPABASE_URL or SERVICE_ROLE_KEY');
+      return null;
+    }
+    
+    const supabase = createClient(supabaseUrl, serviceRoleKey);
+    
+    // Get encrypted secret from activity_settings
+    const { data: settings, error: settingsError } = await supabase
+      .from("activity_settings")
+      .select("executor_shared_secret_encrypted")
+      .maybeSingle();
+    
+    if (settingsError) {
+      logger.warn('Failed to fetch activity_settings: ' + settingsError.message);
+      return null;
+    }
+    
+    if (!settings?.executor_shared_secret_encrypted) {
+      logger.debug('HMAC secret not configured in database');
+      return null;
+    }
+    
+    // Get encryption key
+    const { data: encryptionKey, error: keyError } = await supabase.rpc("get_encryption_key");
+    if (keyError || !encryptionKey) {
+      logger.warn('Failed to get encryption key: ' + (keyError?.message || 'not configured'));
+      return null;
+    }
+    
+    // Decrypt the secret
+    const { data: decryptedSecret, error: decryptError } = await supabase.rpc("decrypt_password", {
+      encrypted: settings.executor_shared_secret_encrypted,
+      key: encryptionKey
+    });
+    
+    if (decryptError || !decryptedSecret) {
+      logger.warn('Failed to decrypt secret: ' + (decryptError?.message || 'decryption returned null'));
+      return null;
+    }
+    
+    _cachedSecret = decryptedSecret;
+    logger.debug('HMAC secret loaded from database');
+    
+    return _cachedSecret;
+  } catch (error) {
+    logger.warn('Exception fetching secret from database: ' + (error instanceof Error ? error.message : String(error)));
+    return null;
+  }
+}
 
 /**
  * Verify HMAC signature on incoming request from Job Executor
@@ -24,12 +103,12 @@ const MAX_AGE_SECONDS = 300; // 5 minutes - requests older than this are rejecte
  * @returns true if signature is valid and timestamp is fresh
  */
 export async function verifyExecutorRequest(req: Request, payload: unknown): Promise<boolean> {
-  const sharedSecret = Deno.env.get('EXECUTOR_SHARED_SECRET');
+  const sharedSecret = await getSharedSecret();
   
   // If no secret configured, allow requests (backward compatibility)
   // This enables gradual rollout - configure secret when ready
   if (!sharedSecret) {
-    logger.debug('HMAC verification skipped - EXECUTOR_SHARED_SECRET not configured');
+    logger.debug('HMAC verification skipped - no secret configured');
     return true;
   }
   
