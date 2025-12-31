@@ -16,41 +16,97 @@ import { logger } from './logger.ts';
 const MAX_AGE_SECONDS = 300; // 5 minutes - requests older than this are rejected
 
 /**
- * Verify HMAC signature on incoming request from Job Executor
- * 
- * @param req The incoming request (to extract signature headers)
- * @param payload The parsed JSON body to verify
- * @returns true if signature is valid and timestamp is fresh
+ * Result of dual authentication check
  */
-export async function verifyExecutorRequest(req: Request, payload: unknown): Promise<boolean> {
+export interface AuthResult {
+  authenticated: boolean;
+  method: 'hmac' | 'jwt' | 'none';
+  userId?: string;
+}
+
+/**
+ * Verify request using dual authentication: HMAC (for Job Executor) or JWT (for frontend)
+ * 
+ * Priority:
+ * 1. If HMAC headers present → verify HMAC signature
+ * 2. If JWT token present → verify user authentication
+ * 3. If no secret configured → allow (backward compatibility)
+ * 4. Otherwise → reject
+ * 
+ * @param req The incoming request
+ * @param payload The parsed JSON body
+ * @param supabaseClient Client with auth header for JWT verification
+ */
+export async function verifyRequestDualAuth(
+  req: Request, 
+  payload: unknown,
+  supabaseClient: any
+): Promise<AuthResult> {
   const sharedSecret = Deno.env.get('EXECUTOR_SHARED_SECRET');
   
-  // If no secret configured, allow requests (backward compatibility)
-  // This enables gradual rollout - configure secret when ready
-  if (!sharedSecret) {
-    logger.debug('HMAC verification skipped - EXECUTOR_SHARED_SECRET not configured');
-    return true;
-  }
-  
+  // Check for HMAC headers first (Job Executor path)
   const signature = req.headers.get('x-executor-signature');
   const timestamp = req.headers.get('x-executor-timestamp');
   
-  // If headers missing but secret is configured, reject
-  if (!signature || !timestamp) {
-    logger.security('HMAC verification failed - missing headers', false);
+  if (signature && timestamp) {
+    // HMAC auth attempt - verify the signature
+    const valid = await verifyHmacSignature(payload, signature, timestamp, sharedSecret);
+    if (valid) {
+      logger.security('Dual auth: HMAC verification', true);
+      return { authenticated: true, method: 'hmac' };
+    } else {
+      logger.security('Dual auth: HMAC verification failed', false);
+      return { authenticated: false, method: 'hmac' };
+    }
+  }
+  
+  // No HMAC headers - try JWT auth (frontend path)
+  const authHeader = req.headers.get('authorization');
+  if (authHeader?.startsWith('Bearer ')) {
+    try {
+      const { data: { user }, error } = await supabaseClient.auth.getUser();
+      if (user && !error) {
+        logger.security('Dual auth: JWT verification', true);
+        return { authenticated: true, method: 'jwt', userId: user.id };
+      }
+    } catch (e) {
+      logger.debug('JWT auth check failed');
+    }
+  }
+  
+  // Neither auth method succeeded
+  // If no secret is configured, allow for backward compatibility
+  if (!sharedSecret) {
+    logger.debug('Dual auth: No secret configured, allowing request');
+    return { authenticated: true, method: 'none' };
+  }
+  
+  // Secret is configured but no valid auth provided
+  logger.security('Dual auth: No valid authentication', false);
+  return { authenticated: false, method: 'none' };
+}
+
+/**
+ * Verify HMAC signature (internal helper)
+ */
+async function verifyHmacSignature(
+  payload: unknown, 
+  signature: string, 
+  timestamp: string,
+  sharedSecret: string | undefined
+): Promise<boolean> {
+  if (!sharedSecret) {
     return false;
   }
   
   // Check timestamp freshness (prevent replay attacks)
   const requestAge = Date.now() / 1000 - parseInt(timestamp, 10);
   if (isNaN(requestAge) || requestAge > MAX_AGE_SECONDS || requestAge < -30) {
-    // Allow 30 seconds clock skew for future timestamps
-    logger.security('HMAC verification failed - stale timestamp', false);
+    logger.debug('HMAC: stale timestamp');
     return false;
   }
   
   // Reconstruct the signed message
-  // IMPORTANT: Must match exactly how Job Executor signs it
   const message = sortedJsonStringify(payload) + timestamp;
   
   // Compute expected signature
@@ -73,14 +129,42 @@ export async function verifyExecutorRequest(req: Request, payload: unknown): Pro
     .map(b => b.toString(16).padStart(2, '0'))
     .join('');
   
-  // Timing-safe comparison
-  if (!timingSafeEqual(signature, expectedSignature)) {
-    logger.security('HMAC verification failed - invalid signature', false);
+  return timingSafeEqual(signature, expectedSignature);
+}
+
+/**
+ * Verify HMAC signature on incoming request from Job Executor (legacy function)
+ * 
+ * @deprecated Use verifyRequestDualAuth instead for dual auth support
+ * @param req The incoming request (to extract signature headers)
+ * @param payload The parsed JSON body to verify
+ * @returns true if signature is valid and timestamp is fresh
+ */
+export async function verifyExecutorRequest(req: Request, payload: unknown): Promise<boolean> {
+  const sharedSecret = Deno.env.get('EXECUTOR_SHARED_SECRET');
+  
+  // If no secret configured, allow requests (backward compatibility)
+  if (!sharedSecret) {
+    logger.debug('HMAC verification skipped - EXECUTOR_SHARED_SECRET not configured');
+    return true;
+  }
+  
+  const signature = req.headers.get('x-executor-signature');
+  const timestamp = req.headers.get('x-executor-timestamp');
+  
+  // If headers missing but secret is configured, reject
+  if (!signature || !timestamp) {
+    logger.security('HMAC verification failed - missing headers', false);
     return false;
   }
   
-  logger.security('HMAC verification', true);
-  return true;
+  const valid = await verifyHmacSignature(payload, signature, timestamp, sharedSecret);
+  if (valid) {
+    logger.security('HMAC verification', true);
+  } else {
+    logger.security('HMAC verification failed - invalid signature', false);
+  }
+  return valid;
 }
 
 /**
