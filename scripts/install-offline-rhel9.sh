@@ -702,6 +702,33 @@ EOF
   echo_info "Admin user created"
 fi
 
+# Prompt for EXECUTOR_SHARED_SECRET (optional for offline installs)
+echo ""
+echo_step "EXECUTOR_SHARED_SECRET Configuration (Optional)"
+echo "------------------------------------------------"
+echo ""
+echo "The EXECUTOR_SHARED_SECRET is used for HMAC authentication between"
+echo "the Job Executor and the backend. For air-gapped deployments, you can"
+echo "generate this secret from the Dell Server Manager GUI after installation."
+echo ""
+echo "To get your EXECUTOR_SHARED_SECRET (after first login):"
+echo "  1. Open Dell Server Manager in your browser"
+echo "  2. Go to Settings → Infrastructure → Job Executor"
+echo "  3. Click 'Generate' to create a new secret"
+echo "  4. Click 'Reveal' and copy the secret"
+echo ""
+read -p "Do you have an EXECUTOR_SHARED_SECRET to enter now? (y/N): " HAVE_SECRET
+
+if [ "$HAVE_SECRET" = "y" ] || [ "$HAVE_SECRET" = "Y" ]; then
+    read -sp "Enter your EXECUTOR_SHARED_SECRET: " EXECUTOR_SHARED_SECRET
+    echo ""
+    echo_info "EXECUTOR_SHARED_SECRET configured"
+else
+    EXECUTOR_SHARED_SECRET=""
+    echo_info "Skipping EXECUTOR_SHARED_SECRET - configure later in Settings"
+fi
+echo ""
+
 # Install application
 echo_step "Installing Dell Server Manager application..."
 mkdir -p "$INSTALL_DIR"
@@ -799,6 +826,7 @@ Restart=always
 RestartSec=10
 Environment=SUPABASE_URL=http://${SERVER_IP}:8000
 Environment=SUPABASE_SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY
+Environment=EXECUTOR_SHARED_SECRET=$EXECUTOR_SHARED_SECRET
 Environment=API_SERVER_SSL_ENABLED=false
 Environment=API_SERVER_SSL_CERT=/etc/idrac-manager/ssl/server.crt
 Environment=API_SERVER_SSL_KEY=/etc/idrac-manager/ssl/server.key

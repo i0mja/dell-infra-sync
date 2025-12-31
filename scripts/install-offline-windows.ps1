@@ -225,6 +225,32 @@ docker exec -i supabase-db psql -U postgres -d postgres -c "UPDATE public.user_r
 
 Write-Host "✓ Admin user created" -ForegroundColor Green
 
+# Prompt for EXECUTOR_SHARED_SECRET (optional)
+Write-Host ""
+Write-Host "EXECUTOR_SHARED_SECRET Configuration (Optional)" -ForegroundColor Yellow
+Write-Host "------------------------------------------------" -ForegroundColor Gray
+Write-Host ""
+Write-Host "The EXECUTOR_SHARED_SECRET is used for HMAC authentication between" -ForegroundColor White
+Write-Host "the Job Executor and the backend. For air-gapped deployments, you can" -ForegroundColor White
+Write-Host "generate this secret from the Dell Server Manager GUI after installation." -ForegroundColor White
+Write-Host ""
+Write-Host "To get your EXECUTOR_SHARED_SECRET (after first login):" -ForegroundColor White
+Write-Host "  1. Open Dell Server Manager in your browser" -ForegroundColor White
+Write-Host "  2. Go to Settings → Infrastructure → Job Executor" -ForegroundColor White
+Write-Host "  3. Click 'Generate' to create a new secret" -ForegroundColor White
+Write-Host "  4. Click 'Reveal' and copy the secret" -ForegroundColor White
+Write-Host ""
+$HaveSecret = Read-Host "Do you have an EXECUTOR_SHARED_SECRET to enter now? (y/N)"
+
+if ($HaveSecret -eq "y" -or $HaveSecret -eq "Y") {
+    $ExecutorSharedSecret = Read-Host "Enter your EXECUTOR_SHARED_SECRET"
+    Write-Host "✓ EXECUTOR_SHARED_SECRET configured" -ForegroundColor Green
+} else {
+    $ExecutorSharedSecret = ""
+    Write-Host "Skipping EXECUTOR_SHARED_SECRET - configure later in Settings" -ForegroundColor Yellow
+}
+Write-Host ""
+
 # Install application
 Write-Host "Installing Dell Server Manager application..." -ForegroundColor Yellow
 Copy-Item -Path "$AppDir\*" -Destination $InstallDir -Recurse -Force
@@ -299,7 +325,7 @@ if ($PythonPath) {
     nssm set DellServerManagerJobExecutor Start SERVICE_AUTO_START
     
     # Set environment variables (including PYTHONUTF8=1 for Unicode support)
-    nssm set DellServerManagerJobExecutor AppEnvironmentExtra "SERVICE_ROLE_KEY=$ServiceRoleKey" "DSM_URL=$SupabaseUrl" "PYTHONUTF8=1"
+    nssm set DellServerManagerJobExecutor AppEnvironmentExtra "SERVICE_ROLE_KEY=$ServiceRoleKey" "EXECUTOR_SHARED_SECRET=$ExecutorSharedSecret" "DSM_URL=$SupabaseUrl" "PYTHONUTF8=1"
     
     # Log files
     New-Item -ItemType Directory -Path "$InstallDir\logs" -Force | Out-Null

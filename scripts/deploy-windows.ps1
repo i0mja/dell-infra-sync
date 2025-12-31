@@ -681,6 +681,31 @@ if ($DeployMode -eq "1") {
         }
     } while ($true)
     
+    # Prompt for EXECUTOR_SHARED_SECRET
+    Write-Host ""
+    Write-Host "[CLOUD] EXECUTOR_SHARED_SECRET Configuration (Optional)" -ForegroundColor Cyan
+    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "The EXECUTOR_SHARED_SECRET is used for HMAC authentication between" -ForegroundColor White
+    Write-Host "the Job Executor and the backend. You can generate this secret from" -ForegroundColor White
+    Write-Host "the Dell Server Manager GUI after installation." -ForegroundColor White
+    Write-Host ""
+    Write-Host "To get your EXECUTOR_SHARED_SECRET (after first login):" -ForegroundColor White
+    Write-Host "  1. Open Dell Server Manager in your browser" -ForegroundColor White
+    Write-Host "  2. Go to Settings → Infrastructure → Job Executor" -ForegroundColor White
+    Write-Host "  3. Click 'Generate' to create a new secret" -ForegroundColor White
+    Write-Host "  4. Click 'Reveal' and copy the secret" -ForegroundColor White
+    Write-Host ""
+    $HaveSecret = Read-Host "Do you have an EXECUTOR_SHARED_SECRET to enter now? (y/N)"
+    
+    if ($HaveSecret -eq "y" -or $HaveSecret -eq "Y") {
+        $ExecutorSharedSecret = Read-Host "Enter your EXECUTOR_SHARED_SECRET"
+        Write-Host "[OK] EXECUTOR_SHARED_SECRET configured" -ForegroundColor Green
+    } else {
+        $ExecutorSharedSecret = ""
+        Write-Host "[INFO] Skipping EXECUTOR_SHARED_SECRET - configure later in Settings" -ForegroundColor Yellow
+    }
+    
     $ServerIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.InterfaceAlias -notlike "*Loopback*"} | Select-Object -First 1).IPAddress
     
     Write-Host ""
@@ -775,9 +800,9 @@ $SslCert = "$SslDir\server.crt"
 $SslKey = "$SslDir\server.key"
 
 if ($DeployMode -eq "1") {
-    nssm set DellServerManagerJobExecutor AppEnvironmentExtra "SERVICE_ROLE_KEY=$ServiceRoleKey" "DSM_URL=http://127.0.0.1:54321" "API_SERVER_SSL_ENABLED=false" "API_SERVER_SSL_CERT=$SslCert" "API_SERVER_SSL_KEY=$SslKey"
+    nssm set DellServerManagerJobExecutor AppEnvironmentExtra "SERVICE_ROLE_KEY=$ServiceRoleKey" "EXECUTOR_SHARED_SECRET=$ExecutorSharedSecret" "DSM_URL=http://127.0.0.1:54321" "API_SERVER_SSL_ENABLED=false" "API_SERVER_SSL_CERT=$SslCert" "API_SERVER_SSL_KEY=$SslKey"
 } else {
-    nssm set DellServerManagerJobExecutor AppEnvironmentExtra "SERVICE_ROLE_KEY=$ServiceRoleKey" "DSM_URL=$SupabaseUrl" "API_SERVER_SSL_ENABLED=false" "API_SERVER_SSL_CERT=$SslCert" "API_SERVER_SSL_KEY=$SslKey"
+    nssm set DellServerManagerJobExecutor AppEnvironmentExtra "SERVICE_ROLE_KEY=$ServiceRoleKey" "EXECUTOR_SHARED_SECRET=$ExecutorSharedSecret" "DSM_URL=$SupabaseUrl" "API_SERVER_SSL_ENABLED=false" "API_SERVER_SSL_CERT=$SslCert" "API_SERVER_SSL_KEY=$SslKey"
 }
 
 # Log files
