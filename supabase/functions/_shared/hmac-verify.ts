@@ -7,13 +7,18 @@
  * - Requests cannot be replayed (timestamp freshness check)
  * - Payloads cannot be tampered with (signature covers entire payload)
  * 
- * The shared secret is configured via environment variable EXECUTOR_SHARED_SECRET.
- * Generate and copy this secret from Settings > System > Executor Authentication.
+ * The shared secret is read from the database (activity_settings.executor_shared_secret_encrypted)
+ * and decrypted at runtime, ensuring a single source of truth.
  */
 
 import { logger } from './logger.ts';
 
 const MAX_AGE_SECONDS = 300; // 5 minutes - requests older than this are rejected
+
+// Cache the secret for 60 seconds to avoid repeated database lookups
+let cachedSecret: string | null = null;
+let cacheExpiry: number = 0;
+const CACHE_TTL_MS = 60000; // 60 seconds
 
 /**
  * Result of dual authentication check
@@ -22,6 +27,79 @@ export interface AuthResult {
   authenticated: boolean;
   method: 'hmac' | 'jwt' | 'none';
   userId?: string;
+}
+
+/**
+ * Fetch the executor shared secret from the database
+ * Uses caching to avoid repeated database lookups
+ */
+async function getSharedSecretFromDatabase(supabaseClient: any): Promise<string | null> {
+  const now = Date.now();
+  
+  // Return cached value if still valid
+  if (cachedSecret && now < cacheExpiry) {
+    console.log(`[HMAC-DEBUG] Using cached secret (prefix: ${cachedSecret.substring(0, 4)}...)`);
+    return cachedSecret;
+  }
+  
+  try {
+    // First try environment variable (for backward compatibility)
+    const envSecret = Deno.env.get('EXECUTOR_SHARED_SECRET');
+    if (envSecret) {
+      console.log(`[HMAC-DEBUG] Using secret from environment variable (prefix: ${envSecret.substring(0, 4)}...)`);
+      cachedSecret = envSecret;
+      cacheExpiry = now + CACHE_TTL_MS;
+      return envSecret;
+    }
+    
+    console.log('[HMAC-DEBUG] Fetching secret from database...');
+    
+    // Get the encrypted secret from activity_settings
+    const { data: settings, error: settingsError } = await supabaseClient
+      .from('activity_settings')
+      .select('executor_shared_secret_encrypted')
+      .maybeSingle();
+    
+    if (settingsError) {
+      console.log(`[HMAC-DEBUG] Error fetching settings: ${settingsError.message}`);
+      return null;
+    }
+    
+    if (!settings?.executor_shared_secret_encrypted) {
+      console.log('[HMAC-DEBUG] No encrypted secret found in database');
+      return null;
+    }
+    
+    // Get the encryption key
+    const { data: encryptionKey, error: keyError } = await supabaseClient.rpc('get_encryption_key');
+    
+    if (keyError || !encryptionKey) {
+      console.log(`[HMAC-DEBUG] Error fetching encryption key: ${keyError?.message || 'no key'}`);
+      return null;
+    }
+    
+    // Decrypt the secret
+    const { data: decryptedSecret, error: decryptError } = await supabaseClient.rpc('decrypt_password', {
+      encrypted: settings.executor_shared_secret_encrypted,
+      key: encryptionKey
+    });
+    
+    if (decryptError || !decryptedSecret) {
+      console.log(`[HMAC-DEBUG] Error decrypting secret: ${decryptError?.message || 'no result'}`);
+      return null;
+    }
+    
+    console.log(`[HMAC-DEBUG] Successfully decrypted secret from database (prefix: ${decryptedSecret.substring(0, 4)}...)`);
+    
+    // Cache the decrypted secret
+    cachedSecret = decryptedSecret;
+    cacheExpiry = now + CACHE_TTL_MS;
+    
+    return decryptedSecret;
+  } catch (err) {
+    console.log(`[HMAC-DEBUG] Exception fetching secret: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
 }
 
 /**
@@ -42,19 +120,20 @@ export async function verifyRequestDualAuth(
   payload: unknown,
   supabaseClient: any
 ): Promise<AuthResult> {
-  const sharedSecret = Deno.env.get('EXECUTOR_SHARED_SECRET');
-  
   // Debug: Log what auth headers we received
   const signature = req.headers.get('x-executor-signature');
   const timestamp = req.headers.get('x-executor-timestamp');
   const authHeader = req.headers.get('authorization');
   
-  // Use console.log for auth debugging so logs are visible in production
-  console.log(`[HMAC-DEBUG] Auth check: HMAC headers=${!!signature && !!timestamp}, JWT=${!!authHeader?.startsWith('Bearer ')}, secret=${sharedSecret ? `configured (${sharedSecret.substring(0, 4)}...)` : 'NOT SET'}`);
-  
   // Check for HMAC headers first (Job Executor path)
   if (signature && timestamp) {
     console.log(`[HMAC-DEBUG] HMAC attempt: sig prefix=${signature.substring(0, 8)}..., ts=${timestamp}`);
+    
+    // Get the shared secret from database (or env as fallback)
+    const sharedSecret = await getSharedSecretFromDatabase(supabaseClient);
+    
+    console.log(`[HMAC-DEBUG] Auth check: HMAC headers=true, secret=${sharedSecret ? `configured (${sharedSecret.substring(0, 4)}...)` : 'NOT SET'}`);
+    
     // HMAC auth attempt - verify the signature
     const valid = await verifyHmacSignature(payload, signature, timestamp, sharedSecret);
     if (valid) {
@@ -87,7 +166,8 @@ export async function verifyRequestDualAuth(
   }
   
   // Neither auth method succeeded
-  // If no secret is configured, allow for backward compatibility
+  // Check if secret is configured
+  const sharedSecret = await getSharedSecretFromDatabase(supabaseClient);
   if (!sharedSecret) {
     logger.debug('Dual auth: No secret configured, allowing request (backward compat)');
     return { authenticated: true, method: 'none' };
@@ -106,10 +186,10 @@ async function verifyHmacSignature(
   payload: unknown, 
   signature: string, 
   timestamp: string,
-  sharedSecret: string | undefined
+  sharedSecret: string | null
 ): Promise<boolean> {
   if (!sharedSecret) {
-    console.log('[HMAC-DEBUG] FAIL: No shared secret configured in edge function');
+    console.log('[HMAC-DEBUG] FAIL: No shared secret available');
     return false;
   }
   
@@ -169,14 +249,26 @@ async function verifyHmacSignature(
  * @deprecated Use verifyRequestDualAuth instead for dual auth support
  * @param req The incoming request (to extract signature headers)
  * @param payload The parsed JSON body to verify
+ * @param supabaseClient Optional client for database secret lookup
  * @returns true if signature is valid and timestamp is fresh
  */
-export async function verifyExecutorRequest(req: Request, payload: unknown): Promise<boolean> {
-  const sharedSecret = Deno.env.get('EXECUTOR_SHARED_SECRET');
+export async function verifyExecutorRequest(
+  req: Request, 
+  payload: unknown,
+  supabaseClient?: any
+): Promise<boolean> {
+  // Get shared secret - prefer database, fall back to env
+  let sharedSecret: string | null = null;
+  
+  if (supabaseClient) {
+    sharedSecret = await getSharedSecretFromDatabase(supabaseClient);
+  } else {
+    sharedSecret = Deno.env.get('EXECUTOR_SHARED_SECRET') || null;
+  }
   
   // If no secret configured, allow requests (backward compatibility)
   if (!sharedSecret) {
-    logger.debug('HMAC verification skipped - EXECUTOR_SHARED_SECRET not configured');
+    logger.debug('HMAC verification skipped - no secret configured');
     return true;
   }
   
@@ -196,6 +288,14 @@ export async function verifyExecutorRequest(req: Request, payload: unknown): Pro
     logger.security('HMAC verification failed - invalid signature', false);
   }
   return valid;
+}
+
+/**
+ * Clear the cached secret (call when secret is regenerated)
+ */
+export function clearSecretCache(): void {
+  cachedSecret = null;
+  cacheExpiry = 0;
 }
 
 /**
