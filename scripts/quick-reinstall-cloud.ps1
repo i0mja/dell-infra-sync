@@ -40,6 +40,7 @@ $ErrorActionPreference = "Stop"
 
 # Constants
 $KeyCachePath = "$env:APPDATA\DellServerManager\service-role-key.txt"
+$ExecutorSecretCachePath = "$env:APPDATA\DellServerManager\executor-shared-secret.txt"
 $SupabaseUrl = "https://ylwkczjqvymshktuuqkx.supabase.co"
 $AnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlsd2tjempxdnltc2hrdHV1cWt4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjIxODQ0OTMsImV4cCI6MjA3Nzc2MDQ5M30.hIkDV2AAos-Z9hvQLfZmiQ7UvGCpGqwG5kzd1VBRx0w"
 $AppDir = "C:\dell-server-manager"
@@ -134,6 +135,38 @@ function Save-ServiceRoleKey {
     Write-Host "✓ SERVICE_ROLE_KEY cached securely" -ForegroundColor Green
 }
 
+# Function: Get cached EXECUTOR_SHARED_SECRET
+function Get-CachedExecutorSecret {
+    if (Test-Path $ExecutorSecretCachePath) {
+        $secret = Get-Content $ExecutorSecretCachePath -Raw -ErrorAction SilentlyContinue
+        return $secret.Trim()
+    }
+    return $null
+}
+
+# Function: Save EXECUTOR_SHARED_SECRET securely
+function Save-ExecutorSecret {
+    param([string]$Secret)
+    
+    $cacheDir = Split-Path $ExecutorSecretCachePath -Parent
+    if (-not (Test-Path $cacheDir)) {
+        New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
+    }
+    
+    $Secret | Set-Content $ExecutorSecretCachePath -NoNewline
+    
+    # Set permissions: current user only
+    $acl = Get-Acl $ExecutorSecretCachePath
+    $acl.SetAccessRuleProtection($true, $false)
+    $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        $env:USERNAME, "FullControl", "Allow"
+    )
+    $acl.SetAccessRule($accessRule)
+    Set-Acl $ExecutorSecretCachePath $acl
+    
+    Write-Host "✓ EXECUTOR_SHARED_SECRET cached securely" -ForegroundColor Green
+}
+
 # Function: Validate SERVICE_ROLE_KEY
 function Test-ServiceRoleKey {
     param([string]$Key)
@@ -220,7 +253,10 @@ function Invoke-Cleanup {
 
 # Function: Reinstall application
 function Invoke-Reinstall {
-    param([string]$ServiceRoleKey)
+    param(
+        [string]$ServiceRoleKey,
+        [string]$ExecutorSharedSecret = ""
+    )
     
     Write-Host "`n[REINSTALL PHASE]" -ForegroundColor Cyan
     
@@ -356,7 +392,7 @@ VITE_SUPABASE_PUBLISHABLE_KEY=$AnonKey
     nssm set DellServerManagerJobExecutor DisplayName "Dell Server Manager Job Executor" | Out-Null
     nssm set DellServerManagerJobExecutor Description "Job executor for Dell Server Manager" | Out-Null
     nssm set DellServerManagerJobExecutor Start SERVICE_AUTO_START | Out-Null
-    nssm set DellServerManagerJobExecutor AppEnvironmentExtra "DSM_URL=$SupabaseUrl" "SERVICE_ROLE_KEY=$ServiceRoleKey" "SUPABASE_URL=$SupabaseUrl" | Out-Null
+    nssm set DellServerManagerJobExecutor AppEnvironmentExtra "DSM_URL=$SupabaseUrl" "SERVICE_ROLE_KEY=$ServiceRoleKey" "EXECUTOR_SHARED_SECRET=$ExecutorSharedSecret" "SUPABASE_URL=$SupabaseUrl" | Out-Null
     Write-Host "  ✓ DellServerManagerJobExecutor service installed" -ForegroundColor Green
     
     # Configure firewall
@@ -449,11 +485,50 @@ try {
         Save-ServiceRoleKey $serviceRoleKey
     }
     
+    # Handle EXECUTOR_SHARED_SECRET
+    $executorSecret = $null
+    
+    if (-not $NewKey) {
+        $cachedSecret = Get-CachedExecutorSecret
+        if ($cachedSecret) {
+            $maskedSecret = $cachedSecret.Substring(0, [Math]::Min(10, $cachedSecret.Length)) + "..."
+            Write-Host "Found cached EXECUTOR_SHARED_SECRET: $maskedSecret" -ForegroundColor Green
+            Write-Host ""
+            $choice = Read-Host "Use cached secret? (y=yes, n=skip, new=enter new secret)"
+            
+            switch ($choice.ToLower()) {
+                "y" { $executorSecret = $cachedSecret }
+                "yes" { $executorSecret = $cachedSecret }
+                "new" { $executorSecret = $null }
+                "n" { $executorSecret = "" }
+                "no" { $executorSecret = "" }
+                default { $executorSecret = $cachedSecret }
+            }
+        }
+    }
+    
+    # Prompt for secret if not set (and not explicitly skipped)
+    if ($null -eq $executorSecret) {
+        Write-Host ""
+        Write-Host "EXECUTOR_SHARED_SECRET Configuration (Optional)" -ForegroundColor Yellow
+        Write-Host "(Find it in Dell Server Manager: Settings -> Infrastructure -> Job Executor -> Reveal)" -ForegroundColor Gray
+        Write-Host "Press Enter to skip if you don't have one yet." -ForegroundColor Gray
+        $executorSecret = Read-Host "Enter EXECUTOR_SHARED_SECRET"
+        
+        if ($executorSecret) {
+            # Save secret
+            Save-ExecutorSecret $executorSecret
+        } else {
+            Write-Host "Skipping EXECUTOR_SHARED_SECRET - configure later in Settings" -ForegroundColor Yellow
+            $executorSecret = ""
+        }
+    }
+    
     # Execute cleanup
     Invoke-Cleanup -DoBackup:$doBackup
     
     # Execute reinstall
-    Invoke-Reinstall $serviceRoleKey
+    Invoke-Reinstall $serviceRoleKey $executorSecret
     
     # Success summary
     Write-Host "`n===============================================" -ForegroundColor Green

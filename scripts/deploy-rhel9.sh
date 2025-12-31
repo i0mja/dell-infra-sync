@@ -1234,6 +1234,32 @@ else
         fi
     done
     
+    # Prompt for EXECUTOR_SHARED_SECRET
+    echo ""
+    echo "📋 EXECUTOR_SHARED_SECRET Configuration (Optional)"
+    echo "------------------------------------------------"
+    echo ""
+    echo "The EXECUTOR_SHARED_SECRET is used for HMAC authentication between"
+    echo "the Job Executor and the backend. You can generate this secret from"
+    echo "the Dell Server Manager GUI after installation."
+    echo ""
+    echo "To get your EXECUTOR_SHARED_SECRET (after first login):"
+    echo "  1. Open Dell Server Manager in your browser"
+    echo "  2. Go to Settings → Infrastructure → Job Executor"
+    echo "  3. Click 'Generate' to create a new secret"
+    echo "  4. Click 'Reveal' and copy the secret"
+    echo ""
+    read -p "Do you have an EXECUTOR_SHARED_SECRET to enter now? (y/N): " HAVE_SECRET
+    
+    if [ "$HAVE_SECRET" = "y" ] || [ "$HAVE_SECRET" = "Y" ]; then
+        read -sp "Enter your EXECUTOR_SHARED_SECRET: " EXECUTOR_SHARED_SECRET
+        echo ""
+        echo "✅ EXECUTOR_SHARED_SECRET configured"
+    else
+        EXECUTOR_SHARED_SECRET=""
+        echo "ℹ️  Skipping EXECUTOR_SHARED_SECRET - configure later in Settings"
+    fi
+    
     SERVER_IP=$(hostname -I | awk '{print $1}')
     
     echo ""
@@ -1346,6 +1372,7 @@ Type=simple
 User=root
 WorkingDirectory=$(pwd)
 Environment="SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY"
+Environment="EXECUTOR_SHARED_SECRET=$EXECUTOR_SHARED_SECRET"
 Environment="DSM_URL=$DSM_URL"
 Environment="API_SERVER_SSL_ENABLED=false"
 Environment="API_SERVER_SSL_CERT=/etc/idrac-manager/ssl/server.crt"
