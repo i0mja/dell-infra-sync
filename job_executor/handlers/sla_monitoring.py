@@ -40,6 +40,9 @@ class SLAMonitoringHandler(BaseHandler):
         self.update_job_status(job_id, 'running', started_at=utc_now_iso())
         
         try:
+            # Refresh protected VM datastore info from vCenter
+            self._refresh_protected_vm_datastores()
+            
             # Get all enabled, non-paused protection groups
             groups = self._get_eligible_protection_groups()
             
@@ -306,6 +309,107 @@ class SLAMonitoringHandler(BaseHandler):
                 
         except Exception as e:
             self.executor.log(f"[SLA] Error scheduling next {job_type}: {e}", "ERROR")
+    
+    def _refresh_protected_vm_datastores(self):
+        """
+        Sync protected_vms.current_datastore with actual vCenter datastore info.
+        
+        This ensures the UI shows the correct datastore even if VMs are moved
+        directly in vCenter outside of the platform.
+        """
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+            }
+            
+            # Get all protected VMs
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/protected_vms",
+                params={'select': 'id,vm_id,vm_name,current_datastore'},
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=30
+            )
+            
+            if not response.ok:
+                return
+            
+            protected_vms = response.json() or []
+            updated_count = 0
+            linked_count = 0
+            
+            for pvm in protected_vms:
+                vm_id = pvm.get('vm_id')
+                vm_name = pvm.get('vm_name')
+                current_ds = pvm.get('current_datastore')
+                
+                # If no vm_id, try to find and link by name
+                if not vm_id and vm_name:
+                    vm_response = requests.get(
+                        f"{DSM_URL}/rest/v1/vcenter_vms",
+                        params={
+                            'name': f'eq.{vm_name}',
+                            'select': 'id'
+                        },
+                        headers=headers,
+                        verify=VERIFY_SSL,
+                        timeout=10
+                    )
+                    if vm_response.ok:
+                        vms = vm_response.json()
+                        if vms and len(vms) == 1:
+                            vm_id = vms[0]['id']
+                            # Link the vm_id
+                            requests.patch(
+                                f"{DSM_URL}/rest/v1/protected_vms",
+                                params={'id': f"eq.{pvm['id']}"},
+                                json={'vm_id': vm_id, 'updated_at': utc_now_iso()},
+                                headers={**headers, 'Content-Type': 'application/json', 'Prefer': 'return=minimal'},
+                                verify=VERIFY_SSL,
+                                timeout=10
+                            )
+                            linked_count += 1
+                
+                if not vm_id:
+                    continue
+                
+                # Get primary datastore from junction table
+                ds_response = requests.get(
+                    f"{DSM_URL}/rest/v1/vcenter_datastore_vms",
+                    params={
+                        'vm_id': f'eq.{vm_id}',
+                        'is_primary_datastore': 'eq.true',
+                        'select': 'datastore_id,vcenter_datastores(name)'
+                    },
+                    headers=headers,
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
+                
+                if ds_response.ok:
+                    ds_data = ds_response.json()
+                    if ds_data and len(ds_data) > 0:
+                        vcenter_ds = ds_data[0].get('vcenter_datastores')
+                        if vcenter_ds:
+                            actual_ds = vcenter_ds.get('name')
+                            if actual_ds and actual_ds != current_ds:
+                                # Update protected_vm with correct datastore
+                                requests.patch(
+                                    f"{DSM_URL}/rest/v1/protected_vms",
+                                    params={'id': f"eq.{pvm['id']}"},
+                                    json={'current_datastore': actual_ds, 'updated_at': utc_now_iso()},
+                                    headers={**headers, 'Content-Type': 'application/json', 'Prefer': 'return=minimal'},
+                                    verify=VERIFY_SSL,
+                                    timeout=10
+                                )
+                                updated_count += 1
+            
+            if updated_count > 0 or linked_count > 0:
+                self.executor.log(f"[SLA] Refreshed datastore info: {updated_count} updated, {linked_count} linked")
+                
+        except Exception as e:
+            self.executor.log(f"[SLA] Error refreshing protected VM datastores: {e}", "WARN")
     
     def _get_eligible_protection_groups(self) -> List[Dict]:
         """Get protection groups that are enabled, not paused, and have a schedule"""
