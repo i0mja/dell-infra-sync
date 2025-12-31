@@ -121,11 +121,19 @@ export function useJobsWithProgress() {
             return typeof details.progress_percent === 'number' ? details.progress_percent : null;
           }
           
-          // vCenter sync: vms_processed / vms_total
-          if ('vms_total' in details && 'vms_processed' in details && 
-              typeof details.vms_total === 'number' && typeof details.vms_processed === 'number' && 
-              details.vms_total > 0) {
-            return Math.round((details.vms_processed / details.vms_total) * 100);
+          // vCenter sync: use sync_phase for progress (no vms_total/vms_processed from backend)
+          if (job.job_type === 'vcenter_sync' && typeof details.sync_phase === 'number') {
+            const syncPhase = details.sync_phase as number;
+            const totalVcenters = (typeof details.total_vcenters === 'number' ? details.total_vcenters : 1);
+            const currentVcenterIndex = (typeof details.current_vcenter_index === 'number' ? details.current_vcenter_index : 0);
+            
+            // Progress: (completed vCenters + current phase progress) / total
+            const phaseProgress = (syncPhase / 10) * 100; // 10 phases total
+            const perVcenterWeight = 100 / totalVcenters;
+            return Math.min(100, Math.round(
+              currentVcenterIndex * perVcenterWeight + 
+              (phaseProgress / 100) * perVcenterWeight
+            ));
           }
           
           // Discovery scan: servers_scanned / total_ips

@@ -13,7 +13,7 @@ export interface JobProgress {
   details?: Record<string, any>;
 }
 
-export function useJobProgress(jobId: string | null, enabled: boolean = true, jobStatus?: string) {
+export function useJobProgress(jobId: string | null, enabled: boolean = true, jobStatus?: string, jobType?: string) {
   const { session } = useAuth();
   
   // Reduce polling frequency for pending jobs - they only change when executor picks them up
@@ -24,16 +24,50 @@ export function useJobProgress(jobId: string | null, enabled: boolean = true, jo
     queryFn: async () => {
       if (!jobId) return null;
       
-      // Fetch job details for current_step
+      // Fetch job details and type
       const { data: job, error: jobError } = await supabase
         .from('jobs')
-        .select('details, started_at')
+        .select('details, started_at, job_type')
         .eq('id', jobId)
         .single();
       
       if (jobError) throw jobError;
       
-      // Fetch task progress
+      const currentJobType = jobType || job?.job_type;
+      
+      // For vcenter_sync jobs, use simplified progress calculation
+      // Skip job_tasks and workflow_executions queries - they're always empty for vcenter_sync
+      if (currentJobType === 'vcenter_sync') {
+        const details = job?.details as Record<string, any> | null;
+        const syncPhase = typeof details?.sync_phase === 'number' ? details.sync_phase : 0;
+        const totalVcenters = details?.total_vcenters ?? 1;
+        const currentVcenterIndex = details?.current_vcenter_index ?? 0;
+        
+        // Progress: (completed vCenters + current phase progress) / total
+        const phaseProgress = (syncPhase / 10) * 100; // 10 phases total
+        const perVcenterWeight = 100 / totalVcenters;
+        const progressPercent = Math.min(100, Math.round(
+          currentVcenterIndex * perVcenterWeight + 
+          (phaseProgress / 100) * perVcenterWeight
+        ));
+        
+        let elapsedMs: number | undefined;
+        if (job?.started_at) {
+          elapsedMs = Date.now() - new Date(job.started_at).getTime();
+        }
+        
+        return {
+          totalTasks: 0,
+          completedTasks: 0,
+          runningTasks: 0,
+          currentStep: details?.current_step,
+          progressPercent,
+          elapsedMs,
+          details: details as Record<string, any> | undefined,
+        };
+      }
+      
+      // For other job types, fetch task progress
       const { data: tasks, error: tasksError } = await supabase
         .from('job_tasks')
         .select('status, progress')

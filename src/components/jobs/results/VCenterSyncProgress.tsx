@@ -46,10 +46,41 @@ export const VCenterSyncProgress = ({ details, currentStep }: VCenterSyncProgres
   // Monotonic phase tracking - never go backwards
   const highestPhaseRef = useRef<number>(-1);
   
-  // Parse current step to determine which phase we're in (fallback)
-  const parsePhaseFromStep = (): number => {
-    if (!currentStep) return -1;
+  /**
+   * Map backend sync_phase (0-9) to UI phase index (0-5)
+   * Backend phases:
+   *   0-1: Connecting/Initializing
+   *   2: Clusters
+   *   3: Hosts  
+   *   4: Datastores
+   *   5: Networks
+   *   6-7: VMs
+   *   8: Alarms
+   *   9+: Finishing
+   * 
+   * UI phases: Clusters(0), Hosts(1), Datastores(2), Networks(3), VMs(4), Alarms(5)
+   */
+  const mapSyncPhaseToUiPhase = (syncPhase: number): number => {
+    if (syncPhase <= 1) return -1; // Still connecting
+    if (syncPhase === 2) return 0; // Clusters
+    if (syncPhase === 3) return 1; // Hosts
+    if (syncPhase === 4) return 2; // Datastores
+    if (syncPhase === 5) return 3; // Networks
+    if (syncPhase >= 6 && syncPhase <= 7) return 4; // VMs
+    if (syncPhase === 8) return 5; // Alarms
+    if (syncPhase >= 9) return SYNC_PHASES.length; // Complete
+    return -1;
+  };
+
+  // Get current phase index from backend sync_phase
+  const getCurrentPhaseIndex = (): number => {
+    // Use explicit sync_phase from backend
+    if (typeof details?.sync_phase === 'number') {
+      return mapSyncPhaseToUiPhase(details.sync_phase);
+    }
     
+    // Fallback: parse from current_step text
+    if (!currentStep) return -1;
     const stepLower = currentStep.toLowerCase();
     
     if (stepLower.includes('cluster')) return 0;
@@ -58,22 +89,9 @@ export const VCenterSyncProgress = ({ details, currentStep }: VCenterSyncProgres
     if (stepLower.includes('network')) return 3;
     if (stepLower.includes('vm') || stepLower.includes('virtual machine')) return 4;
     if (stepLower.includes('alarm')) return 5;
-    
-    // Check for completion
     if (stepLower.includes('complete') || stepLower.includes('finish')) return SYNC_PHASES.length;
     
     return -1;
-  };
-
-  // Get current phase index - prefer explicit sync_phase over keyword parsing
-  const getCurrentPhaseIndex = (): number => {
-    // Prefer explicit sync_phase from backend (0-5)
-    if (typeof details?.sync_phase === 'number') {
-      return details.sync_phase;
-    }
-    
-    // Fallback to keyword parsing
-    return parsePhaseFromStep();
   };
 
   const rawPhaseIndex = getCurrentPhaseIndex();
