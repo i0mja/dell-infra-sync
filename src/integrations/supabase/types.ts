@@ -4897,6 +4897,13 @@ export type Database = {
         Returns: string
       }
       get_encryption_key: { Args: never; Returns: string }
+      get_idm_auth_mode: {
+        Args: never
+        Returns: {
+          auth_mode: string
+          session_timeout_minutes: number
+        }[]
+      }
       get_user_role: {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["app_role"]

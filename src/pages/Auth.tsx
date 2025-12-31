@@ -59,16 +59,17 @@ const Auth = () => {
 
   const loadIdmSettings = async () => {
     try {
-      const { data, error } = await supabase
-        .from('idm_settings')
-        .select('auth_mode')
-        .maybeSingle();
+      // Use the secure RPC function that only exposes auth_mode (not full idm_settings)
+      const { data, error } = await supabase.rpc('get_idm_auth_mode');
 
       if (error) throw error;
-      setIdmSettings(data);
+      
+      // RPC returns array, get first row
+      const settings = data?.[0] || null;
+      setIdmSettings(settings);
 
       // Set default auth source based on IDM mode
-      if (data?.auth_mode === 'idm_primary') {
+      if (settings?.auth_mode === 'idm_primary') {
         setAuthSource('freeipa');
       }
     } catch (error) {
