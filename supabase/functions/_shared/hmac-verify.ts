@@ -43,16 +43,8 @@ async function getSharedSecretFromDatabase(supabaseClient: any): Promise<string 
   }
   
   try {
-    // First try environment variable (for backward compatibility)
-    const envSecret = Deno.env.get('EXECUTOR_SHARED_SECRET');
-    if (envSecret) {
-      console.log(`[HMAC-DEBUG] Using secret from environment variable (prefix: ${envSecret.substring(0, 4)}...)`);
-      cachedSecret = envSecret;
-      cacheExpiry = now + CACHE_TTL_MS;
-      return envSecret;
-    }
-    
-    console.log('[HMAC-DEBUG] Fetching secret from database...');
+    // PRIORITY 1: Try database FIRST (GUI-managed source of truth)
+    console.log('[HMAC-DEBUG] Fetching secret from database (priority source)...');
     
     // Get the encrypted secret from activity_settings
     const { data: settings, error: settingsError } = await supabaseClient
@@ -60,44 +52,54 @@ async function getSharedSecretFromDatabase(supabaseClient: any): Promise<string 
       .select('executor_shared_secret_encrypted')
       .maybeSingle();
     
-    if (settingsError) {
+    if (!settingsError && settings?.executor_shared_secret_encrypted) {
+      // Get the encryption key
+      const { data: encryptionKey, error: keyError } = await supabaseClient.rpc('get_encryption_key');
+      
+      if (!keyError && encryptionKey) {
+        // Decrypt the secret
+        const { data: decryptedSecret, error: decryptError } = await supabaseClient.rpc('decrypt_password', {
+          encrypted: settings.executor_shared_secret_encrypted,
+          key: encryptionKey
+        });
+        
+        if (!decryptError && decryptedSecret) {
+          console.log(`[HMAC-DEBUG] Using secret from DATABASE (prefix: ${decryptedSecret.substring(0, 4)}...)`);
+          cachedSecret = decryptedSecret;
+          cacheExpiry = now + CACHE_TTL_MS;
+          return decryptedSecret;
+        } else {
+          console.log(`[HMAC-DEBUG] Failed to decrypt secret: ${decryptError?.message || 'no result'}`);
+        }
+      } else {
+        console.log(`[HMAC-DEBUG] Failed to get encryption key: ${keyError?.message || 'no key'}`);
+      }
+    } else if (settingsError) {
       console.log(`[HMAC-DEBUG] Error fetching settings: ${settingsError.message}`);
-      return null;
-    }
-    
-    if (!settings?.executor_shared_secret_encrypted) {
+    } else {
       console.log('[HMAC-DEBUG] No encrypted secret found in database');
-      return null;
     }
     
-    // Get the encryption key
-    const { data: encryptionKey, error: keyError } = await supabaseClient.rpc('get_encryption_key');
-    
-    if (keyError || !encryptionKey) {
-      console.log(`[HMAC-DEBUG] Error fetching encryption key: ${keyError?.message || 'no key'}`);
-      return null;
+    // PRIORITY 2: Fallback to environment variable (only if database lookup failed)
+    const envSecret = Deno.env.get('EXECUTOR_SHARED_SECRET');
+    if (envSecret) {
+      console.log(`[HMAC-DEBUG] FALLBACK: Using secret from environment variable (prefix: ${envSecret.substring(0, 4)}...)`);
+      cachedSecret = envSecret;
+      cacheExpiry = now + CACHE_TTL_MS;
+      return envSecret;
     }
     
-    // Decrypt the secret
-    const { data: decryptedSecret, error: decryptError } = await supabaseClient.rpc('decrypt_password', {
-      encrypted: settings.executor_shared_secret_encrypted,
-      key: encryptionKey
-    });
-    
-    if (decryptError || !decryptedSecret) {
-      console.log(`[HMAC-DEBUG] Error decrypting secret: ${decryptError?.message || 'no result'}`);
-      return null;
-    }
-    
-    console.log(`[HMAC-DEBUG] Successfully decrypted secret from database (prefix: ${decryptedSecret.substring(0, 4)}...)`);
-    
-    // Cache the decrypted secret
-    cachedSecret = decryptedSecret;
-    cacheExpiry = now + CACHE_TTL_MS;
-    
-    return decryptedSecret;
+    console.log('[HMAC-DEBUG] No secret found in database or environment');
+    return null;
   } catch (err) {
     console.log(`[HMAC-DEBUG] Exception fetching secret: ${err instanceof Error ? err.message : String(err)}`);
+    
+    // Last resort fallback on exception
+    const envSecret = Deno.env.get('EXECUTOR_SHARED_SECRET');
+    if (envSecret) {
+      console.log(`[HMAC-DEBUG] EXCEPTION FALLBACK: Using env secret (prefix: ${envSecret.substring(0, 4)}...)`);
+      return envSecret;
+    }
     return null;
   }
 }
