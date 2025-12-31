@@ -1,7 +1,7 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
-import { verifyExecutorRequest } from "../_shared/hmac-verify.ts";
+import { verifyRequestDualAuth } from "../_shared/hmac-verify.ts";
 import { logger } from "../_shared/logger.ts";
 
 const corsHeaders = {
@@ -32,20 +32,31 @@ serve(async (req) => {
   }
 
   try {
-    // Parse request body first for HMAC verification
+    // Parse request body first for authentication verification
     const payload = await req.json();
     
-    // Verify HMAC signature from Job Executor
-    const isValid = await verifyExecutorRequest(req, payload);
-    if (!isValid) {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    
+    // Create client with request's auth header for JWT verification
+    const authClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: req.headers.get('Authorization') || '' } }
+    });
+    
+    // Verify request using dual auth: HMAC (Job Executor) or JWT (frontend)
+    const authResult = await verifyRequestDualAuth(req, payload, authClient);
+    if (!authResult.authenticated) {
+      logger.security('Request authentication failed', false);
       return new Response(
-        JSON.stringify({ success: false, error: 'Unauthorized: Invalid request signature' }),
+        JSON.stringify({ success: false, error: 'Unauthorized: Invalid request signature or token' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+    
+    logger.debug(`Request authenticated via ${authResult.method}`);
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    // Use service role client for actual database operations
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const { job, task } = payload;
