@@ -37,7 +37,7 @@ import atexit
 import json
 import os
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from idrac_throttler import IdracThrottler
 
 # Ensure the supporting job_executor package is discoverable when this script is
@@ -1545,7 +1545,44 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
             )
 
 
-
+    def _recover_stale_scheduled_jobs(self):
+        """Recover background/scheduled jobs that have been stuck in running state too long."""
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            stale_job_types = ['scheduled_replication_check', 'rpo_monitoring', 'scheduled_vcenter_sync']
+            stale_threshold_minutes = 10
+            cutoff = (datetime.now(timezone.utc) - timedelta(minutes=stale_threshold_minutes)).isoformat()
+            
+            for job_type in stale_job_types:
+                response = requests.get(
+                    f"{DSM_URL}/rest/v1/jobs",
+                    params={
+                        'job_type': f'eq.{job_type}',
+                        'status': 'eq.running',
+                        'started_at': f'lt.{cutoff}',
+                        'select': 'id,started_at'
+                    },
+                    headers=headers,
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
+                
+                if response.ok:
+                    stale_jobs = response.json() or []
+                    for job in stale_jobs:
+                        self.log(f"[RECOVERY] Marking stale {job_type} job {job['id']} as failed")
+                        self.update_job_status(
+                            job['id'], 'failed',
+                            completed_at=utc_now_iso(),
+                            details={'error': f'Job exceeded {stale_threshold_minutes}min maximum runtime', 'auto_recovered': True}
+                        )
+        except Exception as e:
+            self.log(f"[RECOVERY] Error recovering stale jobs: {e}", "WARN")
 
 
     def run(self):
@@ -1609,6 +1646,9 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
                 self.log("="*70)
             except Exception as e:
                 self.log(f"Warning: Could not start media server: {e}", "WARN")
+        
+        # Recover any stale scheduled jobs before starting
+        self._recover_stale_scheduled_jobs()
         
         # Ensure SLA monitoring jobs exist
         self._ensure_sla_monitoring_jobs()
