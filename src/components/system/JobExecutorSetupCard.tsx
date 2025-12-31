@@ -144,6 +144,27 @@ export function JobExecutorSetupCard() {
     }
   };
 
+  const handleRevealHmac = async () => {
+    setHmacLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('set-executor-secret', {
+        body: { action: 'reveal' }
+      });
+      if (error) throw error;
+      
+      setHmacSecret(data.secret);
+      setHmacRevealed(true);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to retrieve secret",
+        variant: "destructive",
+      });
+    } finally {
+      setHmacLoading(false);
+    }
+  };
+
   const handleGenerateHmac = async () => {
     setHmacLoading(true);
     setHmacSecret(null);
@@ -314,7 +335,7 @@ export function JobExecutorSetupCard() {
             configured: "HMAC authentication configured",
             notConfigured: "Not configured - job updates will fail"
           }}
-          onReveal={() => {}}
+          onReveal={handleRevealHmac}
           onGenerate={handleGenerateHmac}
           canRegenerate={true}
           linuxInstructions={{
