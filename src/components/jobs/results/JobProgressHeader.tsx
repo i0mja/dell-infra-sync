@@ -2,7 +2,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { useJobProgress, formatElapsed } from "@/hooks/useJobProgress";
-import { Clock, Server, Database, Globe, Layers, HardDrive, Network, Monitor, AlertTriangle, CheckCircle2, XCircle, Shield } from "lucide-react";
+import { useVCenterSyncProgress } from "@/hooks/useVCenterSyncProgress";
+import { Clock, Server, Database, Globe, AlertTriangle, CheckCircle2, XCircle, Shield } from "lucide-react";
 import { useEffect, useState } from "react";
 import { VCenterSyncProgress } from "./VCenterSyncProgress";
 
@@ -22,7 +23,23 @@ interface JobProgressHeaderProps {
 }
 
 export const JobProgressHeader = ({ job }: JobProgressHeaderProps) => {
-  const { data: progress, isLoading: progressLoading } = useJobProgress(job.id);
+  const isVCenterSync = job.job_type === 'vcenter_sync';
+  
+  // Use dedicated hook for vCenter sync jobs, generic hook for others
+  const { data: vcenterProgress } = useVCenterSyncProgress(
+    isVCenterSync ? job.id : null, 
+    isVCenterSync, 
+    job.status
+  );
+  const { data: genericProgress, isLoading: progressLoading } = useJobProgress(
+    !isVCenterSync ? job.id : null,
+    !isVCenterSync,
+    job.status,
+    job.job_type
+  );
+  
+  // Use the appropriate progress data
+  const progress = isVCenterSync ? vcenterProgress : genericProgress;
   const [elapsed, setElapsed] = useState<string>('');
   
   // Use job.details as fallback while hook loads
@@ -120,7 +137,7 @@ export const JobProgressHeader = ({ job }: JobProgressHeaderProps) => {
   
   // Check if this is a failover preflight check job
   const isFailoverPreflight = job.job_type === 'failover_preflight_check';
-  const stepResults = progress?.details?.step_results || job.details?.step_results;
+  const stepResults = (progress?.details as Record<string, any> | undefined)?.step_results || job.details?.step_results;
 
   const getStatusColor = () => {
     switch (job.status) {
