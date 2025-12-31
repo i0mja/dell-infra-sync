@@ -7,10 +7,12 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SecretRevealCard } from "./SecretRevealCard";
+import { copyToClipboard } from "@/lib/clipboard";
 import { 
   Server, CheckCircle, XCircle, Loader2, ChevronDown, 
-  ExternalLink, AlertCircle
+  ExternalLink, AlertCircle, Copy, Terminal
 } from "lucide-react";
 import { 
   setJobExecutorUrl, getJobExecutorUrl, testJobExecutorConnection, 
@@ -360,8 +362,8 @@ export function JobExecutorSetupCard() {
         />
 
         <SecretRevealCard
-          title="HMAC Authentication"
-          description="Secure job status updates from executor"
+          title="Executor Shared Secret"
+          description="HMAC authentication key for secure job updates"
           envVarName="EXECUTOR_SHARED_SECRET"
           secret={hmacSecret}
           isRevealed={hmacRevealed}
@@ -369,7 +371,7 @@ export function JobExecutorSetupCard() {
           isConfigured={hmacConfigured}
           showStatus={true}
           statusMessage={{
-            configured: "HMAC authentication configured",
+            configured: "Shared secret configured",
             notConfigured: "Not configured - job updates will fail"
           }}
           onReveal={handleRevealHmac}
@@ -395,7 +397,7 @@ export function JobExecutorSetupCard() {
                 {hmacTesting ? (
                   <Loader2 className="h-3 w-3 mr-2 animate-spin" />
                 ) : null}
-                Test HMAC Connection
+                Test Connection
               </Button>
               {hmacTestResult && (
                 <div className={`text-xs p-2 rounded font-mono ${
@@ -415,6 +417,126 @@ export function JobExecutorSetupCard() {
           }
         />
       </div>
+
+      {/* Copy All Environment Variables */}
+      <CopyAllEnvVarsCard
+        supabaseUrl={import.meta.env.VITE_SUPABASE_URL || ''}
+        serviceKey={serviceKey}
+        executorSecret={hmacSecret}
+        serviceKeyRevealed={serviceKeyRevealed}
+        executorSecretRevealed={hmacRevealed}
+      />
     </div>
+  );
+}
+
+interface CopyAllEnvVarsCardProps {
+  supabaseUrl: string;
+  serviceKey: string | null;
+  executorSecret: string | null;
+  serviceKeyRevealed: boolean;
+  executorSecretRevealed: boolean;
+}
+
+function CopyAllEnvVarsCard({
+  supabaseUrl,
+  serviceKey,
+  executorSecret,
+  serviceKeyRevealed,
+  executorSecretRevealed,
+}: CopyAllEnvVarsCardProps) {
+  const { toast } = useToast();
+  const bothRevealed = serviceKeyRevealed && executorSecretRevealed;
+  
+  const windowsCommand = `nssm set DellServerManagerJobExecutor AppEnvironmentExtra ^
+  "DSM_URL=${supabaseUrl}" ^
+  "SUPABASE_URL=${supabaseUrl}" ^
+  "SERVICE_ROLE_KEY=${serviceKey || '<reveal above>'}" ^
+  "EXECUTOR_SHARED_SECRET=${executorSecret || '<reveal above>'}"`;
+
+  const linuxEnvFile = `[Service]
+Environment="DSM_URL=${supabaseUrl}"
+Environment="SUPABASE_URL=${supabaseUrl}"
+Environment="SERVICE_ROLE_KEY=${serviceKey || '<reveal above>'}"
+Environment="EXECUTOR_SHARED_SECRET=${executorSecret || '<reveal above>'}"`;
+
+  const handleCopy = async (content: string, label: string) => {
+    const success = await copyToClipboard(content);
+    if (success) {
+      toast({ title: "Copied", description: `${label} copied to clipboard` });
+    } else {
+      toast({ title: "Failed", description: "Could not copy to clipboard", variant: "destructive" });
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <Terminal className="h-4 w-4" />
+          Copy All Environment Variables
+        </CardTitle>
+        <CardDescription>
+          Complete configuration command with all required variables
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {!bothRevealed && (
+          <Alert className="border-amber-500/50 bg-amber-500/10 py-2">
+            <AlertCircle className="h-4 w-4 text-amber-600" />
+            <AlertDescription className="text-sm text-amber-700 dark:text-amber-400">
+              Reveal both secrets above to see complete values in the command
+            </AlertDescription>
+          </Alert>
+        )}
+
+        <Tabs defaultValue="windows" className="w-full">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="windows">Windows (NSSM)</TabsTrigger>
+            <TabsTrigger value="linux">Linux (systemd)</TabsTrigger>
+          </TabsList>
+          
+          <TabsContent value="windows" className="space-y-2">
+            <div className="relative">
+              <pre className="p-3 bg-muted rounded-lg text-xs font-mono overflow-x-auto whitespace-pre-wrap break-all">
+                {windowsCommand}
+              </pre>
+              <Button
+                variant="outline"
+                size="sm"
+                className="absolute top-2 right-2 h-7"
+                onClick={() => handleCopy(windowsCommand, "Windows command")}
+              >
+                <Copy className="h-3 w-3 mr-1" />
+                Copy
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Run this in an elevated PowerShell, then restart with: <code className="px-1 bg-muted rounded">nssm restart DellServerManagerJobExecutor</code>
+            </p>
+          </TabsContent>
+          
+          <TabsContent value="linux" className="space-y-2">
+            <div className="relative">
+              <pre className="p-3 bg-muted rounded-lg text-xs font-mono overflow-x-auto whitespace-pre-wrap break-all">
+                {linuxEnvFile}
+              </pre>
+              <Button
+                variant="outline"
+                size="sm"
+                className="absolute top-2 right-2 h-7"
+                onClick={() => handleCopy(linuxEnvFile, "Linux config")}
+              >
+                <Copy className="h-3 w-3 mr-1" />
+                Copy
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Add to <code className="px-1 bg-muted rounded">/etc/systemd/system/dell-job-executor.service.d/override.conf</code>, then: <code className="px-1 bg-muted rounded">sudo systemctl daemon-reload && sudo systemctl restart dell-job-executor</code>
+            </p>
+          </TabsContent>
+        </Tabs>
+      </CardContent>
+    </Card>
   );
 }
