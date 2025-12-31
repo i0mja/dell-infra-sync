@@ -38,6 +38,37 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const sharedSecret = Deno.env.get('EXECUTOR_SHARED_SECRET');
+    
+    // Handle ping action - for testing HMAC connectivity
+    if (payload.action === 'ping') {
+      const signature = req.headers.get('x-executor-signature');
+      const timestamp = req.headers.get('x-executor-timestamp');
+      
+      logger.debug(`HMAC Ping: signature=${signature?.substring(0, 8) || 'none'}..., ts=${timestamp}, secret_configured=${!!sharedSecret}, secret_prefix=${sharedSecret?.substring(0, 4) || 'none'}`);
+      
+      // Create client for auth check
+      const authClient = createClient(supabaseUrl, supabaseAnonKey, {
+        global: { headers: { Authorization: req.headers.get('Authorization') || '' } }
+      });
+      
+      const authResult = await verifyRequestDualAuth(req, payload, authClient);
+      
+      return new Response(JSON.stringify({
+        success: authResult.authenticated,
+        auth_method: authResult.method,
+        hmac_headers_present: !!signature && !!timestamp,
+        secret_configured_in_edge: !!sharedSecret,
+        secret_prefix: sharedSecret ? sharedSecret.substring(0, 4) + '...' : null,
+        received_sig_prefix: signature ? signature.substring(0, 8) + '...' : null,
+        message: authResult.authenticated 
+          ? `HMAC verified successfully via ${authResult.method}` 
+          : 'HMAC verification failed - secrets may not match'
+      }), {
+        status: authResult.authenticated ? 200 : 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
     
     // Create client with request's auth header for JWT verification
     const authClient = createClient(supabaseUrl, supabaseAnonKey, {
