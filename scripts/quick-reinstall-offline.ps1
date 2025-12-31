@@ -36,6 +36,7 @@ $ErrorActionPreference = "Stop"
 $AppDir = "C:\dell-server-manager"
 $GitHubRepo = "https://github.com/i0mja/dell-infra-sync.git"
 $OfflineConfigPath = "$env:APPDATA\DellServerManager\offline-config.json"
+$ExecutorSecretCachePath = "$env:APPDATA\DellServerManager\executor-secret.json"
 
 # Function: Get cached offline config (admin credentials)
 function Get-CachedOfflineConfig {
@@ -80,6 +81,48 @@ function Save-OfflineConfig {
     Set-Acl $OfflineConfigPath $acl
     
     Write-Host "  ✓ Credentials cached for next time" -ForegroundColor Green
+}
+
+# Function: Get cached executor shared secret
+function Get-CachedExecutorSecret {
+    if (Test-Path $ExecutorSecretCachePath) {
+        try {
+            $config = Get-Content $ExecutorSecretCachePath -Raw | ConvertFrom-Json
+            return $config.ExecutorSharedSecret
+        }
+        catch {
+            return $null
+        }
+    }
+    return $null
+}
+
+# Function: Save executor shared secret securely
+function Save-ExecutorSecret {
+    param([string]$Secret)
+    
+    $config = @{
+        ExecutorSharedSecret = $Secret
+        LastUpdated = (Get-Date).ToString("o")
+    } | ConvertTo-Json
+    
+    $cacheDir = Split-Path $ExecutorSecretCachePath -Parent
+    if (-not (Test-Path $cacheDir)) {
+        New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
+    }
+    
+    $config | Set-Content $ExecutorSecretCachePath
+    
+    # Set permissions: current user only
+    $acl = Get-Acl $ExecutorSecretCachePath
+    $acl.SetAccessRuleProtection($true, $false)
+    $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        $env:USERNAME, "FullControl", "Allow"
+    )
+    $acl.SetAccessRule($accessRule)
+    Set-Acl $ExecutorSecretCachePath $acl
+    
+    Write-Host "  ✓ Executor secret cached for next time" -ForegroundColor Green
 }
 
 Write-Host "===============================================" -ForegroundColor Cyan
@@ -456,7 +499,7 @@ VITE_SUPABASE_PUBLISHABLE_KEY=$($SupabaseConfig.AnonKey)
     nssm set DellServerManagerJobExecutor DisplayName "Dell Server Manager Job Executor" | Out-Null
     nssm set DellServerManagerJobExecutor Description "Job executor for Dell Server Manager" | Out-Null
     nssm set DellServerManagerJobExecutor Start SERVICE_AUTO_START | Out-Null
-    nssm set DellServerManagerJobExecutor AppEnvironmentExtra "DSM_URL=$($SupabaseConfig.Url)" "SERVICE_ROLE_KEY=$($SupabaseConfig.ServiceRoleKey)" "SUPABASE_URL=$($SupabaseConfig.Url)" | Out-Null
+    nssm set DellServerManagerJobExecutor AppEnvironmentExtra "DSM_URL=$($SupabaseConfig.Url)" "SERVICE_ROLE_KEY=$($SupabaseConfig.ServiceRoleKey)" "EXECUTOR_SHARED_SECRET=$($SupabaseConfig.ExecutorSecret)" "SUPABASE_URL=$($SupabaseConfig.Url)" | Out-Null
     Write-Host "  ✓ DellServerManagerJobExecutor service installed" -ForegroundColor Green
     
     # Configure firewall
@@ -546,6 +589,42 @@ try {
         # Save for next time
         Save-OfflineConfig -AdminEmail $AdminEmail -AdminPassword $adminPasswordPlain
     }
+    
+    # Get executor shared secret (check cache first)
+    $executorSecret = $null
+    
+    if (-not $NewCredentials) {
+        $executorSecret = Get-CachedExecutorSecret
+        if ($executorSecret) {
+            Write-Host "Found cached executor secret" -ForegroundColor Green
+            if (-not $Force) {
+                $choice = Read-Host "Use cached executor secret? (y=yes, new=enter new)"
+                if ($choice.ToLower() -eq "new") {
+                    $executorSecret = $null
+                }
+            }
+        }
+    }
+    
+    # Prompt if not cached
+    if (-not $executorSecret) {
+        Write-Host ""
+        Write-Host "Enter EXECUTOR_SHARED_SECRET (from GUI: Settings > System > Job Executor > HMAC Secret)" -ForegroundColor Yellow
+        Write-Host "  If you don't have one yet, generate it in the GUI first, then copy it here." -ForegroundColor Gray
+        $executorSecretInput = Read-Host -AsSecureString "EXECUTOR_SHARED_SECRET"
+        $executorSecret = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+            [Runtime.InteropServices.Marshal]::SecureStringToBSTR($executorSecretInput)
+        )
+        
+        if ($executorSecret) {
+            Save-ExecutorSecret -Secret $executorSecret
+        } else {
+            Write-Host "  ⚠ No executor secret provided - HMAC authentication may fail" -ForegroundColor Yellow
+        }
+    }
+    
+    # Add executor secret to config
+    $supabaseConfig.ExecutorSecret = $executorSecret
     
     # Create admin user
     New-AdminUser -Email $AdminEmail -Password $adminPasswordPlain -SupabaseConfig $supabaseConfig
