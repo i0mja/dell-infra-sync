@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useEffect } from "react";
-import { useAuth } from "@/hooks/useAuth";
 
 export interface JobProgress {
   totalTasks: number;
@@ -14,8 +13,6 @@ export interface JobProgress {
 }
 
 export function useJobProgress(jobId: string | null, enabled: boolean = true, jobStatus?: string, jobType?: string) {
-  const { session } = useAuth();
-  
   // Reduce polling frequency for pending jobs - they only change when executor picks them up
   const pollingInterval = jobStatus === 'pending' ? 10000 : 2000;
   
@@ -258,7 +255,7 @@ export function useJobProgress(jobId: string | null, enabled: boolean = true, jo
   
   // Subscribe to real-time updates
   useEffect(() => {
-    if (!session || !jobId || !enabled) return;
+    if (!jobId || !enabled) return;
     
     const channel = supabase
       .channel(`job-progress-${jobId}`)
@@ -291,7 +288,7 @@ export function useJobProgress(jobId: string | null, enabled: boolean = true, jo
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [session, jobId, enabled]);
+  }, [jobId, enabled]);
   
   return query;
 }
