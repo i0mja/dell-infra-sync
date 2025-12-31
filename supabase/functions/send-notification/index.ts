@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
-import { verifyExecutorRequest } from "../_shared/hmac-verify.ts";
+import { verifyRequestDualAuth } from "../_shared/hmac-verify.ts";
 import { logger } from "../_shared/logger.ts";
 
 const corsHeaders = {
@@ -37,21 +37,32 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Parse request body first for HMAC verification
+    // Parse request body first for authentication verification
     const payload: any = await req.json();
     
-    // Verify HMAC signature from Job Executor (skip for internal supabase.functions.invoke calls)
-    // Internal calls come from update-job function and don't have executor headers
-    const hasExecutorHeaders = req.headers.has('x-executor-signature');
-    if (hasExecutorHeaders) {
-      const isValid = await verifyExecutorRequest(req, payload);
-      if (!isValid) {
-        return new Response(
-          JSON.stringify({ success: false, error: 'Unauthorized: Invalid request signature' }),
-          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+    // Create supabase client for auth verification (with auth header for JWT path)
+    const authClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      {
+        global: {
+          headers: { Authorization: req.headers.get('Authorization') ?? '' },
+        },
       }
+    );
+    
+    // Use dual auth: HMAC for Job Executor, JWT for frontend/internal calls
+    const authResult = await verifyRequestDualAuth(req, payload, authClient);
+    
+    if (!authResult.authenticated) {
+      logger.security('send-notification: Authentication failed', false);
+      return new Response(
+        JSON.stringify({ success: false, error: 'Unauthorized: Invalid request signature or token' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
+    
+    logger.debug(`send-notification: Authenticated via ${authResult.method}`);
 
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',

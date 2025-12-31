@@ -44,11 +44,16 @@ export async function verifyRequestDualAuth(
 ): Promise<AuthResult> {
   const sharedSecret = Deno.env.get('EXECUTOR_SHARED_SECRET');
   
-  // Check for HMAC headers first (Job Executor path)
+  // Debug: Log what auth headers we received
   const signature = req.headers.get('x-executor-signature');
   const timestamp = req.headers.get('x-executor-timestamp');
+  const authHeader = req.headers.get('authorization');
   
+  logger.debug(`Auth debug: HMAC headers present=${!!signature && !!timestamp}, JWT header present=${!!authHeader}, secret configured=${!!sharedSecret}`);
+  
+  // Check for HMAC headers first (Job Executor path)
   if (signature && timestamp) {
+    logger.debug(`Auth debug: Attempting HMAC verification (sig prefix: ${signature.substring(0, 8)}...)`);
     // HMAC auth attempt - verify the signature
     const valid = await verifyHmacSignature(payload, signature, timestamp, sharedSecret);
     if (valid) {
@@ -61,8 +66,8 @@ export async function verifyRequestDualAuth(
   }
   
   // No HMAC headers - try JWT auth (frontend path)
-  const authHeader = req.headers.get('authorization');
   if (authHeader?.startsWith('Bearer ')) {
+    logger.debug('Auth debug: Attempting JWT verification');
     try {
       // Extract the JWT token and pass it directly to getUser()
       // In edge functions, getUser() without a token doesn't work - there's no session context
@@ -70,24 +75,26 @@ export async function verifyRequestDualAuth(
       const { data: { user }, error } = await supabaseClient.auth.getUser(token);
       if (user && !error) {
         logger.security('Dual auth: JWT verification', true);
+        logger.debug(`Auth debug: JWT verified for user ${user.id}`);
         return { authenticated: true, method: 'jwt', userId: user.id };
       } else {
-        logger.debug(`JWT auth check returned no user: ${error?.message || 'unknown error'}`);
+        logger.debug(`Auth debug: JWT returned no user - ${error?.message || 'no error message'}`);
       }
     } catch (e) {
-      logger.debug(`JWT auth check failed: ${e instanceof Error ? e.message : String(e)}`);
+      logger.debug(`Auth debug: JWT exception - ${e instanceof Error ? e.message : String(e)}`);
     }
   }
   
   // Neither auth method succeeded
   // If no secret is configured, allow for backward compatibility
   if (!sharedSecret) {
-    logger.debug('Dual auth: No secret configured, allowing request');
+    logger.debug('Dual auth: No secret configured, allowing request (backward compat)');
     return { authenticated: true, method: 'none' };
   }
   
   // Secret is configured but no valid auth provided
-  logger.security('Dual auth: No valid authentication', false);
+  logger.security('Dual auth: No valid authentication provided', false);
+  logger.debug(`Auth debug: Rejecting - has HMAC=${!!signature}, has JWT=${!!authHeader?.startsWith('Bearer ')}`);
   return { authenticated: false, method: 'none' };
 }
 
@@ -101,13 +108,19 @@ async function verifyHmacSignature(
   sharedSecret: string | undefined
 ): Promise<boolean> {
   if (!sharedSecret) {
+    logger.debug('HMAC debug: No shared secret configured');
     return false;
   }
   
   // Check timestamp freshness (prevent replay attacks)
-  const requestAge = Date.now() / 1000 - parseInt(timestamp, 10);
+  const now = Date.now() / 1000;
+  const ts = parseInt(timestamp, 10);
+  const requestAge = now - ts;
+  
+  logger.debug(`HMAC debug: timestamp=${ts}, now=${Math.floor(now)}, age=${Math.floor(requestAge)}s`);
+  
   if (isNaN(requestAge) || requestAge > MAX_AGE_SECONDS || requestAge < -30) {
-    logger.debug('HMAC: stale timestamp');
+    logger.debug(`HMAC debug: Stale timestamp - age ${Math.floor(requestAge)}s exceeds ${MAX_AGE_SECONDS}s max`);
     return false;
   }
   
@@ -134,7 +147,14 @@ async function verifyHmacSignature(
     .map(b => b.toString(16).padStart(2, '0'))
     .join('');
   
-  return timingSafeEqual(signature, expectedSignature);
+  const match = timingSafeEqual(signature, expectedSignature);
+  
+  if (!match) {
+    logger.debug(`HMAC debug: Signature mismatch - received ${signature.substring(0, 8)}... expected ${expectedSignature.substring(0, 8)}...`);
+    logger.debug(`HMAC debug: Secret prefix=${sharedSecret.substring(0, 4)}..., payload keys=${Object.keys(payload as object).join(',')}`);
+  }
+  
+  return match;
 }
 
 /**
