@@ -848,6 +848,8 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
     def update_job_status(self, job_id: str, status: str, **kwargs):
         """Update job status in the cloud"""
         try:
+            from job_executor.hmac_signing import add_signature_headers
+            
             url = f"{DSM_URL}/functions/v1/update-job"
             payload = {
                 "job": {
@@ -857,7 +859,11 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
                 }
             }
 
-            response = requests.post(url, json=payload, verify=VERIFY_SSL)
+            # Add HMAC signature headers for authentication
+            base_headers = {'Content-Type': 'application/json'}
+            headers = add_signature_headers(base_headers, payload)
+
+            response = requests.post(url, json=payload, headers=headers, verify=VERIFY_SSL)
             self._handle_supabase_auth_error(response, "updating job status")
             if response.status_code != 200:
                 self.log(f"Error updating job: {response.text}", "ERROR")
@@ -867,6 +873,8 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
     def update_task_status(self, task_id: str, status: str, log: str = None, progress: int = None, **kwargs):
         """Update task status in the cloud"""
         try:
+            from job_executor.hmac_signing import add_signature_headers
+            
             url = f"{DSM_URL}/functions/v1/update-job"
             payload = {
                 "task": {
@@ -880,7 +888,11 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
             if progress is not None:
                 payload["task"]["progress"] = progress
 
-            response = requests.post(url, json=payload, verify=VERIFY_SSL)
+            # Add HMAC signature headers for authentication
+            base_headers = {'Content-Type': 'application/json'}
+            headers = add_signature_headers(base_headers, payload)
+
+            response = requests.post(url, json=payload, headers=headers, verify=VERIFY_SSL)
             self._handle_supabase_auth_error(response, "updating task status")
             if response.status_code != 200:
                 self.log(f"Error updating task: {response.text}", "ERROR")
