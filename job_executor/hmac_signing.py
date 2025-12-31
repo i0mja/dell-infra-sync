@@ -19,23 +19,32 @@ import logging
 import requests
 from typing import Dict, Tuple, Optional
 
-# Cache the shared secret to avoid repeated API calls
+# Cache the shared secret and track fetch attempts
 _cached_secret: Optional[str] = None
-_secret_fetch_attempted: bool = False
+_last_fetch_attempt: float = 0
+_FETCH_RETRY_INTERVAL = 60  # Retry every 60 seconds if secret not configured
 
 
 def _fetch_secret_from_database() -> Optional[str]:
     """
     Fetch the shared secret from the database via edge function.
     This is called when the environment variable is not set.
-    """
-    global _cached_secret, _secret_fetch_attempted
     
-    # Only attempt once per session to avoid repeated failures
-    if _secret_fetch_attempted:
+    Uses a cooldown to avoid hammering the API if secret is not yet configured.
+    Will retry automatically after FETCH_RETRY_INTERVAL seconds.
+    """
+    global _cached_secret, _last_fetch_attempt
+    
+    # If we already have a cached secret, use it
+    if _cached_secret:
         return _cached_secret
     
-    _secret_fetch_attempted = True
+    # Rate limit retry attempts (don't spam the API)
+    current_time = time.time()
+    if _last_fetch_attempt > 0 and (current_time - _last_fetch_attempt) < _FETCH_RETRY_INTERVAL:
+        return None
+    
+    _last_fetch_attempt = current_time
     
     try:
         dsm_url = os.getenv('DSM_URL')
@@ -63,9 +72,9 @@ def _fetch_secret_from_database() -> Optional[str]:
                 logging.info("Successfully fetched executor shared secret from database")
                 return secret
             else:
-                logging.warning("Secret not found in database response")
+                logging.info("Secret not found in database response - will retry in %d seconds", _FETCH_RETRY_INTERVAL)
         elif response.status_code == 404:
-            logging.warning("Executor shared secret not configured in database. Configure it in Settings > Infrastructure > Job Executor")
+            logging.info("Executor shared secret not yet configured - will retry in %d seconds. Configure it in Settings > Infrastructure > Job Executor", _FETCH_RETRY_INTERVAL)
         else:
             logging.warning(f"Failed to fetch secret from database: {response.status_code} - {response.text}")
         
