@@ -49,11 +49,12 @@ export async function verifyRequestDualAuth(
   const timestamp = req.headers.get('x-executor-timestamp');
   const authHeader = req.headers.get('authorization');
   
-  logger.debug(`Auth debug: HMAC headers present=${!!signature && !!timestamp}, JWT header present=${!!authHeader}, secret configured=${!!sharedSecret}`);
+  // Use console.log for auth debugging so logs are visible in production
+  console.log(`[HMAC-DEBUG] Auth check: HMAC headers=${!!signature && !!timestamp}, JWT=${!!authHeader?.startsWith('Bearer ')}, secret=${sharedSecret ? `configured (${sharedSecret.substring(0, 4)}...)` : 'NOT SET'}`);
   
   // Check for HMAC headers first (Job Executor path)
   if (signature && timestamp) {
-    logger.debug(`Auth debug: Attempting HMAC verification (sig prefix: ${signature.substring(0, 8)}...)`);
+    console.log(`[HMAC-DEBUG] HMAC attempt: sig prefix=${signature.substring(0, 8)}..., ts=${timestamp}`);
     // HMAC auth attempt - verify the signature
     const valid = await verifyHmacSignature(payload, signature, timestamp, sharedSecret);
     if (valid) {
@@ -108,7 +109,7 @@ async function verifyHmacSignature(
   sharedSecret: string | undefined
 ): Promise<boolean> {
   if (!sharedSecret) {
-    logger.debug('HMAC debug: No shared secret configured');
+    console.log('[HMAC-DEBUG] FAIL: No shared secret configured in edge function');
     return false;
   }
   
@@ -117,10 +118,10 @@ async function verifyHmacSignature(
   const ts = parseInt(timestamp, 10);
   const requestAge = now - ts;
   
-  logger.debug(`HMAC debug: timestamp=${ts}, now=${Math.floor(now)}, age=${Math.floor(requestAge)}s`);
+  console.log(`[HMAC-DEBUG] Timestamp check: received=${ts}, now=${Math.floor(now)}, age=${Math.floor(requestAge)}s (max ${MAX_AGE_SECONDS}s)`);
   
   if (isNaN(requestAge) || requestAge > MAX_AGE_SECONDS || requestAge < -30) {
-    logger.debug(`HMAC debug: Stale timestamp - age ${Math.floor(requestAge)}s exceeds ${MAX_AGE_SECONDS}s max`);
+    console.log(`[HMAC-DEBUG] FAIL: Stale timestamp - age ${Math.floor(requestAge)}s exceeds limit`);
     return false;
   }
   
@@ -150,8 +151,13 @@ async function verifyHmacSignature(
   const match = timingSafeEqual(signature, expectedSignature);
   
   if (!match) {
-    logger.debug(`HMAC debug: Signature mismatch - received ${signature.substring(0, 8)}... expected ${expectedSignature.substring(0, 8)}...`);
-    logger.debug(`HMAC debug: Secret prefix=${sharedSecret.substring(0, 4)}..., payload keys=${Object.keys(payload as object).join(',')}`);
+    console.log(`[HMAC-DEBUG] FAIL: Signature mismatch!`);
+    console.log(`[HMAC-DEBUG]   Received sig: ${signature.substring(0, 16)}...`);
+    console.log(`[HMAC-DEBUG]   Expected sig: ${expectedSignature.substring(0, 16)}...`);
+    console.log(`[HMAC-DEBUG]   Secret prefix: ${sharedSecret.substring(0, 4)}...`);
+    console.log(`[HMAC-DEBUG]   Payload keys: ${Object.keys(payload as object).join(', ')}`);
+  } else {
+    console.log(`[HMAC-DEBUG] SUCCESS: Signature verified`);
   }
   
   return match;
