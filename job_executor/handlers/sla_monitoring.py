@@ -620,6 +620,8 @@ class SLAMonitoringHandler(BaseHandler):
     def _send_sla_alert(self, violations: List[Dict], alert_type: str):
         """Send SLA violation alert via notification system"""
         try:
+            from job_executor.hmac_signing import add_signature_headers
+            
             payload = {
                 'notification_type': 'sla_violation_alert',
                 'alert_type': alert_type,
@@ -627,13 +629,19 @@ class SLAMonitoringHandler(BaseHandler):
                 'summary': f"{len(violations)} protection group(s) have {alert_type.replace('_', ' ')} issues"
             }
             
+            # Base headers
+            base_headers = {
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            # Add HMAC signature for edge function authentication
+            headers = add_signature_headers(base_headers, payload)
+            
             response = requests.post(
                 f"{SUPABASE_URL}/functions/v1/send-notification",
                 json=payload,
-                headers={
-                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
-                    'Content-Type': 'application/json'
-                },
+                headers=headers,
                 verify=VERIFY_SSL,
                 timeout=30
             )

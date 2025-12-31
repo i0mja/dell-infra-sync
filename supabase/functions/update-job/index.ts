@@ -1,10 +1,12 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { verifyExecutorRequest } from "../_shared/hmac-verify.ts";
+import { logger } from "../_shared/logger.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-executor-signature, x-executor-timestamp',
 };
 
 interface UpdateJobRequest {
@@ -30,13 +32,23 @@ serve(async (req) => {
   }
 
   try {
+    // Parse request body first for HMAC verification
+    const payload = await req.json();
+    
+    // Verify HMAC signature from Job Executor
+    const isValid = await verifyExecutorRequest(req, payload);
+    if (!isValid) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Unauthorized: Invalid request signature' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // For job executor, we allow updates without JWT (uses service role)
-    // This endpoint is called by the local job executor script
-    const { job, task } = await req.json();
+    const { job, task } = payload;
 
     if (job) {
       // Accept either job_id or id
@@ -70,7 +82,8 @@ serve(async (req) => {
 
       if (jobError) throw jobError;
 
-      console.log(`Job updated: ${jobId} - status: ${job.status}`);
+      // Log without sensitive details
+      logger.info(`Job status updated`);
 
       // If job is cancelled or failed, cascade to child jobs and cancel pending tasks
       if (job.status && ['cancelled', 'failed'].includes(job.status)) {
@@ -88,9 +101,9 @@ serve(async (req) => {
           .in('status', ['pending', 'running']);
 
         if (childError) {
-          console.error('Error cascading cancellation to child jobs:', childError);
+          logger.error('Error cascading cancellation to child jobs');
         } else {
-          console.log(`Cascaded ${job.status} status to child jobs of ${jobId}`);
+          logger.debug('Cascaded status to child jobs');
         }
 
         // Cancel pending tasks for this job
@@ -105,9 +118,9 @@ serve(async (req) => {
           .eq('status', 'pending');
 
         if (taskError) {
-          console.error('Error cancelling pending tasks:', taskError);
+          logger.error('Error cancelling pending tasks');
         } else {
-          console.log(`Cancelled pending tasks for job ${jobId}`);
+          logger.debug('Cancelled pending tasks');
         }
 
         // Cascade status to ALL non-terminal workflow execution steps (running AND pending)
@@ -124,9 +137,9 @@ serve(async (req) => {
           .in('step_status', ['running', 'pending']);
 
         if (workflowError) {
-          console.error('Error cascading status to workflow steps:', workflowError);
+          logger.error('Error cascading status to workflow steps');
         } else {
-          console.log(`Cascaded ${job.status} status to workflow steps of ${jobId}`);
+          logger.debug('Cascaded status to workflow steps');
         }
       }
 
@@ -143,13 +156,13 @@ serve(async (req) => {
           });
           
           if (notificationResponse.error) {
-            console.error('Notification error:', notificationResponse.error);
+            logger.warn('Notification delivery failed');
           } else {
-            console.log('Notification sent:', notificationResponse.data);
+            logger.debug('Notification sent');
           }
         } catch (notifError) {
           // Don't fail the job update if notification fails
-          console.error('Failed to send notification:', notifError);
+          logger.warn('Failed to trigger notification');
         }
       }
     }
@@ -169,7 +182,7 @@ serve(async (req) => {
 
       if (taskError) throw taskError;
 
-      console.log(`Task updated: ${task.task_id} - status: ${task.status}${task.progress !== undefined ? ` - progress: ${task.progress}%` : ''}`);
+      logger.info('Task status updated');
     }
 
     return new Response(JSON.stringify({ 
@@ -180,7 +193,7 @@ serve(async (req) => {
     });
 
   } catch (error) {
-    console.error('Error in update-job function:', error);
+    logger.error('Error in update-job function');
     const errorMessage = error instanceof Error ? error.message : String(error);
     
     return new Response(

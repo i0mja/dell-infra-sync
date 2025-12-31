@@ -1,8 +1,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { verifyExecutorRequest } from "../_shared/hmac-verify.ts";
+import { logger } from "../_shared/logger.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-executor-signature, x-executor-timestamp',
 };
 
 interface NotificationPayload {
@@ -35,18 +37,33 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // Parse request body first for HMAC verification
+    const payload: any = await req.json();
+    
+    // Verify HMAC signature from Job Executor (skip for internal supabase.functions.invoke calls)
+    // Internal calls come from update-job function and don't have executor headers
+    const hasExecutorHeaders = req.headers.has('x-executor-signature');
+    if (hasExecutorHeaders) {
+      const isValid = await verifyExecutorRequest(req, payload);
+      if (!isValid) {
+        return new Response(
+          JSON.stringify({ success: false, error: 'Unauthorized: Invalid request signature' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    const payload: any = await req.json();
     const { jobId, jobType, status, details, isTest, is_test, testMessage, notification_type } = payload;
     
     // Handle both camelCase and snake_case for test notifications
     const isTestNotification = isTest || is_test || false;
 
-    console.log('Processing notification:', { jobId, jobType, status, isTestNotification, notification_type });
+    logger.debug('Processing notification request');
 
     // Get notification settings
     const { data: settings, error: settingsError } = await supabaseClient
@@ -56,12 +73,12 @@ Deno.serve(async (req) => {
       .maybeSingle() as { data: NotificationSettings | null; error: any };
 
     if (settingsError) {
-      console.error('Error fetching notification settings:', settingsError);
+      logger.error('Error fetching notification settings');
       throw settingsError;
     }
 
     if (!settings) {
-      console.log('No notification settings configured');
+      logger.debug('No notification settings configured');
       return new Response(
         JSON.stringify({ message: 'No notification settings configured' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
@@ -122,9 +139,9 @@ Deno.serve(async (req) => {
         
         try {
           await sendEmailNotification(settings, 'cluster-safety', cluster_name, statusText, { body, subject });
-          console.log('Cluster safety email sent');
+          logger.debug('Cluster safety email sent');
         } catch (error) {
-          console.error('Failed to send cluster safety email:', error);
+          logger.warn('Failed to send cluster safety email');
         }
       }
       
@@ -161,9 +178,9 @@ Deno.serve(async (req) => {
             body: JSON.stringify(card)
           });
           if (!teamsResponse.ok) throw new Error('Teams webhook failed');
-          console.log('Cluster safety Teams notification sent');
+          logger.debug('Cluster safety Teams notification sent');
         } catch (error) {
-          console.error('Failed to send Teams notification:', error);
+          logger.warn('Failed to send Teams notification');
         }
       }
       
@@ -224,9 +241,9 @@ Deno.serve(async (req) => {
         
         try {
           await sendEmailNotification(settings, 'sla-violation', alert_type, 'alert', { body, subject });
-          console.log('SLA violation email sent');
+          logger.debug('SLA violation email sent');
         } catch (error) {
-          console.error('Failed to send SLA violation email:', error);
+          logger.warn('Failed to send SLA violation email');
         }
       }
       
@@ -259,9 +276,9 @@ Deno.serve(async (req) => {
             body: JSON.stringify(card)
           });
           if (!teamsResponse.ok) throw new Error('Teams webhook failed');
-          console.log('SLA violation Teams notification sent');
+          logger.debug('SLA violation Teams notification sent');
         } catch (error) {
-          console.error('Failed to send Teams notification:', error);
+          logger.warn('Failed to send Teams notification');
         }
       }
       
@@ -287,7 +304,7 @@ Deno.serve(async (req) => {
         (status === 'running' && settings.notify_on_job_started);
 
       if (!shouldNotify) {
-        console.log('Notification disabled for this event type');
+        logger.debug('Notification disabled for this event type');
         return new Response(
           JSON.stringify({ message: 'Notification disabled for this event' }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
@@ -309,7 +326,7 @@ Deno.serve(async (req) => {
     // Send email notification
     if (settings.smtp_host && settings.smtp_user && settings.smtp_from_email) {
       try {
-        console.log('Sending email notification...');
+        logger.debug('Sending email notification');
         const emailResult = await sendEmailNotification(
           settings, 
           jobId || 'test', 
@@ -329,7 +346,7 @@ Deno.serve(async (req) => {
           severity
         });
       } catch (emailError: any) {
-        console.error('Email notification failed:', emailError);
+        logger.warn('Email notification failed');
         results.email = { error: emailError.message };
         
         // Log failed email delivery
@@ -348,7 +365,7 @@ Deno.serve(async (req) => {
     // Send Teams notification
     if (settings.teams_webhook_url) {
       try {
-        console.log('Sending Teams notification...');
+        logger.debug('Sending Teams notification');
         const teamsResult = await sendTeamsNotification(
           settings.teams_webhook_url, 
           jobId || 'test', 
@@ -373,7 +390,7 @@ Deno.serve(async (req) => {
           severity
         });
       } catch (teamsError: any) {
-        console.error('Teams notification failed:', teamsError);
+        logger.warn('Teams notification failed');
         results.teams = { error: teamsError.message };
         
         // Log failed Teams delivery
@@ -395,7 +412,7 @@ Deno.serve(async (req) => {
     );
 
   } catch (error: any) {
-    console.error('Error in send-notification function:', error);
+    logger.error('Error in send-notification function');
     return new Response(
       JSON.stringify({ error: error.message }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
@@ -464,8 +481,8 @@ ${body}
       await tlsConn.write(encoder.encode(command + '\r\n'));
       const n = await tlsConn.read(buffer);
       if (n) {
-        const response = decoder.decode(buffer.subarray(0, n));
-        console.log('SMTP Response:', response);
+        // Don't log SMTP responses - they may contain sensitive info
+        logger.debug('SMTP command processed');
       }
     }
 
