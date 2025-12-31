@@ -192,7 +192,29 @@ export function SecretRevealCard({
               </Button>
             )}
             
-            {/* Show Generate button when no secret exists, or for non-regeneratable secrets */}
+            {/* Show Regenerate button alongside Reveal when secret is configured */}
+            {onGenerate && canRegenerate && isConfigured && (
+              <Button
+                onClick={onGenerate}
+                disabled={isLoading}
+                variant="outline"
+                size="sm"
+              >
+                {isLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                    Regenerating...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="mr-2 h-3.5 w-3.5" />
+                    Regenerate
+                  </>
+                )}
+              </Button>
+            )}
+            
+            {/* Show Generate button when no secret exists */}
             {onGenerate && canRegenerate && !isConfigured && (
               <Button
                 onClick={onGenerate}
