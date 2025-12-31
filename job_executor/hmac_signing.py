@@ -8,6 +8,9 @@ The signature prevents:
 - Unauthorized callers (they don't have the shared secret)
 - Replay attacks (timestamp must be within 5 minutes)
 - Tampering (any payload modification invalidates signature)
+
+The shared secret is configured via environment variable EXECUTOR_SHARED_SECRET.
+Generate and copy this secret from Settings > System > Executor Authentication.
 """
 
 import hmac
@@ -16,107 +19,25 @@ import json
 import time
 import os
 import logging
-import requests
 from typing import Dict, Tuple, Optional
-
-# Cache the shared secret and track fetch attempts
-_cached_secret: Optional[str] = None
-_last_fetch_attempt: float = 0
-_FETCH_RETRY_INTERVAL = 60  # Retry every 60 seconds if secret not configured
-
-
-def _fetch_secret_from_database() -> Optional[str]:
-    """
-    Fetch the shared secret from the database via edge function.
-    This is called when the environment variable is not set.
-    
-    Uses a cooldown to avoid hammering the API if secret is not yet configured.
-    Will retry automatically after FETCH_RETRY_INTERVAL seconds.
-    """
-    global _cached_secret, _last_fetch_attempt
-    
-    # If we already have a cached secret, use it
-    if _cached_secret:
-        return _cached_secret
-    
-    # Rate limit retry attempts (don't spam the API)
-    current_time = time.time()
-    if _last_fetch_attempt > 0 and (current_time - _last_fetch_attempt) < _FETCH_RETRY_INTERVAL:
-        return None
-    
-    _last_fetch_attempt = current_time
-    
-    try:
-        dsm_url = os.getenv('DSM_URL')
-        service_role_key = os.getenv('SERVICE_ROLE_KEY')
-        
-        if not dsm_url or not service_role_key:
-            logging.warning("DSM_URL or SERVICE_ROLE_KEY not set - cannot fetch secret from database")
-            return None
-        
-        # Call the edge function to get the decrypted secret
-        url = f"{dsm_url}/functions/v1/set-executor-secret"
-        headers = {
-            'Authorization': f'Bearer {service_role_key}',
-            'Content-Type': 'application/json',
-        }
-        payload = {'action': 'get-decrypted'}
-        
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            secret = data.get('secret')
-            if secret:
-                _cached_secret = secret
-                logging.info("Successfully fetched executor shared secret from database")
-                return secret
-            else:
-                logging.info("Secret not found in database response - will retry in %d seconds", _FETCH_RETRY_INTERVAL)
-        elif response.status_code == 404:
-            logging.info("Executor shared secret not yet configured - will retry in %d seconds. Configure it in Settings > Infrastructure > Job Executor", _FETCH_RETRY_INTERVAL)
-        else:
-            logging.warning(f"Failed to fetch secret from database: {response.status_code} - {response.text}")
-        
-    except requests.exceptions.RequestException as e:
-        logging.warning(f"Error fetching secret from database: {e}")
-    except Exception as e:
-        logging.error(f"Unexpected error fetching secret: {e}")
-    
-    return None
 
 
 def get_shared_secret() -> Optional[str]:
     """
-    Get the shared secret from environment variable or database.
+    Get the shared secret from environment variable.
     
-    Priority:
-    1. EXECUTOR_SHARED_SECRET environment variable (for backward compatibility)
-    2. Encrypted secret stored in database (set via GUI)
+    Returns:
+        The shared secret, or None if not configured.
     """
-    global _cached_secret
-    
-    # First check environment variable
     secret = os.getenv('EXECUTOR_SHARED_SECRET')
-    if secret:
-        return secret
-    
-    # If cached secret exists, use it
-    if _cached_secret:
-        return _cached_secret
-    
-    # Try to fetch from database
-    secret = _fetch_secret_from_database()
-    if secret:
-        return secret
-    
-    # Log warning if no secret is available
-    logging.warning(
-        "EXECUTOR_SHARED_SECRET not set and not configured in database. "
-        "HMAC signing disabled. Job status updates will fail if edge function requires authentication. "
-        "Configure the secret in Settings > Infrastructure > Job Executor."
-    )
-    return None
+    if not secret:
+        logging.warning(
+            "EXECUTOR_SHARED_SECRET not set. HMAC signing disabled. "
+            "Job status updates will fail if edge function requires authentication. "
+            "Generate the secret in Settings > System > Executor Authentication, "
+            "then add EXECUTOR_SHARED_SECRET=<secret> to your .env file."
+        )
+    return secret
 
 
 def _sorted_json_stringify(obj) -> str:
@@ -154,10 +75,8 @@ def sign_request(payload: Dict) -> Tuple[str, str]:
         payload: The JSON payload to sign
         
     Returns:
-        Tuple of (signature, timestamp) to add to request headers
-        
-    Raises:
-        ValueError: If EXECUTOR_SHARED_SECRET is not configured
+        Tuple of (signature, timestamp) to add to request headers.
+        Returns empty strings if no secret is configured.
     """
     secret = get_shared_secret()
     if not secret:
