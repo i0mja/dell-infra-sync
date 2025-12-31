@@ -12,6 +12,7 @@
  */
 
 import { logger } from './logger.ts';
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 
 const MAX_AGE_SECONDS = 300; // 5 minutes - requests older than this are rejected
 
@@ -19,6 +20,16 @@ const MAX_AGE_SECONDS = 300; // 5 minutes - requests older than this are rejecte
 let cachedSecret: string | null = null;
 let cacheExpiry: number = 0;
 const CACHE_TTL_MS = 60000; // 60 seconds
+
+/**
+ * Create a service role client that bypasses RLS
+ * This is needed because HMAC requests have no user context
+ */
+function createServiceRoleClient() {
+  const url = Deno.env.get('SUPABASE_URL')!;
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  return createClient(url, serviceKey);
+}
 
 /**
  * Result of dual authentication check
@@ -31,9 +42,9 @@ export interface AuthResult {
 
 /**
  * Fetch the executor shared secret from the database
- * Uses caching to avoid repeated database lookups
+ * Uses a SERVICE ROLE client to bypass RLS (HMAC requests have no user context)
  */
-async function getSharedSecretFromDatabase(supabaseClient: any): Promise<string | null> {
+async function getSharedSecretFromDatabase(_supabaseClient: any): Promise<string | null> {
   const now = Date.now();
   
   // Return cached value if still valid
@@ -43,28 +54,31 @@ async function getSharedSecretFromDatabase(supabaseClient: any): Promise<string 
   }
   
   try {
+    // Use service role client to bypass RLS
+    const serviceClient = createServiceRoleClient();
+    
     // PRIORITY 1: Try database FIRST (GUI-managed source of truth)
-    console.log('[HMAC-DEBUG] Fetching secret from database (priority source)...');
+    console.log('[HMAC-DEBUG] Fetching secret from database using SERVICE ROLE client...');
     
     // Get the encrypted secret from activity_settings
-    const { data: settings, error: settingsError } = await supabaseClient
+    const { data: settings, error: settingsError } = await serviceClient
       .from('activity_settings')
       .select('executor_shared_secret_encrypted')
       .maybeSingle();
     
     if (!settingsError && settings?.executor_shared_secret_encrypted) {
       // Get the encryption key
-      const { data: encryptionKey, error: keyError } = await supabaseClient.rpc('get_encryption_key');
+      const { data: encryptionKey, error: keyError } = await serviceClient.rpc('get_encryption_key');
       
       if (!keyError && encryptionKey) {
         // Decrypt the secret
-        const { data: decryptedSecret, error: decryptError } = await supabaseClient.rpc('decrypt_password', {
+        const { data: decryptedSecret, error: decryptError } = await serviceClient.rpc('decrypt_password', {
           encrypted: settings.executor_shared_secret_encrypted,
           key: encryptionKey
         });
         
         if (!decryptError && decryptedSecret) {
-          console.log(`[HMAC-DEBUG] Using secret from DATABASE (prefix: ${decryptedSecret.substring(0, 4)}...)`);
+          console.log(`[HMAC-DEBUG] SUCCESS: Using secret from DATABASE (prefix: ${decryptedSecret.substring(0, 4)}...)`);
           cachedSecret = decryptedSecret;
           cacheExpiry = now + CACHE_TTL_MS;
           return decryptedSecret;
