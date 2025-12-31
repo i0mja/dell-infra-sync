@@ -27,9 +27,11 @@ from datetime import datetime
 try:
     from ldap3 import Server, Connection, ALL, SUBTREE, Tls
     from ldap3.core.exceptions import LDAPException, LDAPBindError
+    from ldap3.utils.conv import escape_filter_chars  # SECURITY: Required for LDAP injection prevention
     LDAP3_AVAILABLE = True
 except ImportError:
     LDAP3_AVAILABLE = False
+    escape_filter_chars = None  # Fallback defined below
 
 # Import identity normalizer
 try:
@@ -39,6 +41,38 @@ except ImportError:
     IDENTITY_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+
+def _escape_ldap_filter(value: str) -> str:
+    """
+    Escape special characters in LDAP filter values to prevent injection attacks.
+    
+    SECURITY: This is CRITICAL for preventing LDAP injection when user input
+    is used in LDAP search filters.
+    
+    Special characters that must be escaped per RFC 4515:
+    - * (asterisk) -> \\2a
+    - ( (left paren) -> \\28
+    - ) (right paren) -> \\29
+    - \\ (backslash) -> \\5c
+    - NUL (null) -> \\00
+    """
+    if escape_filter_chars is not None:
+        return escape_filter_chars(value)
+    
+    # Fallback implementation if ldap3 not available
+    # Based on RFC 4515 - String Representation of Search Filters
+    if not value:
+        return value
+    
+    result = value
+    # Order matters - escape backslash first
+    result = result.replace('\\', '\\5c')
+    result = result.replace('*', '\\2a')
+    result = result.replace('(', '\\28')
+    result = result.replace(')', '\\29')
+    result = result.replace('\x00', '\\00')
+    return result
 
 
 class FreeIPAAuthenticator:
@@ -428,9 +462,11 @@ class FreeIPAAuthenticator:
             logger.info(f"Using AD search base: {ad_base_dn} (domain={domain}, ad_domain_fqdn={self.ad_domain_fqdn})")
             
             try:
+                # SECURITY: Escape user input to prevent LDAP injection
+                safe_user_part = _escape_ldap_filter(user_part)
                 conn.search(
                     search_base=ad_base_dn,
-                    search_filter=f"(sAMAccountName={user_part})",
+                    search_filter=f"(sAMAccountName={safe_user_part})",
                     search_scope=SUBTREE,
                     attributes=['cn', 'mail', 'displayName', 'memberOf', 'distinguishedName', 'objectSid'],
                 )
@@ -590,19 +626,23 @@ class FreeIPAAuthenticator:
                 # AD Trust users without AD DC configured: try compat tree bind
                 bind_user = username  # Keep full user@domain for SASL/Kerberos
                 user_search_base = f"cn=users,cn=compat,{self.base_dn}"
+                # SECURITY: Escape user input to prevent LDAP injection
+                safe_username = _escape_ldap_filter(username)
+                safe_clean = _escape_ldap_filter(clean_username) if clean_username else None
                 # Match multiple username forms to be resilient
-                search_terms = [f"(uid={username})"]
-                if clean_username:
-                    search_terms.append(f"(uid={clean_username})")
-                if domain:
-                    search_terms.append(f"(uid={clean_username}@{domain})")
+                search_terms = [f"(uid={safe_username})"]
+                if safe_clean:
+                    search_terms.append(f"(uid={safe_clean})")
+                if domain and safe_clean:
+                    search_terms.append(f"(uid={safe_clean}@{_escape_ldap_filter(domain)})")
                 user_filter = f"(|{''.join(search_terms)})" if len(search_terms) > 1 else search_terms[0]
                 logger.info(f"AD Trust authentication for {username} - attempting compat tree bind")
             else:
                 # Native FreeIPA users: use DN bind
                 bind_user = self._build_user_dn(clean_username)
                 user_search_base = f"{self.user_search_base},{self.base_dn}"
-                user_filter = f"(uid={clean_username})"
+                # SECURITY: Escape user input to prevent LDAP injection
+                user_filter = f"(uid={_escape_ldap_filter(clean_username)})"
                 logger.info(f"Native FreeIPA authentication for {clean_username}")
 
             logger.debug(f"Bind user: {bind_user}")
@@ -891,9 +931,10 @@ class FreeIPAAuthenticator:
                 for group_sid in ad_group_sids:
                     try:
                         logger.debug(f"[IPA GROUP SEARCH] Searching for AD group SID: {group_sid}")
+                        # SECURITY: Escape SID to prevent LDAP injection (SIDs can contain special chars)
                         conn.search(
                             search_base=ipa_groups_base,
-                            search_filter=f"(ipaExternalMember={group_sid})",
+                            search_filter=f"(ipaExternalMember={self._ldap_escape(group_sid)})",
                             search_scope=SUBTREE,
                             attributes=["cn", "dn", "ipaExternalMember"],
                         )
@@ -910,9 +951,10 @@ class FreeIPAAuthenticator:
             if user_sid:
                 logger.info(f"[IPA GROUP SEARCH] Searching by user SID: {user_sid}")
                 try:
+                    # SECURITY: Escape SID to prevent LDAP injection
                     conn.search(
                         search_base=ipa_groups_base,
-                        search_filter=f"(ipaExternalMember={user_sid})",
+                        search_filter=f"(ipaExternalMember={self._ldap_escape(user_sid)})",
                         search_scope=SUBTREE,
                         attributes=["cn", "dn", "ipaExternalMember"],
                     )
@@ -1484,9 +1526,10 @@ class FreeIPAAuthenticator:
                 user_dn = None
                 user_search_base = f"cn=users,cn=compat,{self.base_dn}"
                 
+                # SECURITY: Escape user input to prevent LDAP injection
                 conn.search(
                     search_base=user_search_base,
-                    search_filter=f"(uid={username})",
+                    search_filter=f"(uid={self._ldap_escape(username)})",
                     search_scope=SUBTREE,
                     attributes=["memberOf"],
                 )
@@ -1505,9 +1548,10 @@ class FreeIPAAuthenticator:
                 # Native FreeIPA user
                 user_dn = self._build_user_dn(clean_username)
                 
+                # SECURITY: Escape user input to prevent LDAP injection
                 conn.search(
                     search_base=f"{self.user_search_base},{self.base_dn}",
-                    search_filter=f"(uid={clean_username})",
+                    search_filter=f"(uid={self._ldap_escape(clean_username)})",
                     search_scope=SUBTREE,
                     attributes=["memberOf"],
                 )
