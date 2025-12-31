@@ -2,10 +2,11 @@ import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { logIdracCommand } from '../_shared/idrac-logger.ts';
+import { verifyRequestDualAuth } from '../_shared/hmac-verify.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-executor-signature, x-executor-timestamp',
 };
 
 interface VCenterHost {
@@ -31,38 +32,64 @@ serve(async (req) => {
   try {
     console.log('vCenter sync request received');
 
-    // Initialize Supabase client with service role for admin access
+    // Initialize Supabase clients
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-    // Verify JWT from authenticated user (admin/operator only)
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      throw new Error('Missing authorization header');
-    }
-
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     
-    if (authError || !user) {
-      throw new Error('Unauthorized');
-    }
+    // Service role client for database operations
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    
+    // Auth client with request's auth header for JWT verification
+    const authClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: req.headers.get('Authorization') || '' } }
+    });
 
-    // Check if user has admin or operator role
-    const { data: roles, error: roleError } = await supabase
-      .from('user_roles')
-      .select('role')
-      .eq('user_id', user.id);
-
-    if (roleError) throw roleError;
-
-    const hasPermission = roles?.some(r => r.role === 'admin' || r.role === 'operator');
-    if (!hasPermission) {
-      throw new Error('Insufficient permissions');
-    }
-
+    // Parse request body first for authentication verification
     const body = await req.json();
+    
+    // Verify request using dual auth: HMAC (Job Executor) or JWT (frontend)
+    const authResult = await verifyRequestDualAuth(req, body, supabase);
+    
+    if (!authResult.authenticated) {
+      console.log('Authentication failed:', authResult.method);
+      return new Response(
+        JSON.stringify({ success: false, error: 'Unauthorized: Invalid request signature or token' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    console.log(`Request authenticated via ${authResult.method}`);
+    
+    // For JWT auth, verify user has permission
+    let userId = authResult.userId;
+    
+    if (authResult.method === 'jwt' && userId) {
+      // Check if user has admin or operator role
+      const { data: roles, error: roleError } = await supabase
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', userId);
+
+      if (roleError) throw roleError;
+
+      const hasPermission = roles?.some(r => r.role === 'admin' || r.role === 'operator');
+      if (!hasPermission) {
+        throw new Error('Insufficient permissions');
+      }
+    } else if (authResult.method === 'hmac') {
+      // HMAC auth from Job Executor - use a system user or null for audit
+      // Try to get a system admin user for audit logging
+      const { data: adminUser } = await supabase
+        .from('user_roles')
+        .select('user_id')
+        .eq('role', 'admin')
+        .limit(1)
+        .maybeSingle();
+      
+      userId = adminUser?.user_id || null;
+    }
+
     const hosts = body.hosts || [];
     const jobId = body.job_id; // Accept job_id from request
     const vcenterId = body.vcenter_id; // Accept vcenter_id for logging
@@ -240,15 +267,17 @@ serve(async (req) => {
               console.log(`Auto-linked: ${host.name} <-> Server ${matchingServer.id}`);
 
               // Log the auto-link event
-              await supabase.from('audit_logs').insert([{
-                user_id: user.id,
-                action: 'auto_link_server',
-                details: {
-                  vcenter_host: host.name,
-                  server_id: matchingServer.id,
-                  service_tag: host.serial_number,
-                },
-              }]);
+              if (userId) {
+                await supabase.from('audit_logs').insert([{
+                  user_id: userId,
+                  action: 'auto_link_server',
+                  details: {
+                    vcenter_host: host.name,
+                    server_id: matchingServer.id,
+                    service_tag: host.serial_number,
+                  },
+                }]);
+              }
               
               // Update task progress
               if (taskId) {
@@ -315,18 +344,20 @@ serve(async (req) => {
     }
 
     // Log the sync event
-    await supabase.from('audit_logs').insert([{
-      user_id: user.id,
-      action: 'vcenter_sync',
-      details: {
-        total_hosts: hosts.length,
-        new_hosts: newHosts,
-        updated_hosts: updatedHosts,
-        linked_servers: linkedServers,
-        errors: errors.length,
-        job_id: jobId,
-      },
-    }]);
+    if (userId) {
+      await supabase.from('audit_logs').insert([{
+        user_id: userId,
+        action: 'vcenter_sync',
+        details: {
+          total_hosts: hosts.length,
+          new_hosts: newHosts,
+          updated_hosts: updatedHosts,
+          linked_servers: linkedServers,
+          errors: errors.length,
+          job_id: jobId,
+        },
+      }]);
+    }
     
     // Log to Activity Monitor
     const syncTime = Date.now() - startTime;
@@ -344,7 +375,7 @@ serve(async (req) => {
       responseBody: { new: newHosts, updated: updatedHosts, linked: linkedServers, errors: errors.length },
       success: errors.length === 0,
       errorMessage: errors.length > 0 ? errors.slice(0, 3).join('; ') : undefined,
-      initiatedBy: user.id,
+      initiatedBy: userId || undefined,
       source: 'vcenter_sync_edge',
       operationType: 'vcenter_api',
     });
