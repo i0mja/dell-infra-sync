@@ -23,6 +23,7 @@ export type Database = {
           created_at: string
           discovery_max_threads: number | null
           encryption_key: string | null
+          executor_shared_secret_encrypted: string | null
           id: string
           idrac_max_concurrent: number | null
           idrac_request_delay_ms: number | null
@@ -58,6 +59,7 @@ export type Database = {
           created_at?: string
           discovery_max_threads?: number | null
           encryption_key?: string | null
+          executor_shared_secret_encrypted?: string | null
           id?: string
           idrac_max_concurrent?: number | null
           idrac_request_delay_ms?: number | null
@@ -93,6 +95,7 @@ export type Database = {
           created_at?: string
           discovery_max_threads?: number | null
           encryption_key?: string | null
+          executor_shared_secret_encrypted?: string | null
           id?: string
           idrac_max_concurrent?: number | null
           idrac_request_delay_ms?: number | null

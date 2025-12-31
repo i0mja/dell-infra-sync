@@ -50,3 +50,6 @@ verify_jwt = true  # Requires admin authentication to delete signed-in users
 
 [functions.generate-ssh-keypair]
 verify_jwt = true  # Requires authentication for SSH key generation
+
+[functions.set-executor-secret]
+verify_jwt = true  # Requires admin authentication for setting executor HMAC secret
