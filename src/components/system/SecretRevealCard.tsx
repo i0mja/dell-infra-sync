@@ -32,6 +32,7 @@ interface SecretRevealCardProps {
     command: string;
     restartCommand: string;
   };
+  extraContent?: React.ReactNode;
 }
 
 export function SecretRevealCard({
@@ -49,6 +50,7 @@ export function SecretRevealCard({
   canRegenerate = false,
   linuxInstructions,
   windowsInstructions,
+  extraContent,
 }: SecretRevealCardProps) {
   const { toast } = useToast();
 
@@ -234,6 +236,8 @@ export function SecretRevealCard({
             )}
           </div>
         )}
+        
+        {extraContent}
       </CardContent>
     </Card>
   );

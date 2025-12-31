@@ -45,6 +45,8 @@ export function JobExecutorSetupCard() {
   const [hmacSecret, setHmacSecret] = useState<string | null>(null);
   const [hmacRevealed, setHmacRevealed] = useState(false);
   const [hmacLoading, setHmacLoading] = useState(false);
+  const [hmacTestResult, setHmacTestResult] = useState<any>(null);
+  const [hmacTesting, setHmacTesting] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -190,6 +192,41 @@ export function JobExecutorSetupCard() {
       });
     } finally {
       setHmacLoading(false);
+    }
+  };
+
+  const handleTestHmac = async () => {
+    setHmacTesting(true);
+    setHmacTestResult(null);
+    try {
+      // Call update-job with ping action - this tests if HMAC is working
+      const { data, error } = await supabase.functions.invoke('update-job', {
+        body: { action: 'ping' }
+      });
+      
+      setHmacTestResult(data || { error: error?.message });
+      
+      if (data?.success) {
+        toast({
+          title: "HMAC Test Passed",
+          description: `Authenticated via ${data.auth_method}`,
+        });
+      } else {
+        toast({
+          title: "HMAC Test Info",
+          description: data?.message || error?.message || "Check results below",
+          variant: data?.secret_configured_in_edge ? "destructive" : "default",
+        });
+      }
+    } catch (error: any) {
+      setHmacTestResult({ error: error.message });
+      toast({
+        title: "Test Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setHmacTesting(false);
     }
   };
 
@@ -346,6 +383,36 @@ export function JobExecutorSetupCard() {
             command: 'nssm set DellServerManagerJobExecutor AppEnvironmentExtra ... "EXECUTOR_SHARED_SECRET=${SECRET}"',
             restartCommand: "nssm restart DellServerManagerJobExecutor"
           }}
+          extraContent={
+            <div className="mt-3 pt-3 border-t space-y-2">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={handleTestHmac}
+                disabled={hmacTesting}
+                className="w-full"
+              >
+                {hmacTesting ? (
+                  <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                ) : null}
+                Test HMAC Connection
+              </Button>
+              {hmacTestResult && (
+                <div className={`text-xs p-2 rounded font-mono ${
+                  hmacTestResult.success 
+                    ? 'bg-green-500/10 text-green-700 dark:text-green-400' 
+                    : 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
+                }`}>
+                  <div><strong>Auth method:</strong> {hmacTestResult.auth_method || 'none'}</div>
+                  <div><strong>Edge secret:</strong> {hmacTestResult.secret_configured_in_edge ? hmacTestResult.secret_prefix : 'NOT SET'}</div>
+                  {hmacTestResult.received_sig_prefix && (
+                    <div><strong>Received sig:</strong> {hmacTestResult.received_sig_prefix}</div>
+                  )}
+                  <div><strong>Result:</strong> {hmacTestResult.message || hmacTestResult.error || 'Unknown'}</div>
+                </div>
+              )}
+            </div>
+          }
         />
       </div>
     </div>
