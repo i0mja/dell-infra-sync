@@ -22,14 +22,14 @@ export default function UpdateReport() {
   }
 
   return (
-    <div className="h-full overflow-auto">
-      <div className="p-6 space-y-4">
+    <div className="h-full flex flex-col overflow-hidden">
+      <div className="border-b bg-card/50 px-6 py-4">
         <Breadcrumb>
           <BreadcrumbList>
             <BreadcrumbItem>
               <BreadcrumbLink 
                 onClick={() => navigate('/reports')}
-                className="cursor-pointer"
+                className="cursor-pointer hover:text-foreground"
               >
                 Reports
               </BreadcrumbLink>
@@ -38,9 +38,9 @@ export default function UpdateReport() {
             <BreadcrumbItem>
               <BreadcrumbLink 
                 onClick={() => navigate('/reports?category=updates')}
-                className="cursor-pointer"
+                className="cursor-pointer hover:text-foreground"
               >
-                Update Reports
+                Updates
               </BreadcrumbLink>
             </BreadcrumbItem>
             <BreadcrumbSeparator />
@@ -49,7 +49,9 @@ export default function UpdateReport() {
             </BreadcrumbItem>
           </BreadcrumbList>
         </Breadcrumb>
+      </div>
 
+      <div className="flex-1 overflow-auto p-6">
         <UpdateAvailabilityReport
           scanId={scanId}
           onBack={() => navigate(-1)}
