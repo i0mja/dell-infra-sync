@@ -1,58 +1,26 @@
-import { useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { SettingsTabLayout, SettingsTab } from "@/components/settings";
 import { SystemHealthOverview } from "@/components/system/SystemHealthOverview";
 import { JobExecutorSetupCard } from "@/components/system/JobExecutorSetupCard";
 import { DataRetentionSettings } from "@/components/system/DataRetentionSettings";
 import { NetworkAdvancedSettings } from "@/components/system/NetworkAdvancedSettings";
 import { Activity, Server, Database, Settings2 } from "lucide-react";
-
-type SystemSubsection = 'overview' | 'job-executor' | 'retention' | 'advanced';
-
-const subsections = [
-  { id: 'overview' as const, label: 'Overview', icon: Activity },
-  { id: 'job-executor' as const, label: 'Job Executor', icon: Server },
-  { id: 'retention' as const, label: 'Retention', icon: Database },
-  { id: 'advanced' as const, label: 'Advanced', icon: Settings2 },
-];
+import { useSearchParams } from "react-router-dom";
 
 export function SystemSettings() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const sectionParam = searchParams.get('section') as SystemSubsection | null;
-  const [activeSection, setActiveSection] = useState<SystemSubsection>(
-    sectionParam && subsections.some(s => s.id === sectionParam) ? sectionParam : 'overview'
-  );
 
   const handleSectionChange = (section: string) => {
-    setActiveSection(section as SystemSubsection);
     const params = new URLSearchParams(searchParams);
     params.set('section', section);
     setSearchParams(params, { replace: true });
   };
 
-  return (
-    <div className="space-y-6">
-      {/* Subsection Navigation */}
-      <Tabs value={activeSection} onValueChange={handleSectionChange}>
-        <TabsList className="grid w-full grid-cols-4 h-9">
-          {subsections.map((section) => {
-            const Icon = section.icon;
-            return (
-              <TabsTrigger 
-                key={section.id} 
-                value={section.id}
-                className="text-xs gap-1.5"
-              >
-                <Icon className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">{section.label}</span>
-              </TabsTrigger>
-            );
-          })}
-        </TabsList>
-      </Tabs>
-
-      {/* Section Content */}
-      {activeSection === 'overview' && (
+  const tabs: SettingsTab[] = [
+    { 
+      id: 'overview', 
+      label: 'Overview', 
+      icon: Activity, 
+      content: (
         <div className="space-y-4">
           <SystemHealthOverview />
           <div className="grid gap-4 md:grid-cols-2">
@@ -74,21 +42,36 @@ export function SystemSettings() {
             </div>
           </div>
         </div>
-      )}
-
-      {activeSection === 'job-executor' && (
-        <JobExecutorSetupCard />
-      )}
-
-      {activeSection === 'retention' && (
-        <DataRetentionSettings />
-      )}
-
-      {activeSection === 'advanced' && (
+      )
+    },
+    { 
+      id: 'job-executor', 
+      label: 'Job Executor', 
+      icon: Server, 
+      content: <JobExecutorSetupCard />
+    },
+    { 
+      id: 'retention', 
+      label: 'Retention', 
+      icon: Database, 
+      content: <DataRetentionSettings />
+    },
+    { 
+      id: 'advanced', 
+      label: 'Advanced', 
+      icon: Settings2, 
+      content: (
         <div className="space-y-4">
           <NetworkAdvancedSettings />
         </div>
-      )}
-    </div>
+      )
+    },
+  ];
+
+  return (
+    <SettingsTabLayout 
+      tabs={tabs} 
+      defaultTab="overview"
+    />
   );
 }
