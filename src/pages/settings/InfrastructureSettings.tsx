@@ -28,7 +28,10 @@ export function InfrastructureSettings() {
 
   const handleTabChange = (value: string) => {
     setActiveTab(value);
-    setSearchParams({ section: value });
+    // Preserve existing params (like 'tab') while updating 'section'
+    const newParams = new URLSearchParams(searchParams);
+    newParams.set('section', value);
+    setSearchParams(newParams);
   };
 
   const handleNavigateToTab = (tab: string) => {
