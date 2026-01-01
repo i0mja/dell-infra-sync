@@ -42,8 +42,15 @@ export const IsoImageLibrary = ({ onSelectIso }: IsoImageLibraryProps) => {
 
   return (
     <>
-      <div className="space-y-4">
-        <div className="flex items-center justify-end">
+      <div className="space-y-6">
+        {/* Header Row */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold">ISO Images Library</h3>
+            <p className="text-sm text-muted-foreground">
+              Manage bootable ISO images for server provisioning
+            </p>
+          </div>
           <Button onClick={() => setShowRegisterDialog(true)}>
             <Upload className="h-4 w-4 mr-2" />
             Register ISO
@@ -53,7 +60,10 @@ export const IsoImageLibrary = ({ onSelectIso }: IsoImageLibraryProps) => {
         {/* Storage Usage */}
         <div className="bg-muted/30 rounded-lg p-4">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium">Storage Used</span>
+            <div className="flex items-center gap-2">
+              <HardDrive className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-medium">Storage Used</span>
+            </div>
             <span className="text-sm text-muted-foreground">
               {totalStorageGB.toFixed(2)} GB
             </span>

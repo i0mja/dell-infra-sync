@@ -1,4 +1,5 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent } from "@/components/ui/card";
 import { IsoImageLibrary } from "@/components/settings/IsoImageLibrary";
 import { FirmwareLibrary } from "@/components/settings/FirmwareLibrary";
 import { ZfsApplianceLibrary } from "@/components/settings/ZfsApplianceLibrary";
@@ -27,15 +28,27 @@ export function LibraryTabPanel({ defaultTab = "iso" }: LibraryTabPanelProps) {
       </TabsList>
 
       <TabsContent value="iso" className="mt-4">
-        <IsoImageLibrary />
+        <Card>
+          <CardContent className="p-6">
+            <IsoImageLibrary />
+          </CardContent>
+        </Card>
       </TabsContent>
 
       <TabsContent value="firmware" className="mt-4">
-        <FirmwareLibrary />
+        <Card>
+          <CardContent className="p-6">
+            <FirmwareLibrary />
+          </CardContent>
+        </Card>
       </TabsContent>
 
       <TabsContent value="zfs" className="mt-4">
-        <ZfsApplianceLibrary />
+        <Card>
+          <CardContent className="p-6">
+            <ZfsApplianceLibrary />
+          </CardContent>
+        </Card>
       </TabsContent>
     </Tabs>
   );

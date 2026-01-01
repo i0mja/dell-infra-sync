@@ -34,7 +34,14 @@ export function FirmwareLibrary() {
   return (
     <>
       <div className="space-y-6">
-        <div className="flex items-center justify-end">
+        {/* Header Row */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold">Firmware Library</h3>
+            <p className="text-sm text-muted-foreground">
+              Manage Dell firmware packages for server updates
+            </p>
+          </div>
           <Button onClick={() => setUploadDialogOpen(true)}>
             <Upload className="h-4 w-4 mr-2" />
             Upload Firmware
@@ -42,11 +49,11 @@ export function FirmwareLibrary() {
         </div>
 
         {/* Storage indicator */}
-        <div className="space-y-2">
+        <div className="bg-muted/30 rounded-lg p-4 space-y-2">
           <div className="flex items-center justify-between text-sm">
             <div className="flex items-center gap-2 text-muted-foreground">
               <HardDrive className="h-4 w-4" />
-              <span>Storage Usage</span>
+              <span className="font-medium text-foreground">Storage Usage</span>
             </div>
             <span className="font-medium">
               {totalStorageGB.toFixed(2)} GB / {maxStorageGB} GB
