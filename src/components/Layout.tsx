@@ -1,7 +1,7 @@
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { Server, Database, Activity, LogOut, Menu, Settings, LayoutDashboard, ChevronRight, FileBarChart, Calendar } from "lucide-react";
+import { Server, Database, Activity, LogOut, Menu, Settings, LayoutDashboard, ChevronRight, Calendar, FileBarChart } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
 import {
@@ -20,6 +20,7 @@ import { useSearchParams } from "react-router-dom";
 import { NotificationCenter } from "@/components/notifications/NotificationCenter";
 import { SearchTrigger } from "@/components/search/SearchTrigger";
 import { getSettingsNavigation } from "@/config/settings-tabs";
+import { getReportsNavigation } from "@/config/reports-navigation";
 import { useJobExecutorInit } from "@/hooks/useJobExecutorInit";
 import { GlobalSyncIndicator } from "@/components/GlobalSyncIndicator";
 const Layout = () => {
@@ -29,12 +30,14 @@ const Layout = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchParams] = useSearchParams();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [reportsOpen, setReportsOpen] = useState(false);
   
   // Initialize Job Executor URL from database on app load
   useJobExecutorInit();
 
   useEffect(() => {
     setSettingsOpen(location.pathname === '/settings');
+    setReportsOpen(location.pathname.startsWith('/reports'));
   }, [location.pathname]);
 
   useEffect(() => {
@@ -65,10 +68,32 @@ const Layout = () => {
     { name: "vCenter", href: "/vcenter", icon: Database },
     { name: "Maintenance Planner", href: "/maintenance-planner", icon: Calendar },
     { name: "Activity Monitor", href: "/activity", icon: Activity },
-    { name: "Reports", href: "/reports", icon: FileBarChart },
   ];
 
   const settingsNavigation = getSettingsNavigation();
+  const reportsNavigation = getReportsNavigation();
+  
+  const isReportItemActive = (href: string) => {
+    const category = new URLSearchParams(href.split('?')[1] || '').get('category');
+    const currentCategory = searchParams.get('category');
+    
+    // For update report detail pages, highlight "Update Reports"
+    if (location.pathname.startsWith('/reports/updates')) {
+      return href.includes('category=updates');
+    }
+    
+    // Exact match for main reports page without category
+    if (href === '/reports' && !category) {
+      return location.pathname === '/reports' && !currentCategory;
+    }
+    
+    // Category match
+    if (category && location.pathname === '/reports') {
+      return currentCategory === category;
+    }
+    
+    return false;
+  };
 
   const activeTab = searchParams.get('tab') || 'general';
 
@@ -95,6 +120,55 @@ const Layout = () => {
           </Button>
         );
       })}
+      
+      {/* Reports Dropdown */}
+      <Collapsible open={reportsOpen}>
+        <CollapsibleTrigger asChild>
+          <Button
+            variant={location.pathname.startsWith('/reports') ? "secondary" : "ghost"}
+            className={cn(
+              "w-full justify-start transition-all duration-200",
+              location.pathname.startsWith('/reports') && "bg-secondary"
+            )}
+            onClick={() => {
+              if (!location.pathname.startsWith('/reports')) {
+                navigate('/reports');
+              }
+              setReportsOpen(!reportsOpen);
+            }}
+          >
+            <FileBarChart className="mr-2 h-4 w-4" />
+            <span className="flex-1 text-left">Reports</span>
+            <ChevronRight className={cn(
+              "h-4 w-4 transition-transform duration-300 ease-in-out",
+              reportsOpen && "rotate-90"
+            )} />
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="space-y-1 mt-1">
+          {reportsNavigation.map((item) => {
+            const isActive = isReportItemActive(item.href);
+            return (
+              <Button
+                key={item.name}
+                variant={isActive ? "secondary" : "ghost"}
+                className={cn(
+                  "w-full justify-start pl-10 text-sm transition-all duration-200 truncate",
+                  isActive && "bg-muted text-foreground font-medium"
+                )}
+                onClick={() => {
+                  navigate(item.href);
+                  setMobileOpen(false);
+                }}
+                title={item.name}
+              >
+                <item.icon className="mr-2 h-3.5 w-3.5 flex-shrink-0" />
+                <span className="truncate">{item.name}</span>
+              </Button>
+            );
+          })}
+        </CollapsibleContent>
+      </Collapsible>
       
       {/* Settings Dropdown */}
       <Collapsible open={settingsOpen}>

@@ -415,8 +415,8 @@ export default function Reports() {
   const currentVisibleColumns = visibleColumns.length > 0 ? visibleColumns : columns.map((c) => c.key);
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="h-full overflow-auto">
+      <div className="p-6 flex flex-col h-full overflow-hidden">
         <Tabs
           value={activeCategory}
           onValueChange={handleCategoryChange}
@@ -480,13 +480,13 @@ export default function Reports() {
             </TabsContent>
           ))}
         </Tabs>
-      </div>
 
-      <UpdateDetailDialog
-        open={!!selectedUpdate}
-        onOpenChange={(open) => !open && setSelectedUpdate(null)}
-        update={selectedUpdate}
-      />
+        <UpdateDetailDialog
+          open={!!selectedUpdate}
+          onOpenChange={(open) => !open && setSelectedUpdate(null)}
+          update={selectedUpdate}
+        />
+      </div>
     </div>
   );
 }

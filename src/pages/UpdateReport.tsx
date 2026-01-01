@@ -22,34 +22,45 @@ export default function UpdateReport() {
   }
 
   return (
-    <div className="space-y-4">
-      <Breadcrumb>
-        <BreadcrumbList>
-          <BreadcrumbItem>
-            <BreadcrumbLink 
-              onClick={() => navigate('/reports')}
-              className="cursor-pointer"
-            >
-              Reports
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage>Update Availability Report</BreadcrumbPage>
-          </BreadcrumbItem>
-        </BreadcrumbList>
-      </Breadcrumb>
+    <div className="h-full overflow-auto">
+      <div className="p-6 space-y-4">
+        <Breadcrumb>
+          <BreadcrumbList>
+            <BreadcrumbItem>
+              <BreadcrumbLink 
+                onClick={() => navigate('/reports')}
+                className="cursor-pointer"
+              >
+                Reports
+              </BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              <BreadcrumbLink 
+                onClick={() => navigate('/reports?category=updates')}
+                className="cursor-pointer"
+              >
+                Update Reports
+              </BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              <BreadcrumbPage>Scan Details</BreadcrumbPage>
+            </BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
 
-      <UpdateAvailabilityReport
-        scanId={scanId}
-        onBack={() => navigate(-1)}
-        onStartRollingUpdate={(serverIds) => {
-          // Navigate to maintenance planner with context
-          navigate('/maintenance-planner', { 
-            state: { preSelectedServers: serverIds } 
-          });
-        }}
-      />
+        <UpdateAvailabilityReport
+          scanId={scanId}
+          onBack={() => navigate(-1)}
+          onStartRollingUpdate={(serverIds) => {
+            // Navigate to maintenance planner with context
+            navigate('/maintenance-planner', { 
+              state: { preSelectedServers: serverIds } 
+            });
+          }}
+        />
+      </div>
     </div>
   );
 }
