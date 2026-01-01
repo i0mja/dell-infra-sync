@@ -1712,24 +1712,53 @@ class ReplicationHandler(BaseHandler):
                                     
                                     send_start = time.time()
                                     
-                                    # Perform actual ZFS send/receive
+                                    # Perform actual ZFS send/receive with heartbeat progress updates
                                     # Execute ZFS send on the SOURCE server (Site A) via SSH
                                     # This allows the Job Executor to run on Windows/non-ZFS systems
-                                    send_result = self.zfs_replication.replicate_dataset(
-                                        source_dataset=source_dataset,
-                                        source_snapshot=snapshot_name,
-                                        target_host=dr_hostname,
-                                        target_dataset=target_dataset,
-                                        incremental_from=previous_snapshot,
-                                        ssh_username=dr_username,
-                                        ssh_port=dr_port,
-                                        target_ssh_key_data=dr_key_data,  # Site B's SSH key
-                                        # Source SSH credentials - execute ZFS send on Site A
-                                        source_host=ssh_hostname,
-                                        source_ssh_username=ssh_username,
-                                        source_ssh_port=ssh_port,
-                                        source_ssh_key_data=ssh_key_data
-                                    )
+                                    
+                                    # Use threaded execution with heartbeat for progress reporting
+                                    import threading
+                                    import queue
+                                    
+                                    result_queue = queue.Queue()
+                                    transfer_complete = threading.Event()
+                                    
+                                    def transfer_thread():
+                                        try:
+                                            result = self.zfs_replication.replicate_dataset(
+                                                source_dataset=source_dataset,
+                                                source_snapshot=snapshot_name,
+                                                target_host=dr_hostname,
+                                                target_dataset=target_dataset,
+                                                incremental_from=previous_snapshot,
+                                                ssh_username=dr_username,
+                                                ssh_port=dr_port,
+                                                target_ssh_key_data=dr_key_data,
+                                                source_host=ssh_hostname,
+                                                source_ssh_username=ssh_username,
+                                                source_ssh_port=ssh_port,
+                                                source_ssh_key_data=ssh_key_data,
+                                                expected_bytes=expected_bytes  # Pass for dynamic timeout
+                                            )
+                                            result_queue.put(result)
+                                        except Exception as e:
+                                            result_queue.put({'success': False, 'error': str(e)})
+                                        finally:
+                                            transfer_complete.set()
+                                    
+                                    # Start transfer in background thread
+                                    t = threading.Thread(target=transfer_thread, daemon=True)
+                                    t.start()
+                                    
+                                    # Heartbeat loop - update job every 5 seconds while transfer runs
+                                    heartbeat_interval = 5
+                                    while not transfer_complete.wait(timeout=heartbeat_interval):
+                                        elapsed = int(time.time() - send_start)
+                                        results['current_step'] = f'Transferring {vm_name} ({self._format_bytes(expected_bytes)}) - {elapsed}s elapsed'
+                                        self.update_job_status(job_id, 'running', details=results)
+                                    
+                                    # Get result from queue
+                                    send_result = result_queue.get(timeout=5)
                                     
                                     send_duration = int((time.time() - send_start) * 1000)
                                     
