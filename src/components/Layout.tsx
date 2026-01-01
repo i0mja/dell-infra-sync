@@ -10,11 +10,6 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useSearchParams } from "react-router-dom";
 import { NotificationCenter } from "@/components/notifications/NotificationCenter";
@@ -23,6 +18,7 @@ import { getSettingsNavigation } from "@/config/settings-tabs";
 import { getReportsNavigation } from "@/config/reports-navigation";
 import { useJobExecutorInit } from "@/hooks/useJobExecutorInit";
 import { GlobalSyncIndicator } from "@/components/GlobalSyncIndicator";
+
 const Layout = () => {
   const { user, signOut, loading } = useAuth();
   const navigate = useNavigate();
@@ -74,22 +70,22 @@ const Layout = () => {
   const reportsNavigation = getReportsNavigation();
   
   const isReportItemActive = (href: string) => {
-    const category = new URLSearchParams(href.split('?')[1] || '').get('category');
+    const targetCategory = new URLSearchParams(href.split('?')[1] || '').get('category');
     const currentCategory = searchParams.get('category');
     
-    // For update report detail pages, highlight "Update Reports"
+    // For update report detail pages, highlight "Updates"
     if (location.pathname.startsWith('/reports/updates')) {
-      return href.includes('category=updates');
+      return targetCategory === 'updates';
     }
     
-    // Exact match for main reports page without category
-    if (href === '/reports' && !category) {
+    // "All Reports" is active when on /reports without category param
+    if (href === '/reports' && !targetCategory) {
       return location.pathname === '/reports' && !currentCategory;
     }
     
-    // Category match
-    if (category && location.pathname === '/reports') {
-      return currentCategory === category;
+    // Category match when on /reports page
+    if (targetCategory && location.pathname === '/reports') {
+      return currentCategory === targetCategory;
     }
     
     return false;
@@ -121,15 +117,15 @@ const Layout = () => {
         );
       })}
       
-      {/* Reports Dropdown */}
-      <Collapsible open={reportsOpen} onOpenChange={setReportsOpen}>
+      {/* Reports Dropdown - Plain conditional rendering */}
+      <div>
         <Button
           variant={location.pathname.startsWith('/reports') ? "secondary" : "ghost"}
           className={cn(
             "w-full justify-start transition-all duration-200",
             location.pathname.startsWith('/reports') && "bg-secondary"
           )}
-          onClick={() => setReportsOpen(!reportsOpen)}
+          onClick={() => setReportsOpen(prev => !prev)}
         >
           <FileBarChart className="mr-2 h-4 w-4" />
           <span className="flex-1 text-left">Reports</span>
@@ -138,41 +134,43 @@ const Layout = () => {
             reportsOpen && "rotate-90"
           )} />
         </Button>
-        <CollapsibleContent className="space-y-1 mt-1">
-          {reportsNavigation.map((item) => {
-            const isActive = isReportItemActive(item.href);
-            return (
-              <Button
-                key={item.name}
-                variant={isActive ? "secondary" : "ghost"}
-                className={cn(
-                  "w-full justify-start pl-10 text-sm transition-all duration-200 truncate relative z-10",
-                  isActive && "bg-muted text-foreground font-medium"
-                )}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  navigate(item.href);
-                  setMobileOpen(false);
-                }}
-                title={item.name}
-              >
-                <item.icon className="mr-2 h-3.5 w-3.5 flex-shrink-0" />
-                <span className="truncate">{item.name}</span>
-              </Button>
-            );
-          })}
-        </CollapsibleContent>
-      </Collapsible>
+        
+        {reportsOpen && (
+          <div className="space-y-0.5 mt-1">
+            {reportsNavigation.map((item) => {
+              const isActive = isReportItemActive(item.href);
+              return (
+                <Button
+                  key={item.name}
+                  variant={isActive ? "secondary" : "ghost"}
+                  className={cn(
+                    "w-full justify-start pl-10 text-sm transition-all duration-200 truncate",
+                    isActive && "bg-muted text-foreground font-medium"
+                  )}
+                  onClick={() => {
+                    navigate(item.href);
+                    setMobileOpen(false);
+                  }}
+                  title={item.name}
+                >
+                  <item.icon className="mr-2 h-3.5 w-3.5 flex-shrink-0" />
+                  <span className="truncate">{item.name}</span>
+                </Button>
+              );
+            })}
+          </div>
+        )}
+      </div>
       
-      {/* Settings Dropdown */}
-      <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen}>
+      {/* Settings Dropdown - Plain conditional rendering */}
+      <div>
         <Button
           variant={location.pathname === '/settings' ? "secondary" : "ghost"}
           className={cn(
             "w-full justify-start transition-all duration-200",
             location.pathname === '/settings' && "bg-secondary"
           )}
-          onClick={() => setSettingsOpen(!settingsOpen)}
+          onClick={() => setSettingsOpen(prev => !prev)}
         >
           <Settings className="mr-2 h-4 w-4" />
           <span className="flex-1 text-left">Settings</span>
@@ -181,33 +179,35 @@ const Layout = () => {
             settingsOpen && "rotate-90"
           )} />
         </Button>
-        <CollapsibleContent className="space-y-1 mt-1">
-          {settingsNavigation.map((item) => {
-            const isActive = location.pathname === '/settings' && 
-                            (item.href.includes(`tab=${activeTab}`) || 
-                             (!activeTab && item.href.includes('tab=appearance')));
-            return (
-              <Button
-                key={item.name}
-                variant={isActive ? "secondary" : "ghost"}
-                className={cn(
-                  "w-full justify-start pl-10 text-sm transition-all duration-200 truncate relative z-10",
-                  isActive && "bg-muted text-foreground font-medium"
-                )}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  navigate(item.href);
-                  setMobileOpen(false);
-                }}
-                title={item.name}
-              >
-                <item.icon className="mr-2 h-3.5 w-3.5 flex-shrink-0" />
-                <span className="truncate">{item.name}</span>
-              </Button>
-            );
-          })}
-        </CollapsibleContent>
-      </Collapsible>
+        
+        {settingsOpen && (
+          <div className="space-y-0.5 mt-1">
+            {settingsNavigation.map((item) => {
+              const isActive = location.pathname === '/settings' && 
+                              (item.href.includes(`tab=${activeTab}`) || 
+                               (!activeTab && item.href.includes('tab=appearance')));
+              return (
+                <Button
+                  key={item.name}
+                  variant={isActive ? "secondary" : "ghost"}
+                  className={cn(
+                    "w-full justify-start pl-10 text-sm transition-all duration-200 truncate",
+                    isActive && "bg-muted text-foreground font-medium"
+                  )}
+                  onClick={() => {
+                    navigate(item.href);
+                    setMobileOpen(false);
+                  }}
+                  title={item.name}
+                >
+                  <item.icon className="mr-2 h-3.5 w-3.5 flex-shrink-0" />
+                  <span className="truncate">{item.name}</span>
+                </Button>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </>
   );
 

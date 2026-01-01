@@ -1,14 +1,19 @@
-import { useState, useMemo, useCallback } from "react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useState, useMemo, useCallback, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { ReportsFilterToolbar } from "@/components/reports/ReportsFilterToolbar";
 import { ReportSummaryBar } from "@/components/reports/ReportSummaryBar";
 import { ReportTable, ReportColumn } from "@/components/reports/ReportTable";
 import { UpdateDetailDialog } from "@/components/reports/UpdateDetailDialog";
+import { ReportsPageHeader } from "@/components/reports/ReportsPageHeader";
 import { REPORT_CATEGORIES, getReportsByCategory, ReportCategory, ReportType, REPORTS } from "@/config/reports-config";
 import { useReports } from "@/hooks/useReports";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 import { subDays, startOfMonth, endOfMonth, subMonths, format } from "date-fns";
+import { FileBarChart } from "lucide-react";
 
 // Get date range from preset string
 function getDateRangeFromPreset(preset: string): { from: Date; to: Date } {
@@ -325,12 +330,21 @@ function formatFileSize(bytes: number): string {
 }
 
 export default function Reports() {
-  const [activeCategory, setActiveCategory] = useState<ReportCategory>("inventory");
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedReportType, setSelectedReportType] = useState<ReportType | null>(null);
   const [dateRangePreset, setDateRangePreset] = useState("30d");
   const [searchTerm, setSearchTerm] = useState("");
   const [visibleColumns, setVisibleColumns] = useState<string[]>([]);
   const [selectedUpdate, setSelectedUpdate] = useState<any | null>(null);
+
+  // Read category from URL, default to "inventory"
+  const categoryFromUrl = searchParams.get('category') as ReportCategory | null;
+  const activeCategory = categoryFromUrl && REPORT_CATEGORIES.some(c => c.id === categoryFromUrl) 
+    ? categoryFromUrl 
+    : "inventory";
+
+  // Get current category config
+  const currentCategoryConfig = REPORT_CATEGORIES.find(c => c.id === activeCategory);
 
   // Get reports for the active category
   const categoryReports = useMemo(() => getReportsByCategory(activeCategory), [activeCategory]);
@@ -342,6 +356,13 @@ export default function Reports() {
     }
     return categoryReports[0]?.id || null;
   }, [selectedReportType, categoryReports]);
+
+  // Reset selected report when category changes via URL
+  useEffect(() => {
+    setSelectedReportType(null);
+    setVisibleColumns([]);
+    setSearchTerm("");
+  }, [activeCategory]);
 
   // Get date range from preset
   const dateRange = useMemo(() => getDateRangeFromPreset(dateRangePreset), [dateRangePreset]);
@@ -365,12 +386,14 @@ export default function Reports() {
     }
   }, [columns]);
 
-  // Handle category change
+  // Handle category change - update URL
   const handleCategoryChange = (category: string) => {
-    setActiveCategory(category as ReportCategory);
-    setSelectedReportType(null);
-    setVisibleColumns([]);
-    setSearchTerm("");
+    if (category === "inventory") {
+      searchParams.delete('category');
+    } else {
+      searchParams.set('category', category);
+    }
+    setSearchParams(searchParams);
   };
 
   // Handle report type change
@@ -415,78 +438,80 @@ export default function Reports() {
   const currentVisibleColumns = visibleColumns.length > 0 ? visibleColumns : columns.map((c) => c.key);
 
   return (
-    <div className="h-full overflow-auto">
-      <div className="p-6 flex flex-col h-full overflow-hidden">
-        <Tabs
-          value={activeCategory}
-          onValueChange={handleCategoryChange}
-          className="h-full flex flex-col"
-        >
-          <div className="flex items-center border-b bg-card px-4">
-            <TabsList className="h-auto p-0 bg-transparent gap-2">
-              {REPORT_CATEGORIES.map((category) => {
-                const Icon = category.icon;
-                return (
-                  <TabsTrigger
-                    key={category.id}
-                    value={category.id}
-                    className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
-                  >
-                    <Icon className="h-4 w-4 mr-2" />
-                    {category.label}
-                  </TabsTrigger>
-                );
-              })}
-            </TabsList>
-            <div className="flex-1" />
-          </div>
+    <div className="h-full flex flex-col overflow-hidden">
+      <ReportsPageHeader
+        icon={currentCategoryConfig?.icon || FileBarChart}
+        title={currentCategoryConfig?.label || "Reports"}
+        description={`View ${currentCategoryConfig?.label.toLowerCase() || 'all'} reports and analytics`}
+        recordCount={data?.rows?.length}
+      />
+      
+      <div className="flex-1 overflow-auto p-6 space-y-4">
+        {/* Horizontal Category Tabs */}
+        <div className="flex items-center gap-2 border-b pb-3">
+          {REPORT_CATEGORIES.map((category) => {
+            const Icon = category.icon;
+            const isActive = activeCategory === category.id;
+            return (
+              <Button
+                key={category.id}
+                variant={isActive ? "secondary" : "ghost"}
+                size="sm"
+                className={cn(
+                  "transition-all",
+                  isActive && "bg-secondary font-medium"
+                )}
+                onClick={() => handleCategoryChange(category.id)}
+              >
+                <Icon className="h-4 w-4 mr-2" />
+                {category.label}
+              </Button>
+            );
+          })}
+        </div>
 
-          <ReportsFilterToolbar
-            reportTypes={categoryReports}
-            selectedReportType={currentReportType}
-            onReportTypeChange={handleReportTypeChange}
-            dateRange={dateRangePreset}
-            onDateRangeChange={setDateRangePreset}
-            searchTerm={searchTerm}
-            onSearchChange={setSearchTerm}
-            visibleColumns={currentVisibleColumns}
-            allColumns={columns}
-            onToggleColumn={handleToggleColumn}
-            onExport={handleExport}
-          />
+        {/* Report Content */}
+        <Card>
+          <CardContent className="p-4 space-y-4">
+            <ReportsFilterToolbar
+              reportTypes={categoryReports}
+              selectedReportType={currentReportType}
+              onReportTypeChange={handleReportTypeChange}
+              dateRange={dateRangePreset}
+              onDateRangeChange={setDateRangePreset}
+              searchTerm={searchTerm}
+              onSearchChange={setSearchTerm}
+              visibleColumns={currentVisibleColumns}
+              allColumns={columns}
+              onToggleColumn={handleToggleColumn}
+              onExport={handleExport}
+            />
 
-          <ReportSummaryBar summary={data?.summary} isLoading={isLoading} />
+            <ReportSummaryBar summary={data?.summary} isLoading={isLoading} />
 
-          {REPORT_CATEGORIES.map((category) => (
-            <TabsContent
-              key={category.id}
-              value={category.id}
-              className="flex-1 mt-0 overflow-hidden"
-            >
-              {error ? (
-                <div className="flex items-center justify-center h-48 text-destructive">
-                  Error loading report: {(error as Error).message}
-                </div>
-              ) : (
-                <ReportTable
-                  data={data?.rows || []}
-                  columns={columns}
-                  visibleColumns={currentVisibleColumns}
-                  isLoading={isLoading}
-                  searchTerm={searchTerm}
-                  onRowClick={currentReportType === "update_history" ? setSelectedUpdate : undefined}
-                />
-              )}
-            </TabsContent>
-          ))}
-        </Tabs>
-
-        <UpdateDetailDialog
-          open={!!selectedUpdate}
-          onOpenChange={(open) => !open && setSelectedUpdate(null)}
-          update={selectedUpdate}
-        />
+            {error ? (
+              <div className="flex items-center justify-center h-48 text-destructive">
+                Error loading report: {(error as Error).message}
+              </div>
+            ) : (
+              <ReportTable
+                data={data?.rows || []}
+                columns={columns}
+                visibleColumns={currentVisibleColumns}
+                isLoading={isLoading}
+                searchTerm={searchTerm}
+                onRowClick={currentReportType === "update_history" ? setSelectedUpdate : undefined}
+              />
+            )}
+          </CardContent>
+        </Card>
       </div>
+
+      <UpdateDetailDialog
+        open={!!selectedUpdate}
+        onOpenChange={(open) => !open && setSelectedUpdate(null)}
+        update={selectedUpdate}
+      />
     </div>
   );
 }
