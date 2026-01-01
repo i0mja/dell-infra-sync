@@ -979,7 +979,8 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
             'bios_config_read', 'bios_config_write',
             'prepare_host_for_update', 'verify_host_after_update', 'rolling_cluster_update',
             'esxi_upgrade', 'esxi_then_firmware', 'firmware_then_esxi',
-            'idrac_network_read', 'idrac_network_write'
+            'idrac_network_read', 'idrac_network_write',
+            'firmware_inventory_scan'
         ]
         
         if job_type in idrac_job_types and self.check_idrac_pause():
@@ -1082,6 +1083,8 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
             'rpo_monitoring': self.sla_monitoring_handler.execute_rpo_monitoring,
             # vCenter scheduled sync
             'scheduled_vcenter_sync': self.vcenter_handler.execute_scheduled_vcenter_sync,
+            # Firmware inventory scan (update availability check)
+            'firmware_inventory_scan': self.firmware_handler.execute_firmware_inventory_scan,
         }
         
         handler = handler_map.get(job_type)
