@@ -122,7 +122,7 @@ const Layout = () => {
       })}
       
       {/* Reports Dropdown */}
-      <Collapsible open={reportsOpen}>
+      <Collapsible open={reportsOpen} onOpenChange={setReportsOpen}>
         <CollapsibleTrigger asChild>
           <Button
             variant={location.pathname.startsWith('/reports') ? "secondary" : "ghost"}
@@ -130,12 +130,6 @@ const Layout = () => {
               "w-full justify-start transition-all duration-200",
               location.pathname.startsWith('/reports') && "bg-secondary"
             )}
-            onClick={() => {
-              if (!location.pathname.startsWith('/reports')) {
-                navigate('/reports');
-              }
-              setReportsOpen(!reportsOpen);
-            }}
           >
             <FileBarChart className="mr-2 h-4 w-4" />
             <span className="flex-1 text-left">Reports</span>
@@ -156,7 +150,8 @@ const Layout = () => {
                   "w-full justify-start pl-10 text-sm transition-all duration-200 truncate",
                   isActive && "bg-muted text-foreground font-medium"
                 )}
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   navigate(item.href);
                   setMobileOpen(false);
                 }}
@@ -171,7 +166,7 @@ const Layout = () => {
       </Collapsible>
       
       {/* Settings Dropdown */}
-      <Collapsible open={settingsOpen}>
+      <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen}>
         <CollapsibleTrigger asChild>
           <Button
             variant={location.pathname === '/settings' ? "secondary" : "ghost"}
