@@ -37,6 +37,24 @@ const PHASE_MAP: Record<string, string> = {
   'Failed': 'Scan failed',
 };
 
+// Component type friendly names
+const COMPONENT_TYPE_MAP: Record<string, string> = {
+  'BIOS': 'BIOS',
+  'iDRAC': 'iDRAC Controller',
+  'CPLD': 'System CPLD',
+  'NIC': 'Network Adapter',
+  'RAID': 'RAID Controller',
+  'PSU': 'Power Supply',
+  'Backplane': 'Storage Backplane',
+  'Enclosure': 'Disk Enclosure',
+  'FC': 'Fibre Channel',
+  'Diagnostics': 'Diagnostics',
+  'DriverPack': 'Driver Pack',
+  'OSCollector': 'OS Collector',
+  'BOSS': 'BOSS Controller',
+  'PCIeSSD': 'PCIe SSD',
+};
+
 /**
  * Get a human-friendly description for an API command type
  */
@@ -64,6 +82,13 @@ export function getFriendlyEndpoint(endpoint: string): string {
  */
 export function getFriendlyPhase(phase: string): string {
   return PHASE_MAP[phase] || phase;
+}
+
+/**
+ * Get a human-friendly component type name
+ */
+export function getFriendlyComponentType(componentType: string): string {
+  return COMPONENT_TYPE_MAP[componentType] || componentType;
 }
 
 /**
@@ -126,4 +151,65 @@ export function calculateScanProgress(details: any): number {
   }
   
   return 0;
+}
+
+/**
+ * Format a host scan completion message with component details
+ */
+export function formatHostScanResult(result: {
+  hostname?: string;
+  host_name?: string;
+  status?: string;
+  updates_available?: number;
+  components_checked?: number;
+  component_types?: string[];
+  error?: string;
+}): string {
+  const hostname = result.hostname || result.host_name || 'Unknown host';
+  
+  if (result.status === 'failed' || result.error) {
+    return `✗ ${hostname}: Scan failed${result.error ? ` - ${result.error}` : ''}`;
+  }
+  
+  const updatesAvailable = result.updates_available ?? 0;
+  const componentsChecked = result.components_checked ?? 0;
+  
+  if (updatesAvailable > 0) {
+    const types = result.component_types?.slice(0, 3).join(', ') || '';
+    const typesSuffix = types ? ` (${types}${(result.component_types?.length ?? 0) > 3 ? '...' : ''})` : '';
+    return `✓ ${hostname}: ${updatesAvailable} update${updatesAvailable !== 1 ? 's' : ''} available${typesSuffix}`;
+  }
+  
+  return `✓ ${hostname}: Up-to-date (${componentsChecked} components checked)`;
+}
+
+/**
+ * Get a summary message for a completed scan
+ */
+export function getScanSummaryMessage(details: any): string {
+  const hostsScanned = details?.hosts_scanned ?? 0;
+  const summary = details?.summary || {};
+  const updatesAvailable = summary.updatesAvailable ?? 0;
+  const criticalUpdates = summary.criticalUpdates ?? 0;
+  const hostsFailed = summary.hostsFailed ?? 0;
+  
+  const parts: string[] = [`${hostsScanned} host${hostsScanned !== 1 ? 's' : ''} scanned`];
+  
+  if (updatesAvailable > 0) {
+    parts.push(`${updatesAvailable} update${updatesAvailable !== 1 ? 's' : ''} available`);
+  }
+  
+  if (criticalUpdates > 0) {
+    parts.push(`${criticalUpdates} critical`);
+  }
+  
+  if (hostsFailed > 0) {
+    parts.push(`${hostsFailed} failed`);
+  }
+  
+  if (updatesAvailable === 0 && hostsFailed === 0) {
+    parts.push('all up-to-date');
+  }
+  
+  return parts.join(', ');
 }

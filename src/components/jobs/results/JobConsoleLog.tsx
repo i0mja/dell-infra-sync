@@ -7,7 +7,7 @@ import { Copy, Terminal, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
-import { formatActivityMessage } from '@/lib/firmware-scan-messages';
+import { formatActivityMessage, formatHostScanResult, getScanSummaryMessage } from '@/lib/firmware-scan-messages';
 
 interface JobTask {
   id: string;
@@ -153,7 +153,7 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
       // Fetch job details for console_log
       const { data: jobData, error: jobError } = await supabase
         .from('jobs')
-        .select('details')
+        .select('details, job_type, status')
         .eq('id', jobId)
         .single();
 
@@ -198,6 +198,54 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
           }
         };
       });
+
+      // For firmware_inventory_scan, add host result entries
+      if (jobData?.job_type === 'firmware_inventory_scan' && jobData?.details) {
+        const details = jobData.details as Record<string, unknown>;
+        const hostResults = details.host_results as Array<{
+          hostname?: string;
+          host_name?: string;
+          status?: string;
+          updates_available?: number;
+          components_checked?: number;
+          component_types?: string[];
+          error?: string;
+          completed_at?: string;
+        }> | undefined;
+        
+        if (hostResults && Array.isArray(hostResults)) {
+          hostResults.forEach((result, idx) => {
+            const resultMessage = formatHostScanResult(result);
+            const hostname = result.hostname || result.host_name || 'Unknown';
+            const timestamp = result.completed_at || new Date().toISOString();
+            
+            activityEntries.push({
+              id: `host-result-${idx}`,
+              timestamp,
+              type: 'activity' as const,
+              status: result.status === 'failed' ? 'failed' : 'completed',
+              message: resultMessage,
+              details: {
+                endpoint: `Host scan: ${hostname}`,
+                command_type: 'Host Scan Result'
+              }
+            });
+          });
+        }
+        
+        // Add summary at the end if job is completed
+        if (jobData.status === 'completed' && details) {
+          const summaryMessage = getScanSummaryMessage(details);
+          activityEntries.push({
+            id: 'scan-summary',
+            timestamp: new Date().toISOString(),
+            type: 'task' as const,
+            status: 'completed',
+            message: `Scan complete: ${summaryMessage}`,
+            details: {}
+          });
+        }
+      }
 
       const merged = [...taskEntries, ...activityEntries].sort(
         (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()

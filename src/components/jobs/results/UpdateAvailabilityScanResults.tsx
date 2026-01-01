@@ -31,23 +31,35 @@ export const UpdateAvailabilityScanResults = ({ details, status }: UpdateAvailab
   const scanId = details?.scan_id;
   const currentHost = details?.current_host;
 
+  const hostResults = details?.host_results || [];
+
   // Show progress for running jobs
   if (status === 'running') {
     const progressPercent = hostsTotal > 0 ? Math.round((hostsScanned / hostsTotal) * 100) : 0;
+    const currentStep = details?.current_step;
+    
+    // Count running totals
+    const runningUpdatesFound = hostResults.reduce((sum: number, r: any) => sum + (r.updates_available ?? 0), 0);
     
     return (
       <div className="space-y-4">
         <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-2 text-sm mb-3">
+          <CardContent className="pt-6 space-y-4">
+            <div className="flex items-center gap-2 text-sm">
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
               <span className="font-medium">Scanning for available updates...</span>
             </div>
+            
             {currentHost && (
-              <p className="text-sm text-muted-foreground mb-2">
-                Currently scanning: <span className="font-mono">{currentHost}</span>
-              </p>
+              <div className="text-sm bg-muted/30 rounded-md p-2">
+                <span className="text-muted-foreground">Currently scanning:</span>{' '}
+                <span className="font-mono font-medium">{currentHost}</span>
+                {currentStep && (
+                  <span className="text-muted-foreground ml-2">({currentStep})</span>
+                )}
+              </div>
             )}
+            
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Progress</span>
@@ -55,6 +67,54 @@ export const UpdateAvailabilityScanResults = ({ details, status }: UpdateAvailab
               </div>
               <Progress value={progressPercent} className="h-2" />
             </div>
+
+            {/* Show completed hosts with their results */}
+            {hostResults.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-xs text-muted-foreground font-medium">Completed hosts:</div>
+                <div className="space-y-1">
+                  {hostResults.slice(-4).map((result: any, idx: number) => {
+                    const hostname = result.hostname || result.host_name;
+                    const updates = result.updates_available ?? 0;
+                    const components = result.components_checked ?? 0;
+                    const failed = result.status === 'failed';
+                    
+                    return (
+                      <div key={idx} className="flex items-center gap-2 text-xs p-1.5 rounded bg-background/50">
+                        {failed ? (
+                          <AlertTriangle className="h-3.5 w-3.5 text-destructive flex-shrink-0" />
+                        ) : updates > 0 ? (
+                          <Package className="h-3.5 w-3.5 text-amber-500 flex-shrink-0" />
+                        ) : (
+                          <CheckCircle2 className="h-3.5 w-3.5 text-green-500 flex-shrink-0" />
+                        )}
+                        <span className="font-mono flex-1 truncate">{hostname}</span>
+                        {failed ? (
+                          <span className="text-destructive">{result.error || 'Failed'}</span>
+                        ) : updates > 0 ? (
+                          <span className="text-amber-600 font-medium">{updates} update{updates !== 1 ? 's' : ''}</span>
+                        ) : (
+                          <span className="text-green-600">Up-to-date ({components} checked)</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {hostResults.length > 4 && (
+                    <div className="text-xs text-muted-foreground text-center">
+                      ...and {hostResults.length - 4} more
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Running totals */}
+            {runningUpdatesFound > 0 && (
+              <div className="flex items-center gap-2 text-sm text-amber-600 bg-amber-500/10 rounded p-2">
+                <Package className="h-4 w-4" />
+                <span>{runningUpdatesFound} update{runningUpdatesFound !== 1 ? 's' : ''} found so far</span>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
