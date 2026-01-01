@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { SettingsTabLayout, SettingsTab, settingsClasses } from '@/components/settings';
 import { LayoutDashboard, Radio, Zap, History } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -51,12 +52,23 @@ interface NotificationStats {
 export function NotificationSettings() {
   const { toast } = useToast();
   const { settings: notificationContextSettings, updateSettings: updateContextSettings } = useNotification();
+  const [searchParams, setSearchParams] = useSearchParams();
   
   const [settings, setSettings] = useState<NotificationSettingsData>(defaultSettings);
   const [stats, setStats] = useState<NotificationStats>({ sent24h: 0, delivered24h: 0, failed24h: 0 });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [currentSection, setCurrentSection] = useState('overview');
+
+  // Navigate to a section by updating URL params
+  const navigateToSection = (section: string) => {
+    const newParams = new URLSearchParams(searchParams);
+    if (section === 'overview') {
+      newParams.delete('section');
+    } else {
+      newParams.set('section', section);
+    }
+    setSearchParams(newParams);
+  };
   
   // Channel enabled states (derived from whether config exists)
   const [emailEnabled, setEmailEnabled] = useState(false);
@@ -234,8 +246,8 @@ export function NotificationSettings() {
           teamsConfigured={teamsEnabled && teamsConfigured}
           toastLevel={getToastLevelDisplay(notificationContextSettings.toastLevel)}
           stats={stats}
-          onNavigateToChannels={() => setCurrentSection('channels')}
-          onNavigateToTriggers={() => setCurrentSection('triggers')}
+          onNavigateToChannels={() => navigateToSection('channels')}
+          onNavigateToTriggers={() => navigateToSection('triggers')}
         />
       )
     },
@@ -313,7 +325,6 @@ export function NotificationSettings() {
     <SettingsTabLayout 
       tabs={tabs} 
       defaultTab="overview"
-      onSectionChange={setCurrentSection}
     />
   );
 }
