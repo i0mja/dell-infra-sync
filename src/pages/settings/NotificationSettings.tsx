@@ -1,388 +1,334 @@
-import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { useToast } from "@/hooks/use-toast";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { SettingsSection } from "@/components/settings/SettingsSection";
-import { Mail, MessageSquare, Bell, Loader2 } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useNotification } from "@/contexts/NotificationContext";
-import type { ToastLevel } from "@/contexts/NotificationContext";
+import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { LayoutDashboard, Radio, Zap, History } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/integrations/supabase/client';
+import { useNotification } from '@/contexts/NotificationContext';
+import type { ToastLevel } from '@/contexts/NotificationContext';
+import {
+  NotificationHealthOverview,
+  EmailChannelCard,
+  TeamsChannelCard,
+  NotificationTriggersCard,
+  NotificationHistoryCard,
+} from '@/components/notifications/settings';
+
+type NotificationSubsection = 'overview' | 'channels' | 'triggers' | 'history';
+
+const subsections: { id: NotificationSubsection; label: string; icon: React.ElementType }[] = [
+  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'channels', label: 'Channels', icon: Radio },
+  { id: 'triggers', label: 'Triggers', icon: Zap },
+  { id: 'history', label: 'History', icon: History },
+];
+
+interface NotificationSettingsData {
+  id?: string;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_user: string;
+  smtp_password: string;
+  smtp_from_email: string;
+  teams_webhook_url: string;
+  teams_mention_users: string;
+  mention_on_critical_failures: boolean;
+  notify_on_job_started: boolean;
+  notify_on_job_complete: boolean;
+  notify_on_job_failed: boolean;
+}
+
+const defaultSettings: NotificationSettingsData = {
+  smtp_host: '',
+  smtp_port: 587,
+  smtp_user: '',
+  smtp_password: '',
+  smtp_from_email: '',
+  teams_webhook_url: '',
+  teams_mention_users: '',
+  mention_on_critical_failures: false,
+  notify_on_job_started: false,
+  notify_on_job_complete: true,
+  notify_on_job_failed: true,
+};
+
+interface NotificationStats {
+  sent24h: number;
+  delivered24h: number;
+  failed24h: number;
+}
 
 export function NotificationSettings() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { toast } = useToast();
-  const { settings: notificationSettings, updateSettings } = useNotification();
-  const [loading, setLoading] = useState(false);
-  const [settingsId, setSettingsId] = useState<string | null>(null);
+  const { settings: notificationContextSettings, updateSettings: updateContextSettings } = useNotification();
+  
+  const [activeSection, setActiveSection] = useState<NotificationSubsection>(
+    (searchParams.get('section') as NotificationSubsection) || 'overview'
+  );
+  const [settings, setSettings] = useState<NotificationSettingsData>(defaultSettings);
+  const [stats, setStats] = useState<NotificationStats>({ sent24h: 0, delivered24h: 0, failed24h: 0 });
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  
+  // Channel enabled states (derived from whether config exists)
+  const [emailEnabled, setEmailEnabled] = useState(false);
+  const [teamsEnabled, setTeamsEnabled] = useState(false);
 
-  // SMTP Settings
-  const [smtpHost, setSmtpHost] = useState("");
-  const [smtpPort, setSmtpPort] = useState(587);
-  const [smtpUser, setSmtpUser] = useState("");
-  const [smtpPassword, setSmtpPassword] = useState("");
-  const [smtpFromEmail, setSmtpFromEmail] = useState("");
-
-  // Teams Settings
-  const [teamsWebhookUrl, setTeamsWebhookUrl] = useState("");
-  const [testingTeams, setTestingTeams] = useState(false);
-  const [teamsMentionUsers, setTeamsMentionUsers] = useState("");
-  const [mentionOnCriticalFailures, setMentionOnCriticalFailures] = useState(true);
-
-  // Notification Preferences
-  const [notifyOnJobComplete, setNotifyOnJobComplete] = useState(true);
-  const [notifyOnJobFailed, setNotifyOnJobFailed] = useState(true);
-  const [notifyOnJobStarted, setNotifyOnJobStarted] = useState(false);
-
-  const [recentNotifications, setRecentNotifications] = useState<any[]>([]);
-
-  useEffect(() => {
-    loadSettings();
-    loadRecentNotifications();
-  }, []);
+  const handleSectionChange = (section: string) => {
+    setActiveSection(section as NotificationSubsection);
+    setSearchParams(prev => {
+      prev.set('section', section);
+      return prev;
+    });
+  };
 
   const loadSettings = async () => {
-    const { data } = await supabase
-      .from('notification_settings')
-      .select('*')
-      .maybeSingle();
-
-    if (data) {
-      setSettingsId(data.id);
-      setSmtpHost(data.smtp_host || "");
-      setSmtpPort(data.smtp_port || 587);
-      setSmtpUser(data.smtp_user || "");
-      setSmtpFromEmail(data.smtp_from_email || "");
-      setTeamsWebhookUrl(data.teams_webhook_url || "");
-      setTeamsMentionUsers(data.teams_mention_users || "");
-      setMentionOnCriticalFailures(data.mention_on_critical_failures ?? true);
-      setNotifyOnJobComplete(data.notify_on_job_complete ?? true);
-      setNotifyOnJobFailed(data.notify_on_job_failed ?? true);
-      setNotifyOnJobStarted(data.notify_on_job_started ?? false);
-    }
-  };
-
-  const loadRecentNotifications = async () => {
-    const { data } = await supabase
-      .from('notification_logs')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(10);
-    
-    if (data) setRecentNotifications(data);
-  };
-
-  const handleSave = async () => {
-    setLoading(true);
     try {
-      const settings = {
-        smtp_host: smtpHost,
-        smtp_port: smtpPort,
-        smtp_user: smtpUser,
-        smtp_password: smtpPassword || undefined,
-        smtp_from_email: smtpFromEmail,
-        teams_webhook_url: teamsWebhookUrl,
-        teams_mention_users: teamsMentionUsers,
-        mention_on_critical_failures: mentionOnCriticalFailures,
-        notify_on_job_complete: notifyOnJobComplete,
-        notify_on_job_failed: notifyOnJobFailed,
-        notify_on_job_started: notifyOnJobStarted,
-      };
-
-      if (settingsId) {
-        await supabase
-          .from('notification_settings')
-          .update(settings)
-          .eq('id', settingsId);
-      } else {
-        const { data } = await supabase
-          .from('notification_settings')
-          .insert([settings])
-          .select()
-          .single();
-        if (data) setSettingsId(data.id);
-      }
-
-      toast({
-        title: "Success",
-        description: "Notification settings saved",
-      });
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const testTeamsWebhook = async () => {
-    setTestingTeams(true);
-    try {
-      const { error } = await supabase.functions.invoke('send-notification', {
-        body: {
-          type: 'teams',
-          title: 'Test Notification',
-          message: 'This is a test notification from Dell Server Manager',
-          severity: 'info',
-          isTest: true,
-        }
-      });
+      const { data, error } = await supabase
+        .from('notification_settings')
+        .select('*')
+        .limit(1)
+        .maybeSingle();
 
       if (error) throw error;
 
+      if (data) {
+        setSettings({
+          id: data.id,
+          smtp_host: data.smtp_host || '',
+          smtp_port: data.smtp_port || 587,
+          smtp_user: data.smtp_user || '',
+          smtp_password: data.smtp_password || '',
+          smtp_from_email: data.smtp_from_email || '',
+          teams_webhook_url: data.teams_webhook_url || '',
+          teams_mention_users: data.teams_mention_users || '',
+          mention_on_critical_failures: data.mention_on_critical_failures || false,
+          notify_on_job_started: data.notify_on_job_started || false,
+          notify_on_job_complete: data.notify_on_job_complete ?? true,
+          notify_on_job_failed: data.notify_on_job_failed ?? true,
+        });
+        
+        // Set enabled states based on whether config exists
+        setEmailEnabled(!!data.smtp_host);
+        setTeamsEnabled(!!data.teams_webhook_url);
+      }
+    } catch (error) {
+      console.error('Failed to load notification settings:', error);
       toast({
-        title: "Test Sent",
-        description: "Check your Teams channel for the test message",
-      });
-
-      setTimeout(() => loadRecentNotifications(), 2000);
-    } catch (error: any) {
-      toast({
-        title: "Test Failed",
-        description: error.message,
-        variant: "destructive",
+        title: 'Error',
+        description: 'Failed to load notification settings',
+        variant: 'destructive',
       });
     } finally {
-      setTestingTeams(false);
+      setIsLoading(false);
     }
   };
 
+  const loadStats = async () => {
+    try {
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      
+      const { data, error } = await supabase
+        .from('notification_logs')
+        .select('status')
+        .gte('created_at', twentyFourHoursAgo);
+
+      if (error) throw error;
+
+      const calculatedStats = (data || []).reduce(
+        (acc, log) => {
+          acc.sent24h++;
+          if (log.status === 'delivered' || log.status === 'sent') {
+            acc.delivered24h++;
+          } else if (log.status === 'failed') {
+            acc.failed24h++;
+          }
+          return acc;
+        },
+        { sent24h: 0, delivered24h: 0, failed24h: 0 }
+      );
+
+      setStats(calculatedStats);
+    } catch (error) {
+      console.error('Failed to load notification stats:', error);
+    }
+  };
+
+  useEffect(() => {
+    loadSettings();
+    loadStats();
+  }, []);
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      const payload = {
+        smtp_host: emailEnabled ? settings.smtp_host : null,
+        smtp_port: emailEnabled ? settings.smtp_port : null,
+        smtp_user: emailEnabled ? settings.smtp_user : null,
+        smtp_password: emailEnabled ? settings.smtp_password : null,
+        smtp_from_email: emailEnabled ? settings.smtp_from_email : null,
+        teams_webhook_url: teamsEnabled ? settings.teams_webhook_url : null,
+        teams_mention_users: teamsEnabled ? settings.teams_mention_users : null,
+        mention_on_critical_failures: settings.mention_on_critical_failures,
+        notify_on_job_started: settings.notify_on_job_started,
+        notify_on_job_complete: settings.notify_on_job_complete,
+        notify_on_job_failed: settings.notify_on_job_failed,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (settings.id) {
+        const { error } = await supabase
+          .from('notification_settings')
+          .update(payload)
+          .eq('id', settings.id);
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase
+          .from('notification_settings')
+          .insert(payload)
+          .select()
+          .single();
+        if (error) throw error;
+        setSettings(prev => ({ ...prev, id: data.id }));
+      }
+
+      toast({
+        title: 'Settings saved',
+        description: 'Notification settings have been updated',
+      });
+    } catch (error) {
+      console.error('Failed to save notification settings:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to save notification settings',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Map context toast level to display value
+  const getToastLevelDisplay = (level: ToastLevel): string => {
+    switch (level) {
+      case 'errors_only': return 'error';
+      case 'errors_and_warnings': return 'warning';
+      case 'all': return 'all';
+      default: return 'info';
+    }
+  };
+
+  // Map display value back to context toast level
+  const handleToastLevelChange = (displayValue: string) => {
+    let contextValue: ToastLevel;
+    switch (displayValue) {
+      case 'error': contextValue = 'errors_only'; break;
+      case 'warning': contextValue = 'errors_and_warnings'; break;
+      case 'all': contextValue = 'all'; break;
+      default: contextValue = 'all';
+    }
+    updateContextSettings({ toastLevel: contextValue });
+  };
+
+  const emailConfigured = !!(settings.smtp_host && settings.smtp_port && settings.smtp_user && settings.smtp_from_email);
+  const teamsConfigured = !!settings.teams_webhook_url;
+  const hasExternalChannels = (emailEnabled && emailConfigured) || (teamsEnabled && teamsConfigured);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      {/* SMTP Settings */}
-      <SettingsSection
-        id="smtp"
-        title="Email Notifications"
-        description="Configure SMTP settings for email alerts"
-        icon={Mail}
-      >
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>SMTP Host</Label>
-              <Input
-                value={smtpHost}
-                onChange={(e) => setSmtpHost(e.target.value)}
-                placeholder="smtp.gmail.com"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>SMTP Port</Label>
-              <Input
-                type="number"
-                value={smtpPort}
-                onChange={(e) => setSmtpPort(parseInt(e.target.value) || 587)}
-              />
-            </div>
-          </div>
-          <div className="space-y-2">
-            <Label>SMTP User</Label>
-            <Input
-              value={smtpUser}
-              onChange={(e) => setSmtpUser(e.target.value)}
-              placeholder="your-email@example.com"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>SMTP Password</Label>
-            <Input
-              type="password"
-              value={smtpPassword}
-              onChange={(e) => setSmtpPassword(e.target.value)}
-              placeholder="Leave blank to keep current"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>From Email</Label>
-            <Input
-              value={smtpFromEmail}
-              onChange={(e) => setSmtpFromEmail(e.target.value)}
-              placeholder="server-alerts@example.com"
-            />
-          </div>
-          <Button onClick={handleSave} disabled={loading}>
-            {loading ? "Saving..." : "Save Email Settings"}
-          </Button>
-        </div>
-      </SettingsSection>
-
-      {/* Teams Notifications */}
-      <SettingsSection
-        id="teams"
-        title="Microsoft Teams"
-        description="Send notifications to Teams channels"
-        icon={MessageSquare}
-      >
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label>Teams Webhook URL</Label>
-            <Input
-              value={teamsWebhookUrl}
-              onChange={(e) => setTeamsWebhookUrl(e.target.value)}
-              placeholder="https://outlook.office.com/webhook/..."
-              type="password"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Mention Users (Optional)</Label>
-            <Input
-              value={teamsMentionUsers}
-              onChange={(e) => setTeamsMentionUsers(e.target.value)}
-              placeholder="user1@domain.com, user2@domain.com"
-            />
-            <p className="text-xs text-muted-foreground">
-              Comma-separated email addresses to mention in critical alerts
-            </p>
-          </div>
-          <div className="flex items-center justify-between">
-            <div>
-              <Label>Mention on Critical Failures</Label>
-              <p className="text-sm text-muted-foreground">
-                Notify mentioned users when critical jobs fail
-              </p>
-            </div>
-            <Switch
-              checked={mentionOnCriticalFailures}
-              onCheckedChange={setMentionOnCriticalFailures}
-            />
-          </div>
-          <div className="flex gap-2">
-            <Button onClick={handleSave} disabled={loading}>
-              {loading ? "Saving..." : "Save Teams Settings"}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={testTeamsWebhook}
-              disabled={testingTeams || !teamsWebhookUrl}
+      <Tabs value={activeSection} onValueChange={handleSectionChange} className="w-full">
+        <TabsList className="w-full justify-start h-auto p-1 bg-muted/50">
+          {subsections.map(({ id, label, icon: Icon }) => (
+            <TabsTrigger
+              key={id}
+              value={id}
+              className="flex items-center gap-2 px-4 py-2 data-[state=active]:bg-background"
             >
-              {testingTeams ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Testing...
-                </>
-              ) : (
-                'Test Connection'
-              )}
-            </Button>
-          </div>
+              <Icon className="h-4 w-4" />
+              <span>{label}</span>
+            </TabsTrigger>
+          ))}
+        </TabsList>
+
+        <div className="mt-6">
+          <TabsContent value="overview" className="mt-0">
+            <NotificationHealthOverview
+              emailConfigured={emailEnabled && emailConfigured}
+              teamsConfigured={teamsEnabled && teamsConfigured}
+              toastLevel={getToastLevelDisplay(notificationContextSettings.toastLevel)}
+              stats={stats}
+              onNavigateToChannels={() => handleSectionChange('channels')}
+              onNavigateToTriggers={() => handleSectionChange('triggers')}
+            />
+          </TabsContent>
+
+          <TabsContent value="channels" className="mt-0 space-y-4">
+            <EmailChannelCard
+              config={{
+                smtp_host: settings.smtp_host,
+                smtp_port: settings.smtp_port,
+                smtp_user: settings.smtp_user,
+                smtp_password: settings.smtp_password,
+                smtp_from_email: settings.smtp_from_email,
+              }}
+              enabled={emailEnabled}
+              onConfigChange={(config) => setSettings(prev => ({ ...prev, ...config }))}
+              onEnabledChange={setEmailEnabled}
+              onSave={handleSave}
+              isSaving={isSaving}
+            />
+            <TeamsChannelCard
+              config={{
+                teams_webhook_url: settings.teams_webhook_url,
+                teams_mention_users: settings.teams_mention_users,
+                mention_on_critical_failures: settings.mention_on_critical_failures,
+              }}
+              enabled={teamsEnabled}
+              onConfigChange={(config) => setSettings(prev => ({ ...prev, ...config }))}
+              onEnabledChange={setTeamsEnabled}
+              onSave={handleSave}
+              isSaving={isSaving}
+            />
+          </TabsContent>
+
+          <TabsContent value="triggers" className="mt-0">
+            <NotificationTriggersCard
+              settings={{
+                toast_level: getToastLevelDisplay(notificationContextSettings.toastLevel),
+                notify_on_job_started: settings.notify_on_job_started,
+                notify_on_job_complete: settings.notify_on_job_complete,
+                notify_on_job_failed: settings.notify_on_job_failed,
+              }}
+              onChange={(triggerSettings) => {
+                if (triggerSettings.toast_level) {
+                  handleToastLevelChange(triggerSettings.toast_level);
+                }
+                const { toast_level, ...rest } = triggerSettings;
+                if (Object.keys(rest).length > 0) {
+                  setSettings(prev => ({ ...prev, ...rest }));
+                }
+              }}
+              onSave={handleSave}
+              isSaving={isSaving}
+              hasExternalChannels={hasExternalChannels}
+            />
+          </TabsContent>
+
+          <TabsContent value="history" className="mt-0">
+            <NotificationHistoryCard />
+          </TabsContent>
         </div>
-      </SettingsSection>
-
-      {/* Notification Preferences */}
-      <SettingsSection
-        id="preferences"
-        title="Notification Preferences"
-        description="Control when notifications are sent"
-        icon={Bell}
-      >
-        <div className="space-y-4">
-          {/* Toast Notification Level */}
-          <div className="space-y-2">
-            <Label>In-App Toast Notifications</Label>
-            <Select
-              value={notificationSettings.toastLevel}
-              onValueChange={(value: ToastLevel) => updateSettings({ toastLevel: value })}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="errors_only">Errors only</SelectItem>
-                <SelectItem value="errors_and_warnings">Errors & warnings</SelectItem>
-                <SelectItem value="all">All notifications</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-sm text-muted-foreground">
-              Control which job status changes trigger toast notifications in the app
-            </p>
-          </div>
-
-          <div className="border-t pt-4 mt-4">
-            <p className="text-sm font-medium mb-3">External Notifications (Email/Teams)</p>
-          </div>
-          
-          <div className="flex items-center justify-between">
-            <div>
-              <Label>Job Completed</Label>
-              <p className="text-sm text-muted-foreground">
-                Notify when jobs finish successfully
-              </p>
-            </div>
-            <Switch
-              checked={notifyOnJobComplete}
-              onCheckedChange={setNotifyOnJobComplete}
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <div>
-              <Label>Job Failed</Label>
-              <p className="text-sm text-muted-foreground">
-                Notify when jobs fail
-              </p>
-            </div>
-            <Switch
-              checked={notifyOnJobFailed}
-              onCheckedChange={setNotifyOnJobFailed}
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <div>
-              <Label>Job Started</Label>
-              <p className="text-sm text-muted-foreground">
-                Notify when jobs begin (can be noisy)
-              </p>
-            </div>
-            <Switch
-              checked={notifyOnJobStarted}
-              onCheckedChange={setNotifyOnJobStarted}
-            />
-          </div>
-          <Button onClick={handleSave} disabled={loading}>
-            {loading ? "Saving..." : "Save Preferences"}
-          </Button>
-        </div>
-      </SettingsSection>
-
-      {/* Recent Notifications */}
-      {recentNotifications.length > 0 && (
-        <SettingsSection
-          id="recent"
-          title="Recent Notifications"
-          description="Latest notification delivery attempts"
-          icon={Bell}
-        >
-          <div className="space-y-2">
-            {recentNotifications.map((notif) => (
-              <Card key={notif.id}>
-                <CardContent className="p-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant={notif.status === 'delivered' ? 'default' : 'destructive'}>
-                          {notif.status}
-                        </Badge>
-                        <span className="text-sm font-medium">{notif.notification_type}</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {new Date(notif.created_at).toLocaleString()}
-                      </p>
-                    </div>
-                    {notif.error_message && (
-                      <p className="text-xs text-destructive">{notif.error_message}</p>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </SettingsSection>
-      )}
+      </Tabs>
     </div>
   );
 }
