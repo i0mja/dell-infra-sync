@@ -7,6 +7,7 @@ import { Copy, Terminal, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
+import { formatActivityMessage } from '@/lib/firmware-scan-messages';
 
 interface JobTask {
   id: string;
@@ -180,19 +181,23 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
         details: {}
       }));
 
-      const activityEntries: ConsoleEntry[] = (commands || []).map((c: ApiCommand) => ({
-        id: c.id,
-        timestamp: c.timestamp,
-        type: 'activity' as const,
-        status: c.success ? 'completed' : 'failed',
-        message: `${c.command_type} - ${c.endpoint}`,
-        details: {
-          endpoint: c.endpoint,
-          response_time_ms: c.response_time_ms,
-          command_type: c.command_type,
-          error_message: c.error_message
-        }
-      }));
+      const activityEntries: ConsoleEntry[] = (commands || []).map((c: ApiCommand) => {
+        // Use friendly message for display
+        const friendlyMessage = formatActivityMessage(c.command_type, c.endpoint);
+        return {
+          id: c.id,
+          timestamp: c.timestamp,
+          type: 'activity' as const,
+          status: c.success ? 'completed' : 'failed',
+          message: friendlyMessage,
+          details: {
+            endpoint: c.endpoint,
+            response_time_ms: c.response_time_ms,
+            command_type: c.command_type,
+            error_message: c.error_message
+          }
+        };
+      });
 
       const merged = [...taskEntries, ...activityEntries].sort(
         (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
@@ -255,12 +260,13 @@ export const JobConsoleLog = ({ jobId }: JobConsoleLogProps) => {
         },
         (payload) => {
           const cmd = payload.new as ApiCommand;
+          const friendlyMessage = formatActivityMessage(cmd.command_type, cmd.endpoint);
           const newEntry: ConsoleEntry = {
             id: cmd.id,
             timestamp: cmd.timestamp,
             type: 'activity',
             status: cmd.success ? 'completed' : 'failed',
-            message: `${cmd.command_type} - ${cmd.endpoint}`,
+            message: friendlyMessage,
             details: {
               endpoint: cmd.endpoint,
               response_time_ms: cmd.response_time_ms,

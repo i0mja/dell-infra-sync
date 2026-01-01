@@ -14,6 +14,7 @@ export { WorkflowStepDetails } from './WorkflowStepDetails';
 export { MaintenanceFailureDetails } from './MaintenanceFailureDetails';
 export { StorageVMotionResults } from './StorageVMotionResults';
 export { VCenterSyncProgress } from './VCenterSyncProgress';
+export { FirmwareScanProgress } from './FirmwareScanProgress';
 export { ZfsDeploymentResults } from './ZfsDeploymentResults';
 export { ValidationPreflightResults } from './ValidationPreflightResults';
 export { ZfsHealthCheckResults } from './ZfsHealthCheckResults';

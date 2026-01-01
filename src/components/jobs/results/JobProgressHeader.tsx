@@ -8,9 +8,11 @@ import { useVCenterSyncProgress } from "@/hooks/useVCenterSyncProgress";
 import { Clock, Server, Database, Globe, AlertTriangle, CheckCircle2, XCircle, Shield, Loader2, Search, RefreshCw, Cpu, HardDrive, Zap, Settings } from "lucide-react";
 import { useEffect, useState } from "react";
 import { VCenterSyncProgress } from "./VCenterSyncProgress";
+import { FirmwareScanProgress } from "./FirmwareScanProgress";
 import { isJobStale } from "@/hooks/useStaleJobDetection";
 import { forceCompleteReplicationJob } from "@/lib/stale-job-recovery";
 import { toast } from "sonner";
+import { getCurrentOperationMessage, calculateScanProgress } from "@/lib/firmware-scan-messages";
 
 // User-friendly job type labels
 const JOB_TYPE_LABELS: Record<string, string> = {
@@ -101,9 +103,17 @@ export const JobProgressHeader = ({ job }: JobProgressHeaderProps) => {
   const progress = isVCenterSync ? vcenterProgress : genericProgress;
   const [elapsed, setElapsed] = useState<string>('');
   
+  // Special handling for firmware inventory scan
+  const isFirmwareScan = job.job_type === 'firmware_inventory_scan';
+  
   // Use job.details as fallback while hook loads
-  const currentStep = progress?.currentStep || job.details?.current_step;
-  const progressPercent = progress?.progressPercent ?? job.details?.progress_percent ?? 0;
+  // For firmware scans, use the friendly message translator
+  const currentStep = isFirmwareScan 
+    ? getCurrentOperationMessage(progress?.details || job.details)
+    : (progress?.currentStep || job.details?.current_step);
+  const progressPercent = isFirmwareScan
+    ? calculateScanProgress(progress?.details || job.details)
+    : (progress?.progressPercent ?? job.details?.progress_percent ?? 0);
   // Update elapsed time every second for running jobs
   useEffect(() => {
     if (job.status === 'running' && job.started_at) {
@@ -350,6 +360,15 @@ export const JobProgressHeader = ({ job }: JobProgressHeaderProps) => {
           <VCenterSyncProgress 
             details={progress?.details || job.details} 
             currentStep={progress?.currentStep} 
+          />
+        )}
+
+        {/* Firmware Scan Progress */}
+        {isFirmwareScan && job.status === 'running' && (
+          <FirmwareScanProgress 
+            details={progress?.details || job.details}
+            status={job.status}
+            targetScope={job.target_scope}
           />
         )}
 
