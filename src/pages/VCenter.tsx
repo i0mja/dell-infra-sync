@@ -24,6 +24,7 @@ import { useDatastoreVMs } from "@/hooks/useDatastoreVMs";
 import { useClusterDatastores } from "@/hooks/useClusterDatastores";
 import { useVMVLANMapping } from "@/hooks/useVMVLANMapping";
 import { useVLANOptions } from "@/hooks/useVLANOptions";
+import { useUpdateAvailabilityScan } from "@/hooks/useUpdateAvailabilityScan";
 import { Button } from "@/components/ui/button";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
@@ -130,6 +131,10 @@ export default function VCenter() {
   // Check for Updates state
   const [updateScanDialogOpen, setUpdateScanDialogOpen] = useState(false);
   const [updateScanTarget, setUpdateScanTarget] = useState<ScanTarget | null>(null);
+  const [activeScanId, setActiveScanId] = useState<string | null>(null);
+  
+  // Update availability scan hook
+  const { startScan, isStarting: isScanStarting, scan: activeScan, progress: scanProgress } = useUpdateAvailabilityScan(activeScanId || undefined);
   
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -1241,14 +1246,39 @@ export default function VCenter() {
       {updateScanTarget && (
         <UpdateAvailabilityScanDialog
           open={updateScanDialogOpen}
-          onOpenChange={setUpdateScanDialogOpen}
+          onOpenChange={(open) => {
+            setUpdateScanDialogOpen(open);
+            if (!open) {
+              setActiveScanId(null);
+            }
+          }}
           target={updateScanTarget}
+          isScanning={isScanStarting || activeScan?.status === 'running' || activeScan?.status === 'pending'}
+          scanProgress={scanProgress ? {
+            scannedHosts: scanProgress.scannedHosts,
+            totalHosts: scanProgress.totalHosts,
+            currentHost: scanProgress.currentHost,
+            updatesFound: scanProgress.updatesFound,
+            criticalFound: scanProgress.criticalFound,
+          } : undefined}
           onStartScan={async (firmwareSource) => {
-            toast({
-              title: "Update scan started",
-              description: `Checking for updates on ${updateScanTarget.name}`,
-            });
-            setUpdateScanDialogOpen(false);
+            try {
+              const scanId = await startScan({
+                scanType: updateScanTarget.type === 'single_host' ? 'single_host' : 
+                          updateScanTarget.type === 'cluster' ? 'cluster' :
+                          updateScanTarget.type === 'group' ? 'group' : 'servers',
+                targetId: updateScanTarget.type === 'cluster' ? updateScanTarget.name : 
+                          updateScanTarget.type === 'group' ? updateScanTarget.name : undefined,
+                targetName: updateScanTarget.name,
+                serverIds: updateScanTarget.serverIds,
+                vcenterHostIds: updateScanTarget.vcenterHostIds,
+                firmwareSource,
+              });
+              setActiveScanId(scanId);
+              // Don't close - let dialog show progress
+            } catch (error) {
+              console.error('Failed to start scan:', error);
+            }
           }}
         />
       )}
