@@ -600,6 +600,20 @@ class ZFSReplicationReal:
             logger.warning(f"Destination {target_dataset} doesn't exist on {target_host}, switching to full send")
             incremental_from = None  # Force full send
         
+        # Calculate dynamic timeout based on expected transfer size
+        # Small transfers (<1MB): 2 minutes max
+        # Medium transfers (1MB-1GB): 10 minutes
+        # Large transfers (>1GB): 1 hour
+        expected_bytes = kwargs.get('expected_bytes', 0)
+        if expected_bytes and expected_bytes < 1_000_000:  # < 1MB
+            transfer_timeout = 120  # 2 minutes
+        elif expected_bytes and expected_bytes < 1_000_000_000:  # < 1GB
+            transfer_timeout = 600  # 10 minutes
+        else:
+            transfer_timeout = 3600  # 1 hour for large or unknown size
+        
+        logger.info(f"Transfer timeout set to {transfer_timeout}s for expected {expected_bytes} bytes")
+        
         if use_syncoid:
             # Use syncoid for replication
             command = f"syncoid --no-privilege-elevation {source_dataset} {ssh_username}@{target_host}:{target_dataset}"
@@ -645,7 +659,7 @@ class ZFSReplicationReal:
                     }
                 
                 try:
-                    result = self._exec_ssh_command(ssh, command, timeout=3600)
+                    result = self._exec_ssh_command(ssh, command, timeout=transfer_timeout)
                     elapsed = time.time() - start_time
                     
                     if result.get('success'):
@@ -689,7 +703,7 @@ class ZFSReplicationReal:
                     shell=True,
                     capture_output=True,
                     text=True,
-                    timeout=3600  # 1 hour timeout for large transfers
+                    timeout=transfer_timeout  # Dynamic timeout based on expected size
                 )
                 
                 elapsed = time.time() - start_time
@@ -729,7 +743,7 @@ class ZFSReplicationReal:
                 'success': False,
                 'source_dataset': source_dataset,
                 'error': 'Timeout',
-                'message': 'Replication timed out after 1 hour'
+                'message': f'Replication timed out after {transfer_timeout}s (expected {expected_bytes} bytes)'
             }
         except Exception as e:
             return {
