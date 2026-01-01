@@ -1,12 +1,18 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Database, CheckCircle2, XCircle, Clock, HardDrive, ArrowRight, AlertCircle, Server } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Database, CheckCircle2, XCircle, Clock, HardDrive, ArrowRight, AlertCircle, Server, AlertTriangle, Loader2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import { useState } from "react";
+import { forceCompleteReplicationJob } from "@/lib/stale-job-recovery";
+import { toast } from "sonner";
 
 interface ReplicationSyncResultsProps {
   details: any;
   status: string;
+  jobId?: string;
+  onJobRecovered?: () => void;
 }
 
 function formatBytes(bytes: number): string {
@@ -29,7 +35,9 @@ function formatDuration(startedAt: string | null, completedAt: string | null): s
   return `${minutes}m ${remainingSeconds}s`;
 }
 
-export const ReplicationSyncResults = ({ details, status }: ReplicationSyncResultsProps) => {
+export const ReplicationSyncResults = ({ details, status, jobId, onJobRecovered }: ReplicationSyncResultsProps) => {
+  const [isRecovering, setIsRecovering] = useState(false);
+  
   const isRunning = status === 'running' || status === 'pending';
   const isFailed = status === 'failed';
   const isCompleted = status === 'completed';
@@ -44,8 +52,69 @@ export const ReplicationSyncResults = ({ details, status }: ReplicationSyncResul
   const groupName = details?.protection_group_name || details?.group_name || 'Unknown Group';
   const errors = details?.errors || [];
   
+  // Stale job detection
+  const consoleLog = Array.isArray(details?.console_log) ? details.console_log : [];
+  const consoleIndicatesComplete = consoleLog.some((log: string) =>
+    typeof log === 'string' && log.toLowerCase().includes('sync complete')
+  );
+  const detailsIndicateComplete = 
+    (vmsSynced > 0 && vmsSynced >= vmsTotal) ||
+    (vmsCompleted > 0 && vmsCompleted >= vmsTotal);
+  
+  const isStale = isRunning && (consoleIndicatesComplete || detailsIndicateComplete);
+
+  const handleForceComplete = async () => {
+    if (!jobId) return;
+    setIsRecovering(true);
+    try {
+      const result = await forceCompleteReplicationJob(jobId);
+      if (result.success) {
+        toast.success('Job marked as complete');
+        onJobRecovered?.();
+      } else {
+        toast.error(`Failed to recover job: ${result.error}`);
+      }
+    } catch (err: any) {
+      toast.error(`Error: ${err.message}`);
+    } finally {
+      setIsRecovering(false);
+    }
+  };
+  
   return (
     <div className="space-y-4">
+      {/* Stale Job Warning */}
+      {isStale && jobId && (
+        <Alert className="border-amber-500/50 bg-amber-500/5">
+          <AlertTriangle className="h-4 w-4 text-amber-500" />
+          <AlertTitle className="text-amber-600">Job Appears Complete</AlertTitle>
+          <AlertDescription className="flex items-center justify-between">
+            <span className="text-sm">
+              This job's data shows all VMs synced successfully, but the status wasn't updated properly.
+            </span>
+            <Button 
+              size="sm" 
+              variant="outline" 
+              className="ml-4 border-amber-500/50 hover:bg-amber-500/10"
+              onClick={handleForceComplete}
+              disabled={isRecovering}
+            >
+              {isRecovering ? (
+                <>
+                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                  Recovering...
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="h-3 w-3 mr-1" />
+                  Mark Complete
+                </>
+              )}
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Summary Card */}
       <Card>
         <CardHeader className="pb-3">

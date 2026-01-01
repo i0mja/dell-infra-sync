@@ -298,7 +298,7 @@ export const JobDetailDialog = ({
       case 'check_zfs_target_health':
         return <ZfsHealthCheckResults details={job.details} />;
       case 'run_replication_sync':
-        return <ReplicationSyncResults details={job.details} status={job.status} />;
+        return <ReplicationSyncResults details={job.details} status={job.status} jobId={job.id} />;
       case 'failover_preflight_check':
         return <FailoverPreflightResults details={job.details} />;
       case 'exchange_ssh_keys':
