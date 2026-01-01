@@ -1,245 +1,107 @@
-import { SettingsSection } from "@/components/settings/SettingsSection";
-import { ServerGroupsManagement } from "@/components/settings/ServerGroupsManagement";
-import { IsoImageLibrary } from "@/components/settings/IsoImageLibrary";
-import { FirmwareLibrary } from "@/components/settings/FirmwareLibrary";
-import { ZfsApplianceLibrary } from "@/components/settings/ZfsApplianceLibrary";
-import { Briefcase, Disc, Database, Server, HardDrive } from "lucide-react";
 import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { useToast } from "@/hooks/use-toast";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { Loader2 } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { 
+  LayoutDashboard, 
+  Library, 
+  Briefcase, 
+  Plug 
+} from "lucide-react";
+import {
+  InfrastructureHealthOverview,
+  LibraryTabPanel,
+  OpenManageIntegrationCard,
+  ServerGroupsCard
+} from "@/components/infrastructure/settings";
 
 export function InfrastructureSettings() {
-  const { toast } = useToast();
-  const [loading, setLoading] = useState(false);
-
-  // OpenManage Settings
-  const [omeSettingsId, setOmeSettingsId] = useState<string | null>(null);
-  const [omeHost, setOmeHost] = useState("");
-  const [omePort, setOmePort] = useState(443);
-  const [omeUsername, setOmeUsername] = useState("");
-  const [omePassword, setOmePassword] = useState("");
-  const [omeVerifySSL, setOmeVerifySSL] = useState(true);
-  const [omeSyncEnabled, setOmeSyncEnabled] = useState(false);
-  const [omeLastSync, setOmeLastSync] = useState<string | null>(null);
-  const [omeSyncing, setOmeSyncing] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState(searchParams.get('section') || 'overview');
+  const [librarySubTab, setLibrarySubTab] = useState<string>('iso');
 
   useEffect(() => {
-    loadOpenManageSettings();
-  }, []);
-
-  const loadOpenManageSettings = async () => {
-    const { data } = await supabase
-      .from('openmanage_settings')
-      .select('*')
-      .maybeSingle();
-
-    if (data) {
-      setOmeSettingsId(data.id);
-      setOmeHost(data.host);
-      setOmePort(data.port);
-      setOmeUsername(data.username);
-      setOmeVerifySSL(data.verify_ssl);
-      setOmeSyncEnabled(data.sync_enabled);
-      setOmeLastSync(data.last_sync);
+    const section = searchParams.get('section');
+    if (section && ['overview', 'libraries', 'server-groups', 'integrations'].includes(section)) {
+      setActiveTab(section);
     }
+  }, [searchParams]);
+
+  const handleTabChange = (value: string) => {
+    setActiveTab(value);
+    setSearchParams({ section: value });
   };
 
-  const handleSaveOpenManage = async () => {
-    setLoading(true);
-    try {
-      const settings = {
-        host: omeHost,
-        port: omePort,
-        username: omeUsername,
-        password: omePassword || undefined,
-        verify_ssl: omeVerifySSL,
-        sync_enabled: omeSyncEnabled,
-      };
-
-      if (omeSettingsId) {
-        await supabase
-          .from('openmanage_settings')
-          .update(settings)
-          .eq('id', omeSettingsId);
-      } else {
-        const { data } = await supabase
-          .from('openmanage_settings')
-          .insert([settings])
-          .select()
-          .single();
-        if (data) setOmeSettingsId(data.id);
-      }
-
-      toast({
-        title: "Success",
-        description: "OpenManage settings saved",
-      });
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
+  const handleNavigateToTab = (tab: string) => {
+    handleTabChange(tab);
   };
 
-  const triggerOpenManageSync = async () => {
-    setOmeSyncing(true);
-    try {
-      const { error } = await supabase.functions.invoke('openmanage-sync');
-      if (error) throw error;
-
-      toast({
-        title: "Sync Started",
-        description: "OpenManage Enterprise sync initiated",
-      });
-
-      setTimeout(() => {
-        loadOpenManageSettings();
-        setOmeSyncing(false);
-      }, 3000);
-    } catch (error: any) {
-      toast({
-        title: "Sync Failed",
-        description: error.message,
-        variant: "destructive",
-      });
-      setOmeSyncing(false);
+  const handleQuickAction = (action: string) => {
+    switch (action) {
+      case 'add-iso':
+        setLibrarySubTab('iso');
+        handleTabChange('libraries');
+        // The IsoImageLibrary will handle opening the dialog via its own state
+        break;
+      case 'upload-firmware':
+        setLibrarySubTab('firmware');
+        handleTabChange('libraries');
+        break;
+      case 'prepare-appliance':
+        setLibrarySubTab('zfs');
+        handleTabChange('libraries');
+        break;
+      case 'create-group':
+        handleTabChange('server-groups');
+        break;
+      case 'sync-openmanage':
+        handleTabChange('integrations');
+        break;
     }
   };
 
   return (
     <div className="space-y-6">
-      {/* Server Groups */}
-      <SettingsSection
-        id="server-groups"
-        title="Server Groups"
-        description="Organize servers into logical groups"
-        icon={Briefcase}
-      >
-        <ServerGroupsManagement />
-      </SettingsSection>
+      <Tabs value={activeTab} onValueChange={handleTabChange}>
+        <TabsList>
+          <TabsTrigger value="overview" className="gap-2">
+            <LayoutDashboard className="h-4 w-4" />
+            Overview
+          </TabsTrigger>
+          <TabsTrigger value="libraries" className="gap-2">
+            <Library className="h-4 w-4" />
+            Libraries
+          </TabsTrigger>
+          <TabsTrigger value="server-groups" className="gap-2">
+            <Briefcase className="h-4 w-4" />
+            Server Groups
+          </TabsTrigger>
+          <TabsTrigger value="integrations" className="gap-2">
+            <Plug className="h-4 w-4" />
+            Integrations
+          </TabsTrigger>
+        </TabsList>
 
-      {/* ZFS Appliance Library */}
-      <SettingsSection
-        id="appliance-library"
-        title="ZFS Appliance Library"
-        description="Manage prepared ZFS storage appliances for deployment"
-        icon={HardDrive}
-      >
-        <ZfsApplianceLibrary />
-      </SettingsSection>
+        <TabsContent value="overview" className="mt-6">
+          <InfrastructureHealthOverview
+            onNavigateToTab={handleNavigateToTab}
+            onQuickAction={handleQuickAction}
+          />
+        </TabsContent>
 
-      {/* ISO Images */}
-      <SettingsSection
-        id="iso-images"
-        title="ISO Image Library"
-        description="Manage bootable ISO images for virtual media"
-        icon={Disc}
-      >
-        <IsoImageLibrary />
-      </SettingsSection>
+        <TabsContent value="libraries" className="mt-6">
+          <LibraryTabPanel defaultTab={librarySubTab} />
+        </TabsContent>
 
-      {/* Firmware Library */}
-      <SettingsSection
-        id="firmware"
-        title="Firmware Library"
-        description="Store and manage Dell firmware update packages"
-        icon={Database}
-      >
-        <FirmwareLibrary />
-      </SettingsSection>
+        <TabsContent value="server-groups" className="mt-6">
+          <ServerGroupsCard />
+        </TabsContent>
 
-      {/* OpenManage Integration */}
-      <SettingsSection
-        id="openmanage"
-        title="OpenManage Enterprise"
-        description="Sync servers from Dell OpenManage Enterprise"
-        icon={Server}
-      >
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>OME Host</Label>
-              <Input
-                value={omeHost}
-                onChange={(e) => setOmeHost(e.target.value)}
-                placeholder="openmanage.example.com"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Port</Label>
-              <Input
-                type="number"
-                value={omePort}
-                onChange={(e) => setOmePort(parseInt(e.target.value) || 443)}
-              />
-            </div>
+        <TabsContent value="integrations" className="mt-6">
+          <div className="space-y-4">
+            <OpenManageIntegrationCard />
           </div>
-          <div className="space-y-2">
-            <Label>Username</Label>
-            <Input
-              value={omeUsername}
-              onChange={(e) => setOmeUsername(e.target.value)}
-              placeholder="admin"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Password</Label>
-            <Input
-              type="password"
-              value={omePassword}
-              onChange={(e) => setOmePassword(e.target.value)}
-              placeholder="Leave blank to keep current"
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <Label>Verify SSL Certificate</Label>
-            <Switch
-              checked={omeVerifySSL}
-              onCheckedChange={setOmeVerifySSL}
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <Label>Enable Auto-Sync</Label>
-            <Switch
-              checked={omeSyncEnabled}
-              onCheckedChange={setOmeSyncEnabled}
-            />
-          </div>
-          {omeLastSync && (
-            <p className="text-sm text-muted-foreground">
-              Last sync: {new Date(omeLastSync).toLocaleString()}
-            </p>
-          )}
-          <div className="flex gap-2">
-            <Button onClick={handleSaveOpenManage} disabled={loading}>
-              {loading ? "Saving..." : "Save OME Settings"}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={triggerOpenManageSync}
-              disabled={omeSyncing || !omeHost}
-            >
-              {omeSyncing ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Syncing...
-                </>
-              ) : (
-                'Sync Now'
-              )}
-            </Button>
-          </div>
-        </div>
-      </SettingsSection>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
