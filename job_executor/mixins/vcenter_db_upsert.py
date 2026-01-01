@@ -362,11 +362,15 @@ class VCenterDbUpsertMixin:
             elif 'notresponding' in conn_state:
                 status = 'unreachable'
             
+            host_name = h.get('name', '')
+            cluster_name = h.get('cluster_name', '')
+            self.log(f"[HostUpsert] Preparing host '{host_name}' with cluster='{cluster_name}'")
+            
             batch.append({
-                'name': h.get('name', ''),
+                'name': host_name,
                 'vcenter_id': h.get('id', ''),
                 'source_vcenter_id': source_vcenter_id,
-                'cluster': h.get('cluster_name', ''),
+                'cluster': cluster_name,
                 'serial_number': h.get('serial_number', ''),
                 'status': status,
                 # Phase 7: ESXi version and maintenance mode
