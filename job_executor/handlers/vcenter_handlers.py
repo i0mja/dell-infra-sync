@@ -49,14 +49,26 @@ class VCenterHandlers(BaseHandler):
             # Fetch vCenter configuration(s)
             self._log_console("Fetching vCenter configuration...", "INFO", job_details)
             
-            # Get target vCenter ID from job details or get ALL sync-enabled vCenters
+            # Get target vCenter ID from target_scope (frontend format) or details (legacy)
             job_details = job.get('details', {})
-            target_vcenter_id = job_details.get('vcenter_id')
+            target_scope = job.get('target_scope', {})
+            
+            # First check target_scope.vcenter_ids (frontend "Sync All" format)
+            vcenter_ids_from_scope = target_scope.get('vcenter_ids', [])
+            if vcenter_ids_from_scope and len(vcenter_ids_from_scope) == 1:
+                target_vcenter_id = vcenter_ids_from_scope[0]
+                self._log_console(f"Target vCenter from target_scope: {target_vcenter_id}", "INFO", job_details)
+            else:
+                # Fallback to details.vcenter_id (legacy/background sync format)
+                target_vcenter_id = job_details.get('vcenter_id')
+                if target_vcenter_id:
+                    self._log_console(f"Target vCenter from details: {target_vcenter_id}", "INFO", job_details)
             
             if target_vcenter_id:
                 vcenter_url = f"{DSM_URL}/rest/v1/vcenters?id=eq.{target_vcenter_id}&select=*"
             else:
                 # Fetch ALL sync-enabled vCenters (no limit)
+                self._log_console("No specific target - syncing ALL enabled vCenters", "INFO", job_details)
                 vcenter_url = f"{DSM_URL}/rest/v1/vcenters?sync_enabled=eq.true&order=created_at.asc"
             
             response = requests.get(
