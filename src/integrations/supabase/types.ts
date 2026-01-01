@@ -3638,6 +3638,145 @@ export type Database = {
           },
         ]
       }
+      update_availability_results: {
+        Row: {
+          blockers: Json | null
+          created_at: string | null
+          critical_updates: number | null
+          esxi_target_version: string | null
+          esxi_update_available: boolean | null
+          esxi_version: string | null
+          firmware_components: Json | null
+          hostname: string | null
+          id: string
+          not_in_catalog: number | null
+          scan_id: string
+          scan_status: string | null
+          scanned_at: string | null
+          server_id: string | null
+          server_model: string | null
+          service_tag: string | null
+          total_components: number | null
+          up_to_date: number | null
+          updates_available: number | null
+          vcenter_host_id: string | null
+        }
+        Insert: {
+          blockers?: Json | null
+          created_at?: string | null
+          critical_updates?: number | null
+          esxi_target_version?: string | null
+          esxi_update_available?: boolean | null
+          esxi_version?: string | null
+          firmware_components?: Json | null
+          hostname?: string | null
+          id?: string
+          not_in_catalog?: number | null
+          scan_id: string
+          scan_status?: string | null
+          scanned_at?: string | null
+          server_id?: string | null
+          server_model?: string | null
+          service_tag?: string | null
+          total_components?: number | null
+          up_to_date?: number | null
+          updates_available?: number | null
+          vcenter_host_id?: string | null
+        }
+        Update: {
+          blockers?: Json | null
+          created_at?: string | null
+          critical_updates?: number | null
+          esxi_target_version?: string | null
+          esxi_update_available?: boolean | null
+          esxi_version?: string | null
+          firmware_components?: Json | null
+          hostname?: string | null
+          id?: string
+          not_in_catalog?: number | null
+          scan_id?: string
+          scan_status?: string | null
+          scanned_at?: string | null
+          server_id?: string | null
+          server_model?: string | null
+          service_tag?: string | null
+          total_components?: number | null
+          up_to_date?: number | null
+          updates_available?: number | null
+          vcenter_host_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "update_availability_results_scan_id_fkey"
+            columns: ["scan_id"]
+            isOneToOne: false
+            referencedRelation: "update_availability_scans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "update_availability_results_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "update_availability_results_vcenter_host_id_fkey"
+            columns: ["vcenter_host_id"]
+            isOneToOne: false
+            referencedRelation: "vcenter_hosts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      update_availability_scans: {
+        Row: {
+          completed_at: string | null
+          created_at: string | null
+          created_by: string | null
+          error_message: string | null
+          firmware_source: string
+          id: string
+          scan_type: string
+          started_at: string | null
+          status: string
+          summary: Json | null
+          target_id: string | null
+          target_name: string | null
+          target_server_ids: string[] | null
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          error_message?: string | null
+          firmware_source: string
+          id?: string
+          scan_type: string
+          started_at?: string | null
+          status?: string
+          summary?: Json | null
+          target_id?: string | null
+          target_name?: string | null
+          target_server_ids?: string[] | null
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          error_message?: string | null
+          firmware_source?: string
+          id?: string
+          scan_type?: string
+          started_at?: string | null
+          status?: string
+          summary?: Json | null
+          target_id?: string | null
+          target_name?: string | null
+          target_server_ids?: string[] | null
+        }
+        Relationships: []
+      }
       user_activity: {
         Row: {
           activity_type: string
