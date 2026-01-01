@@ -1,11 +1,16 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { useJobProgress, formatElapsed } from "@/hooks/useJobProgress";
 import { useVCenterSyncProgress } from "@/hooks/useVCenterSyncProgress";
-import { Clock, Server, Database, Globe, AlertTriangle, CheckCircle2, XCircle, Shield } from "lucide-react";
+import { Clock, Server, Database, Globe, AlertTriangle, CheckCircle2, XCircle, Shield, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { VCenterSyncProgress } from "./VCenterSyncProgress";
+import { isJobStale } from "@/hooks/useStaleJobDetection";
+import { forceCompleteReplicationJob } from "@/lib/stale-job-recovery";
+import { toast } from "sonner";
 
 interface Job {
   id: string;
@@ -23,6 +28,7 @@ interface JobProgressHeaderProps {
 }
 
 export const JobProgressHeader = ({ job }: JobProgressHeaderProps) => {
+  const [isRecovering, setIsRecovering] = useState(false);
   const isVCenterSync = job.job_type === 'vcenter_sync';
   
   // Use dedicated hook for vCenter sync jobs, generic hook for others
@@ -139,6 +145,23 @@ export const JobProgressHeader = ({ job }: JobProgressHeaderProps) => {
   const isFailoverPreflight = job.job_type === 'failover_preflight_check';
   const stepResults = (progress?.details as Record<string, any> | undefined)?.step_results || job.details?.step_results;
 
+  // Stale detection for replication sync
+  const stale = job.job_type === 'run_replication_sync' && isJobStale(job, []);
+
+  const handleForceComplete = async () => {
+    setIsRecovering(true);
+    try {
+      const result = await forceCompleteReplicationJob(job.id);
+      if (result.success) {
+        toast.success('Job marked as complete');
+      } else {
+        toast.error(`Failed: ${result.error}`);
+      }
+    } finally {
+      setIsRecovering(false);
+    }
+  };
+
   const getStatusColor = () => {
     switch (job.status) {
       case 'running':
@@ -153,12 +176,46 @@ export const JobProgressHeader = ({ job }: JobProgressHeaderProps) => {
   };
 
   return (
-    <Card className="border-l-4" style={{
-      borderLeftColor: job.status === 'running' ? 'hsl(var(--primary))' : 
-                       job.status === 'completed' ? 'hsl(var(--success))' : 
-                       job.status === 'failed' ? 'hsl(var(--destructive))' : 'hsl(var(--border))'
-    }}>
-      <CardContent className="pt-6 space-y-4">
+    <div className="space-y-4">
+      {/* Stale Job Warning */}
+      {stale && (
+        <Alert className="border-amber-500/50 bg-amber-500/5">
+          <AlertTriangle className="h-4 w-4 text-amber-500" />
+          <AlertTitle className="text-amber-600">Job Appears Complete</AlertTitle>
+          <AlertDescription className="flex items-center justify-between">
+            <span className="text-sm">
+              This job's tasks are complete, but its status wasn't updated properly.
+            </span>
+            <Button 
+              size="sm" 
+              variant="outline" 
+              className="ml-4 border-amber-500/50 hover:bg-amber-500/10"
+              onClick={handleForceComplete}
+              disabled={isRecovering}
+            >
+              {isRecovering ? (
+                <>
+                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                  Recovering...
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="h-3 w-3 mr-1" />
+                  Mark Complete
+                </>
+              )}
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <Card className="border-l-4" style={{
+        borderLeftColor: stale ? 'hsl(var(--warning))' :
+                         job.status === 'running' ? 'hsl(var(--primary))' : 
+                         job.status === 'completed' ? 'hsl(var(--success))' : 
+                         job.status === 'failed' ? 'hsl(var(--destructive))' : 'hsl(var(--border))'
+      }}>
+        <CardContent className="pt-6 space-y-4">
         {/* Job Type and Status */}
         <div className="flex items-start justify-between">
           <div className="space-y-1">
@@ -255,5 +312,6 @@ export const JobProgressHeader = ({ job }: JobProgressHeaderProps) => {
         )}
       </CardContent>
     </Card>
+    </div>
   );
 };

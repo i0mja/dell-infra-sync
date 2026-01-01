@@ -6,6 +6,9 @@ import { Progress } from "@/components/ui/progress";
 import { Loader2, Server, Clock, HardDrive, Play, Zap, ArrowRight, CheckCircle2, AlertTriangle, Pause, RefreshCw, Database, GitBranch, Copy } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { formatDistanceToNow } from "date-fns";
+import { isJobStale } from "@/hooks/useStaleJobDetection";
+import { forceCompleteReplicationJob } from "@/lib/stale-job-recovery";
+import { toast } from "sonner";
 interface VmSyncDetail {
   vm_name: string;
   bytes_transferred: number;
@@ -53,6 +56,7 @@ export function ActiveReplicationsCard() {
   const [loading, setLoading] = useState(true);
   const [isLive, setIsLive] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [recoveringJobId, setRecoveringJobId] = useState<string | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Fetch active replication jobs
@@ -232,8 +236,27 @@ export function ActiveReplicationsCard() {
           const changesSinceLast = details.changes_since_last || 0;
           const isIncremental = details.is_incremental ?? !!vmSyncDetails.some(v => v.is_incremental || v.incremental_from);
 
+          // Stale job detection
+          const stale = job.job_type === 'run_replication_sync' && isJobStale(job, []);
+          const isRecovering = recoveringJobId === job.id;
+
+          const handleForceComplete = async () => {
+            setRecoveringJobId(job.id);
+            try {
+              const result = await forceCompleteReplicationJob(job.id);
+              if (result.success) {
+                toast.success('Job marked as complete');
+                fetchActiveJobs();
+              } else {
+                toast.error(`Failed: ${result.error}`);
+              }
+            } finally {
+              setRecoveringJobId(null);
+            }
+          };
+
           return (
-            <div key={job.id} className="space-y-2 p-3 rounded-lg bg-muted/50">
+            <div key={job.id} className={`space-y-2 p-3 rounded-lg ${stale ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-muted/50'}`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   {getJobTypeBadge(job.job_type)}
@@ -243,8 +266,31 @@ export function ActiveReplicationsCard() {
                       {vmName}
                     </span>
                   )}
+                  {stale && (
+                    <Badge variant="outline" className="text-amber-600 border-amber-500/50 text-[10px]">
+                      <AlertTriangle className="h-2.5 w-2.5 mr-0.5" />
+                      Stale
+                    </Badge>
+                  )}
                 </div>
-                {job.status === 'running' ? (
+                {stale ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 text-xs border-amber-500/50 hover:bg-amber-500/10"
+                    onClick={handleForceComplete}
+                    disabled={isRecovering}
+                  >
+                    {isRecovering ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <>
+                        <CheckCircle2 className="h-3 w-3 mr-1" />
+                        Complete
+                      </>
+                    )}
+                  </Button>
+                ) : job.status === 'running' ? (
                   <Badge className="bg-blue-600">
                     <Loader2 className="h-3 w-3 mr-1 animate-spin" />
                     Running
