@@ -32,6 +32,8 @@ import { NetworksTable } from "@/components/vcenter/NetworksTable";
 import { NetworksFilterToolbar } from "@/components/vcenter/NetworksFilterToolbar";
 import { SyncableTabTrigger } from "@/components/vcenter/SyncableTabTrigger";
 import { ServerUpdateWizard } from "@/components/jobs/ServerUpdateWizard";
+import { UpdateAvailabilityScanDialog } from "@/components/updates";
+import type { ScanTarget } from "@/components/updates/types";
 
 interface VCenterHost {
   id: string;
@@ -124,6 +126,10 @@ export default function VCenter() {
   // Cluster Update Wizard state
   const [clusterUpdateWizardOpen, setClusterUpdateWizardOpen] = useState(false);
   const [clusterToUpdate, setClusterToUpdate] = useState<string | null>(null);
+  
+  // Check for Updates state
+  const [updateScanDialogOpen, setUpdateScanDialogOpen] = useState(false);
+  const [updateScanTarget, setUpdateScanTarget] = useState<ScanTarget | null>(null);
   
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -591,6 +597,34 @@ export default function VCenter() {
     });
   };
 
+  // Handle Check for Updates - opens the scan dialog
+  const handleCheckForUpdates = (target: ScanTarget) => {
+    setUpdateScanTarget(target);
+    setUpdateScanDialogOpen(true);
+  };
+
+  const handleClusterCheckForUpdates = (clusterName: string, hostIds?: string[]) => {
+    // Find cluster to get host IDs if not provided
+    const cluster = clusters.find(c => c.cluster_name === clusterName);
+    const clusterHosts = hosts.filter(h => h.cluster === clusterName);
+    
+    handleCheckForUpdates({
+      type: 'cluster',
+      name: clusterName,
+      vcenterHostIds: hostIds?.length ? hostIds : clusterHosts.map(h => h.id),
+      serverIds: clusterHosts.filter(h => h.server_id).map(h => h.server_id!),
+    });
+  };
+
+  const handleHostCheckForUpdates = (host: VCenterHost) => {
+    handleCheckForUpdates({
+      type: 'single_host',
+      name: host.name,
+      vcenterHostIds: [host.id],
+      serverIds: host.server_id ? [host.server_id] : undefined,
+    });
+  };
+
   const handleHostSync = async (hostId: string) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -996,6 +1030,7 @@ export default function VCenter() {
                   setHostsSelectedCount(ids.size);
                 }}
                 vcenters={vcenters}
+                onCheckForUpdates={handleHostCheckForUpdates}
               />
             </div>
           </TabsContent>
@@ -1031,6 +1066,9 @@ export default function VCenter() {
                 haFilter={clustersHaFilter}
                 drsFilter={clustersDrsFilter}
                 visibleColumns={clustersColumnVisibility.visibleColumns}
+                onCheckForUpdates={(cluster) => handleClusterCheckForUpdates(cluster.cluster_name)}
+                onSafetyCheck={handleSafetyCheck}
+                onClusterUpdate={handleClusterUpdate}
               />
             </div>
           </TabsContent>
@@ -1113,6 +1151,7 @@ export default function VCenter() {
             onSafetyCheck={handleSafetyCheck}
             onNavigateToHosts={handleNavigateToHosts}
             onNavigateToVMs={handleNavigateToVMs}
+            onCheckForUpdates={handleClusterCheckForUpdates}
           />
         )}
         
@@ -1197,6 +1236,22 @@ export default function VCenter() {
           id: clusterToUpdate
         } : undefined}
       />
+
+      {/* Update Availability Scan Dialog */}
+      {updateScanTarget && (
+        <UpdateAvailabilityScanDialog
+          open={updateScanDialogOpen}
+          onOpenChange={setUpdateScanDialogOpen}
+          target={updateScanTarget}
+          onStartScan={async (firmwareSource) => {
+            toast({
+              title: "Update scan started",
+              description: `Checking for updates on ${updateScanTarget.name}`,
+            });
+            setUpdateScanDialogOpen(false);
+          }}
+        />
+      )}
 
     </div>
   );

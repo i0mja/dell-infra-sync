@@ -124,6 +124,7 @@ interface ServersTableProps {
   onGroupRename?: (groupId: string) => void;
   onGroupDelete?: (groupId: string) => void;
   onViewInVCenter?: (clusterName: string) => void;
+  onCheckForUpdates?: (serverIds: string[], name: string) => void;
 }
 
 export function ServersTable({
@@ -168,6 +169,7 @@ export function ServersTable({
   onGroupRename,
   onGroupDelete,
   onViewInVCenter,
+  onCheckForUpdates,
 }: ServersTableProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [sortField, setSortField] = useState<string | null>(null);
@@ -781,6 +783,15 @@ export function ServersTable({
                           </ContextMenuItem>
                         </>
                       )}
+                      {onCheckForUpdates && (
+                        <>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem onClick={() => onCheckForUpdates([server.id], server.hostname || server.ip_address)}>
+                            <Search className="mr-2 h-4 w-4" />
+                            Check for Updates
+                          </ContextMenuItem>
+                        </>
+                      )}
                       {onServerDelete && (
                         <>
                           <ContextMenuSeparator />
@@ -870,6 +881,13 @@ export function ServersTable({
                             <ContextMenuItem onClick={() => onGroupFirmwareInventory(serverIds)}>
                               <Cpu className="mr-2 h-4 w-4" />
                               Collect Firmware Inventory
+                            </ContextMenuItem>
+                          )}
+                          
+                          {onCheckForUpdates && (
+                            <ContextMenuItem onClick={() => onCheckForUpdates(serverIds, group.name)}>
+                              <Search className="mr-2 h-4 w-4" />
+                              Check for Updates
                             </ContextMenuItem>
                           )}
                           

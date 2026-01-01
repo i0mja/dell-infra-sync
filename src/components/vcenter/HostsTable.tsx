@@ -47,6 +47,7 @@ import {
   Save,
   Trash2,
   X,
+  Search,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
@@ -97,6 +98,7 @@ interface HostsTableProps {
   visibleColumns: string[];
   onSelectionChange?: (selectedIds: Set<string>) => void;
   vcenters?: VCenterInfo[];
+  onCheckForUpdates?: (host: VCenterHost) => void;
 }
 
 export function HostsTable({
@@ -116,6 +118,7 @@ export function HostsTable({
   visibleColumns,
   onSelectionChange,
   vcenters = [],
+  onCheckForUpdates,
 }: HostsTableProps) {
   const [collapsedClusters, setCollapsedClusters] = useState<Set<string>>(new Set());
   const [sortField, setSortField] = useState<string | null>(null);
@@ -506,6 +509,11 @@ export function HostsTable({
                         Link to Server
                       </ContextMenuItem>
                     )}
+                    <ContextMenuSeparator />
+                    <ContextMenuItem onClick={() => onCheckForUpdates?.(host)}>
+                      <Search className="mr-2 h-4 w-4" />
+                      Check for Updates
+                    </ContextMenuItem>
                     <ContextMenuSeparator />
                     <ContextMenuItem onClick={() => copyToClipboard(host.name, "Hostname")}>
                       <ClipboardCopy className="mr-2 h-4 w-4" />

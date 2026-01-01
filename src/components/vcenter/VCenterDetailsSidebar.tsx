@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { 
   X, RefreshCcw, Link2, ExternalLink, Star, Loader2, HardDrive, 
   CheckCircle2, AlertCircle, Server, MonitorDot, Cpu, MemoryStick,
-  Database, Shield, Shuffle, Settings2, Eye, ShieldCheck, Activity
+  Database, Shield, Shuffle, Settings2, Eye, ShieldCheck, Activity, Search
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { DatastoreVM } from "@/hooks/useDatastoreVMs";
@@ -53,6 +53,7 @@ interface VCenterDetailsSidebarProps {
   onSafetyCheck?: (clusterName: string) => void;
   onNavigateToHosts?: (clusterName: string) => void;
   onNavigateToVMs?: (clusterName: string) => void;
+  onCheckForUpdates?: (clusterName: string, hostIds: string[]) => void;
 }
 
 // Helper to format bytes to human-readable
@@ -209,6 +210,7 @@ export function VCenterDetailsSidebar({
   onSafetyCheck,
   onNavigateToHosts,
   onNavigateToVMs,
+  onCheckForUpdates,
 }: VCenterDetailsSidebarProps) {
   
   // VM Details View - Use dedicated component
@@ -360,13 +362,24 @@ export function VCenterDetailsSidebar({
                   variant="default"
                   size="sm"
                   className="w-full"
+                  onClick={() => onCheckForUpdates?.(selectedClusterData.cluster_name, [])}
+                >
+                  <Search className="mr-2 h-4 w-4" />
+                  Check Updates
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
                   onClick={() => onClusterUpdate(selectedClusterData.cluster_name)}
                 >
                   <RefreshCcw className="mr-2 h-4 w-4" />
                   Cluster Update
                 </Button>
+              </div>
+              <div className="grid grid-cols-2 gap-2 mt-2">
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
                   className="w-full"
                   onClick={() => onSafetyCheck?.(selectedClusterData.cluster_name)}
@@ -374,8 +387,6 @@ export function VCenterDetailsSidebar({
                   <ShieldCheck className="mr-2 h-4 w-4" />
                   Safety Check
                 </Button>
-              </div>
-              <div className="grid grid-cols-2 gap-2 mt-2">
                 <Button
                   variant="ghost"
                   size="sm"
