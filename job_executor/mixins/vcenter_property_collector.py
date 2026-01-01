@@ -746,14 +746,19 @@ def _build_moref_lookups(inventory: Dict[str, Any]) -> Dict[str, Any]:
     # 4. Build host lookups
     for obj, props in inventory["hosts"]:
         moref = str(obj._moId)
-        host_moref_to_name[moref] = props.get("name", "")
+        host_name = props.get("name", "")
+        host_moref_to_name[moref] = host_name
         
         # Resolve parent cluster (MoRef and name)
         parent = props.get("parent")
         if parent and hasattr(parent, "_moId"):
             cluster_moref = str(parent._moId)
             host_moref_to_cluster[moref] = cluster_moref
-            host_moref_to_cluster_name[moref] = cluster_moref_to_name.get(cluster_moref, "")
+            cluster_name = cluster_moref_to_name.get(cluster_moref, "")
+            host_moref_to_cluster_name[moref] = cluster_name
+            logger.info(f"[HostClusterMapping] Host '{host_name}' -> parent moref={cluster_moref} -> cluster='{cluster_name}'")
+        else:
+            logger.warning(f"[HostClusterMapping] Host '{host_name}' has no parent cluster (parent={parent})")
         
         # Extract quickStats
         quick_stats = props.get("summary.quickStats")
