@@ -1,7 +1,7 @@
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { SettingsSection } from "@/components/settings/SettingsSection";
+import { SettingsCard } from "@/components/settings";
 import { Palette, Sun, Moon, Monitor } from "lucide-react";
 
 export function GeneralSettings() {
@@ -9,8 +9,7 @@ export function GeneralSettings() {
 
   return (
     <div className="space-y-6">
-      <SettingsSection
-        id="appearance"
+      <SettingsCard
         title="Appearance"
         description="Customize the look and feel of the application"
         icon={Palette}
@@ -49,7 +48,7 @@ export function GeneralSettings() {
             </Button>
           </div>
         </div>
-      </SettingsSection>
+      </SettingsCard>
     </div>
   );
 }

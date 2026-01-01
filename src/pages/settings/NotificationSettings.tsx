@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SettingsTabLayout, SettingsTab, settingsClasses } from '@/components/settings';
 import { LayoutDashboard, Radio, Zap, History } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
@@ -13,15 +12,6 @@ import {
   NotificationTriggersCard,
   NotificationHistoryCard,
 } from '@/components/notifications/settings';
-
-type NotificationSubsection = 'overview' | 'channels' | 'triggers' | 'history';
-
-const subsections: { id: NotificationSubsection; label: string; icon: React.ElementType }[] = [
-  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-  { id: 'channels', label: 'Channels', icon: Radio },
-  { id: 'triggers', label: 'Triggers', icon: Zap },
-  { id: 'history', label: 'History', icon: History },
-];
 
 interface NotificationSettingsData {
   id?: string;
@@ -59,29 +49,18 @@ interface NotificationStats {
 }
 
 export function NotificationSettings() {
-  const [searchParams, setSearchParams] = useSearchParams();
   const { toast } = useToast();
   const { settings: notificationContextSettings, updateSettings: updateContextSettings } = useNotification();
   
-  const [activeSection, setActiveSection] = useState<NotificationSubsection>(
-    (searchParams.get('section') as NotificationSubsection) || 'overview'
-  );
   const [settings, setSettings] = useState<NotificationSettingsData>(defaultSettings);
   const [stats, setStats] = useState<NotificationStats>({ sent24h: 0, delivered24h: 0, failed24h: 0 });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [currentSection, setCurrentSection] = useState('overview');
   
   // Channel enabled states (derived from whether config exists)
   const [emailEnabled, setEmailEnabled] = useState(false);
   const [teamsEnabled, setTeamsEnabled] = useState(false);
-
-  const handleSectionChange = (section: string) => {
-    setActiveSection(section as NotificationSubsection);
-    setSearchParams(prev => {
-      prev.set('section', section);
-      return prev;
-    });
-  };
 
   const loadSettings = async () => {
     try {
@@ -238,97 +217,103 @@ export function NotificationSettings() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      <div className={settingsClasses.loadingContainer}>
+        <div className={settingsClasses.loadingSpinner}></div>
       </div>
     );
   }
 
-  return (
-    <div className="space-y-6">
-      <Tabs value={activeSection} onValueChange={handleSectionChange} className="w-full">
-        <TabsList className="w-full justify-start h-auto p-1 bg-muted/50">
-          {subsections.map(({ id, label, icon: Icon }) => (
-            <TabsTrigger
-              key={id}
-              value={id}
-              className="flex items-center gap-2 px-4 py-2 data-[state=active]:bg-background"
-            >
-              <Icon className="h-4 w-4" />
-              <span>{label}</span>
-            </TabsTrigger>
-          ))}
-        </TabsList>
-
-        <div className="mt-6">
-          <TabsContent value="overview" className="mt-0">
-            <NotificationHealthOverview
-              emailConfigured={emailEnabled && emailConfigured}
-              teamsConfigured={teamsEnabled && teamsConfigured}
-              toastLevel={getToastLevelDisplay(notificationContextSettings.toastLevel)}
-              stats={stats}
-              onNavigateToChannels={() => handleSectionChange('channels')}
-              onNavigateToTriggers={() => handleSectionChange('triggers')}
-            />
-          </TabsContent>
-
-          <TabsContent value="channels" className="mt-0 space-y-4">
-            <EmailChannelCard
-              config={{
-                smtp_host: settings.smtp_host,
-                smtp_port: settings.smtp_port,
-                smtp_user: settings.smtp_user,
-                smtp_password: settings.smtp_password,
-                smtp_from_email: settings.smtp_from_email,
-              }}
-              enabled={emailEnabled}
-              onConfigChange={(config) => setSettings(prev => ({ ...prev, ...config }))}
-              onEnabledChange={setEmailEnabled}
-              onSave={handleSave}
-              isSaving={isSaving}
-            />
-            <TeamsChannelCard
-              config={{
-                teams_webhook_url: settings.teams_webhook_url,
-                teams_mention_users: settings.teams_mention_users,
-                mention_on_critical_failures: settings.mention_on_critical_failures,
-              }}
-              enabled={teamsEnabled}
-              onConfigChange={(config) => setSettings(prev => ({ ...prev, ...config }))}
-              onEnabledChange={setTeamsEnabled}
-              onSave={handleSave}
-              isSaving={isSaving}
-            />
-          </TabsContent>
-
-          <TabsContent value="triggers" className="mt-0">
-            <NotificationTriggersCard
-              settings={{
-                toast_level: getToastLevelDisplay(notificationContextSettings.toastLevel),
-                notify_on_job_started: settings.notify_on_job_started,
-                notify_on_job_complete: settings.notify_on_job_complete,
-                notify_on_job_failed: settings.notify_on_job_failed,
-              }}
-              onChange={(triggerSettings) => {
-                if (triggerSettings.toast_level) {
-                  handleToastLevelChange(triggerSettings.toast_level);
-                }
-                const { toast_level, ...rest } = triggerSettings;
-                if (Object.keys(rest).length > 0) {
-                  setSettings(prev => ({ ...prev, ...rest }));
-                }
-              }}
-              onSave={handleSave}
-              isSaving={isSaving}
-              hasExternalChannels={hasExternalChannels}
-            />
-          </TabsContent>
-
-          <TabsContent value="history" className="mt-0">
-            <NotificationHistoryCard />
-          </TabsContent>
+  const tabs: SettingsTab[] = [
+    { 
+      id: 'overview', 
+      label: 'Overview', 
+      icon: LayoutDashboard, 
+      content: (
+        <NotificationHealthOverview
+          emailConfigured={emailEnabled && emailConfigured}
+          teamsConfigured={teamsEnabled && teamsConfigured}
+          toastLevel={getToastLevelDisplay(notificationContextSettings.toastLevel)}
+          stats={stats}
+          onNavigateToChannels={() => setCurrentSection('channels')}
+          onNavigateToTriggers={() => setCurrentSection('triggers')}
+        />
+      )
+    },
+    { 
+      id: 'channels', 
+      label: 'Channels', 
+      icon: Radio, 
+      content: (
+        <div className="space-y-4">
+          <EmailChannelCard
+            config={{
+              smtp_host: settings.smtp_host,
+              smtp_port: settings.smtp_port,
+              smtp_user: settings.smtp_user,
+              smtp_password: settings.smtp_password,
+              smtp_from_email: settings.smtp_from_email,
+            }}
+            enabled={emailEnabled}
+            onConfigChange={(config) => setSettings(prev => ({ ...prev, ...config }))}
+            onEnabledChange={setEmailEnabled}
+            onSave={handleSave}
+            isSaving={isSaving}
+          />
+          <TeamsChannelCard
+            config={{
+              teams_webhook_url: settings.teams_webhook_url,
+              teams_mention_users: settings.teams_mention_users,
+              mention_on_critical_failures: settings.mention_on_critical_failures,
+            }}
+            enabled={teamsEnabled}
+            onConfigChange={(config) => setSettings(prev => ({ ...prev, ...config }))}
+            onEnabledChange={setTeamsEnabled}
+            onSave={handleSave}
+            isSaving={isSaving}
+          />
         </div>
-      </Tabs>
-    </div>
+      )
+    },
+    { 
+      id: 'triggers', 
+      label: 'Triggers', 
+      icon: Zap, 
+      content: (
+        <NotificationTriggersCard
+          settings={{
+            toast_level: getToastLevelDisplay(notificationContextSettings.toastLevel),
+            notify_on_job_started: settings.notify_on_job_started,
+            notify_on_job_complete: settings.notify_on_job_complete,
+            notify_on_job_failed: settings.notify_on_job_failed,
+          }}
+          onChange={(triggerSettings) => {
+            if (triggerSettings.toast_level) {
+              handleToastLevelChange(triggerSettings.toast_level);
+            }
+            const { toast_level, ...rest } = triggerSettings;
+            if (Object.keys(rest).length > 0) {
+              setSettings(prev => ({ ...prev, ...rest }));
+            }
+          }}
+          onSave={handleSave}
+          isSaving={isSaving}
+          hasExternalChannels={hasExternalChannels}
+        />
+      )
+    },
+    { 
+      id: 'history', 
+      label: 'History', 
+      icon: History, 
+      content: <NotificationHistoryCard />
+    },
+  ];
+
+  return (
+    <SettingsTabLayout 
+      tabs={tabs} 
+      defaultTab="overview"
+      onSectionChange={setCurrentSection}
+    />
   );
 }
