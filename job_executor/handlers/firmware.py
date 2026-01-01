@@ -668,3 +668,363 @@ class FirmwareHandler(BaseHandler):
             )
         except Exception as e:
             self.log(f"Warning: Could not update job version details: {e}", "WARN")
+    
+    def execute_firmware_inventory_scan(self, job: Dict):
+        """
+        Execute firmware inventory scan job to check for available updates.
+        Scans iDRAC firmware inventory and compares against Dell catalog or local repository.
+        """
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        from job_executor.utils import utc_now_iso
+        
+        job_id = job['id']
+        target_scope = job.get('target_scope', {}) or {}
+        details = job.get('details', {}) or {}
+        
+        scan_id = target_scope.get('scan_id')
+        server_ids = target_scope.get('server_ids', [])
+        vcenter_host_ids = target_scope.get('vcenter_host_ids', [])
+        firmware_source = details.get('firmware_source', 'dell_online_catalog')
+        dell_catalog_url = details.get('dell_catalog_url', 'https://downloads.dell.com/catalog/Catalog.xml')
+        
+        self.log(f"Starting firmware inventory scan job {job_id}")
+        self.log(f"  Scan ID: {scan_id}")
+        self.log(f"  Server IDs: {len(server_ids)}, vCenter Host IDs: {len(vcenter_host_ids)}")
+        self.log(f"  Firmware source: {firmware_source}")
+        
+        headers = {
+            'apikey': SERVICE_ROLE_KEY,
+            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+            'Content-Type': 'application/json',
+        }
+        
+        # Update scan status to running
+        if scan_id:
+            try:
+                requests.patch(
+                    f"{DSM_URL}/rest/v1/update_availability_scans",
+                    params={'id': f'eq.{scan_id}'},
+                    headers=headers,
+                    json={'status': 'running', 'started_at': utc_now_iso()},
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
+            except Exception as e:
+                self.log(f"Warning: Could not update scan status: {e}", "WARN")
+        
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso())
+        
+        # Resolve servers to scan
+        servers_to_scan = []
+        
+        # Add servers from server_ids
+        if server_ids:
+            try:
+                response = requests.get(
+                    f"{DSM_URL}/rest/v1/servers",
+                    params={
+                        'id': f'in.({",".join(server_ids)})',
+                        'select': 'id,hostname,ip_address,service_tag,model,vcenter_host_id'
+                    },
+                    headers=headers,
+                    verify=VERIFY_SSL,
+                    timeout=30
+                )
+                if response.ok:
+                    servers_to_scan.extend(response.json())
+            except Exception as e:
+                self.log(f"Error fetching servers: {e}", "ERROR")
+        
+        # Add servers from vcenter_host_ids (lookup via vcenter_hosts -> servers)
+        if vcenter_host_ids:
+            try:
+                response = requests.get(
+                    f"{DSM_URL}/rest/v1/vcenter_hosts",
+                    params={
+                        'id': f'in.({",".join(vcenter_host_ids)})',
+                        'select': 'id,name,server_id,serial_number'
+                    },
+                    headers=headers,
+                    verify=VERIFY_SSL,
+                    timeout=30
+                )
+                if response.ok:
+                    hosts = response.json()
+                    linked_server_ids = [h['server_id'] for h in hosts if h.get('server_id')]
+                    if linked_server_ids:
+                        srv_response = requests.get(
+                            f"{DSM_URL}/rest/v1/servers",
+                            params={
+                                'id': f'in.({",".join(linked_server_ids)})',
+                                'select': 'id,hostname,ip_address,service_tag,model,vcenter_host_id'
+                            },
+                            headers=headers,
+                            verify=VERIFY_SSL,
+                            timeout=30
+                        )
+                        if srv_response.ok:
+                            # Avoid duplicates
+                            existing_ids = {s['id'] for s in servers_to_scan}
+                            for srv in srv_response.json():
+                                if srv['id'] not in existing_ids:
+                                    servers_to_scan.append(srv)
+            except Exception as e:
+                self.log(f"Error fetching vCenter hosts: {e}", "ERROR")
+        
+        if not servers_to_scan:
+            self.log("No servers to scan", "ERROR")
+            self.update_job_status(
+                job_id, 'failed',
+                completed_at=utc_now_iso(),
+                details={'error': 'No servers found to scan'}
+            )
+            if scan_id:
+                requests.patch(
+                    f"{DSM_URL}/rest/v1/update_availability_scans",
+                    params={'id': f'eq.{scan_id}'},
+                    headers=headers,
+                    json={'status': 'failed', 'completed_at': utc_now_iso()},
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
+            return
+        
+        self.log(f"Scanning {len(servers_to_scan)} servers...")
+        
+        # Create job tasks for each server
+        task_map = {}
+        for server in servers_to_scan:
+            try:
+                task_response = requests.post(
+                    f"{DSM_URL}/rest/v1/job_tasks",
+                    headers={**headers, 'Prefer': 'return=representation'},
+                    json={
+                        'job_id': job_id,
+                        'server_id': server['id'],
+                        'status': 'pending',
+                        'log': f"Pending scan: {server.get('hostname') or server['ip_address']}"
+                    },
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
+                if task_response.ok and task_response.json():
+                    task_map[server['id']] = task_response.json()[0]['id']
+            except Exception as te:
+                self.log(f"Warning: Could not create task for {server['id']}: {te}", "WARN")
+        
+        # Scan each server
+        results = []
+        successful_hosts = 0
+        failed_hosts = 0
+        total_updates = 0
+        total_critical = 0
+        total_components = 0
+        
+        for idx, server in enumerate(servers_to_scan):
+            server_id = server['id']
+            hostname = server.get('hostname') or server.get('ip_address', 'Unknown')
+            ip = server.get('ip_address')
+            task_id = task_map.get(server_id)
+            
+            self.log(f"  [{idx+1}/{len(servers_to_scan)}] Scanning {hostname} ({ip})...")
+            
+            # Update progress in job details
+            progress = int((idx / len(servers_to_scan)) * 100)
+            self.update_job_details_field(job_id, {
+                'hosts_scanned': idx,
+                'hosts_total': len(servers_to_scan),
+                'current_host': hostname,
+                'updates_found': total_updates,
+                'critical_found': total_critical,
+            })
+            
+            if task_id:
+                self.update_task_status(task_id, 'running', log=f"Scanning {hostname}...", started_at=utc_now_iso())
+            
+            try:
+                # Get credentials
+                username, password = self.executor.get_server_credentials(server_id)
+                if not username or not password:
+                    raise Exception("No credentials configured")
+                
+                # Get firmware inventory via Dell operations
+                dell_ops = self.executor._get_dell_operations()
+                
+                # Check for updates using catalog
+                if firmware_source == 'dell_online_catalog':
+                    check_result = dell_ops.check_available_catalog_updates(
+                        ip, username, password,
+                        catalog_url=dell_catalog_url,
+                        server_id=server_id,
+                        job_id=job_id,
+                        user_id=job.get('created_by')
+                    )
+                    
+                    available_updates = check_result.get('available_updates', [])
+                    current_inventory = check_result.get('current_inventory', [])
+                else:
+                    # For local repository, just get inventory without catalog comparison
+                    session_token = self.executor.create_idrac_session(ip, username, password)
+                    if not session_token:
+                        raise Exception("Failed to authenticate with iDRAC")
+                    
+                    try:
+                        current_inventory = self.executor.get_firmware_inventory(ip, session_token)
+                        available_updates = []  # No catalog comparison for local repo
+                    finally:
+                        self.executor.close_idrac_session(ip, session_token)
+                
+                # Build firmware components list
+                components = []
+                updates_count = 0
+                critical_count = 0
+                
+                for item in current_inventory:
+                    component_name = item.get('Name') or item.get('component_name', 'Unknown')
+                    current_version = item.get('Version') or item.get('version', 'Unknown')
+                    component_type = item.get('component_type', 'Unknown')
+                    
+                    # Check if there's an update for this component
+                    update_info = next(
+                        (u for u in available_updates 
+                         if u.get('component_name', '').lower() in component_name.lower() or
+                            component_name.lower() in u.get('component_name', '').lower()),
+                        None
+                    )
+                    
+                    component_data = {
+                        'componentName': component_name,
+                        'componentType': component_type,
+                        'currentVersion': current_version,
+                        'availableVersion': update_info.get('available_version') if update_info else None,
+                        'criticality': update_info.get('criticality', 'optional') if update_info else None,
+                        'updateAvailable': bool(update_info),
+                        'rebootRequired': update_info.get('reboot_required', True) if update_info else None,
+                    }
+                    components.append(component_data)
+                    
+                    if update_info:
+                        updates_count += 1
+                        if update_info.get('criticality') in ('urgent', 'critical', 'recommended'):
+                            critical_count += 1
+                
+                total_updates += updates_count
+                total_critical += critical_count
+                total_components += len(components)
+                
+                # Create result record
+                result_record = {
+                    'scan_id': scan_id,
+                    'server_id': server_id,
+                    'vcenter_host_id': server.get('vcenter_host_id'),
+                    'hostname': hostname,
+                    'server_model': server.get('model'),
+                    'service_tag': server.get('service_tag'),
+                    'firmware_components': components,
+                    'total_components': len(components),
+                    'updates_available': updates_count,
+                    'critical_updates': critical_count,
+                    'up_to_date': len(components) - updates_count,
+                    'not_in_catalog': 0,
+                    'scan_status': 'completed',
+                    'scanned_at': utc_now_iso(),
+                }
+                
+                # Insert result into database
+                try:
+                    requests.post(
+                        f"{DSM_URL}/rest/v1/update_availability_results",
+                        headers=headers,
+                        json=result_record,
+                        verify=VERIFY_SSL,
+                        timeout=30
+                    )
+                except Exception as db_err:
+                    self.log(f"Warning: Could not save result for {hostname}: {db_err}", "WARN")
+                
+                results.append(result_record)
+                successful_hosts += 1
+                
+                if task_id:
+                    self.update_task_status(
+                        task_id, 'completed',
+                        log=f"✓ {hostname}: {updates_count} updates available",
+                        completed_at=utc_now_iso(),
+                        progress=100
+                    )
+                
+                self.log(f"    ✓ {len(components)} components, {updates_count} updates available")
+                
+            except Exception as e:
+                self.log(f"    ✗ Failed: {e}", "ERROR")
+                failed_hosts += 1
+                
+                if task_id:
+                    self.update_task_status(
+                        task_id, 'failed',
+                        log=f"✗ {hostname}: {str(e)}",
+                        completed_at=utc_now_iso()
+                    )
+                
+                # Save failed result
+                try:
+                    requests.post(
+                        f"{DSM_URL}/rest/v1/update_availability_results",
+                        headers=headers,
+                        json={
+                            'scan_id': scan_id,
+                            'server_id': server_id,
+                            'vcenter_host_id': server.get('vcenter_host_id'),
+                            'hostname': hostname,
+                            'server_model': server.get('model'),
+                            'service_tag': server.get('service_tag'),
+                            'scan_status': 'failed',
+                            'error_message': str(e),
+                            'scanned_at': utc_now_iso(),
+                        },
+                        verify=VERIFY_SSL,
+                        timeout=30
+                    )
+                except Exception:
+                    pass
+        
+        # Update scan summary
+        summary = {
+            'hostsScanned': len(servers_to_scan),
+            'hostsSuccessful': successful_hosts,
+            'hostsFailed': failed_hosts,
+            'totalComponents': total_components,
+            'updatesAvailable': total_updates,
+            'criticalUpdates': total_critical,
+            'upToDate': total_components - total_updates,
+        }
+        
+        if scan_id:
+            try:
+                requests.patch(
+                    f"{DSM_URL}/rest/v1/update_availability_scans",
+                    params={'id': f'eq.{scan_id}'},
+                    headers=headers,
+                    json={
+                        'status': 'completed' if failed_hosts == 0 else 'completed_with_errors',
+                        'completed_at': utc_now_iso(),
+                        'summary': summary,
+                    },
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
+            except Exception as e:
+                self.log(f"Warning: Could not update scan summary: {e}", "WARN")
+        
+        # Update job status
+        final_status = 'completed' if failed_hosts == 0 else 'failed'
+        self.update_job_status(
+            job_id, final_status,
+            completed_at=utc_now_iso(),
+            details={
+                **summary,
+                'scan_id': scan_id,
+            }
+        )
+        
+        self.log(f"Firmware inventory scan complete: {successful_hosts}/{len(servers_to_scan)} hosts scanned, {total_updates} updates found")
