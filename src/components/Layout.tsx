@@ -123,22 +123,21 @@ const Layout = () => {
       
       {/* Reports Dropdown */}
       <Collapsible open={reportsOpen} onOpenChange={setReportsOpen}>
-        <CollapsibleTrigger asChild>
-          <Button
-            variant={location.pathname.startsWith('/reports') ? "secondary" : "ghost"}
-            className={cn(
-              "w-full justify-start transition-all duration-200",
-              location.pathname.startsWith('/reports') && "bg-secondary"
-            )}
-          >
-            <FileBarChart className="mr-2 h-4 w-4" />
-            <span className="flex-1 text-left">Reports</span>
-            <ChevronRight className={cn(
-              "h-4 w-4 transition-transform duration-300 ease-in-out",
-              reportsOpen && "rotate-90"
-            )} />
-          </Button>
-        </CollapsibleTrigger>
+        <Button
+          variant={location.pathname.startsWith('/reports') ? "secondary" : "ghost"}
+          className={cn(
+            "w-full justify-start transition-all duration-200",
+            location.pathname.startsWith('/reports') && "bg-secondary"
+          )}
+          onClick={() => setReportsOpen(!reportsOpen)}
+        >
+          <FileBarChart className="mr-2 h-4 w-4" />
+          <span className="flex-1 text-left">Reports</span>
+          <ChevronRight className={cn(
+            "h-4 w-4 transition-transform duration-300 ease-in-out",
+            reportsOpen && "rotate-90"
+          )} />
+        </Button>
         <CollapsibleContent className="space-y-1 mt-1">
           {reportsNavigation.map((item) => {
             const isActive = isReportItemActive(item.href);
@@ -147,7 +146,7 @@ const Layout = () => {
                 key={item.name}
                 variant={isActive ? "secondary" : "ghost"}
                 className={cn(
-                  "w-full justify-start pl-10 text-sm transition-all duration-200 truncate",
+                  "w-full justify-start pl-10 text-sm transition-all duration-200 truncate relative z-10",
                   isActive && "bg-muted text-foreground font-medium"
                 )}
                 onClick={(e) => {
@@ -167,28 +166,21 @@ const Layout = () => {
       
       {/* Settings Dropdown */}
       <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <CollapsibleTrigger asChild>
-          <Button
-            variant={location.pathname === '/settings' ? "secondary" : "ghost"}
-            className={cn(
-              "w-full justify-start transition-all duration-200",
-              location.pathname === '/settings' && "bg-secondary"
-            )}
-            onClick={() => {
-              if (location.pathname !== '/settings') {
-                navigate('/settings?tab=general');
-              }
-              setSettingsOpen(!settingsOpen);
-            }}
-          >
-            <Settings className="mr-2 h-4 w-4" />
-            <span className="flex-1 text-left">Settings</span>
-            <ChevronRight className={cn(
-              "h-4 w-4 transition-transform duration-300 ease-in-out",
-              settingsOpen && "rotate-90"
-            )} />
-          </Button>
-        </CollapsibleTrigger>
+        <Button
+          variant={location.pathname === '/settings' ? "secondary" : "ghost"}
+          className={cn(
+            "w-full justify-start transition-all duration-200",
+            location.pathname === '/settings' && "bg-secondary"
+          )}
+          onClick={() => setSettingsOpen(!settingsOpen)}
+        >
+          <Settings className="mr-2 h-4 w-4" />
+          <span className="flex-1 text-left">Settings</span>
+          <ChevronRight className={cn(
+            "h-4 w-4 transition-transform duration-300 ease-in-out",
+            settingsOpen && "rotate-90"
+          )} />
+        </Button>
         <CollapsibleContent className="space-y-1 mt-1">
           {settingsNavigation.map((item) => {
             const isActive = location.pathname === '/settings' && 
@@ -199,10 +191,11 @@ const Layout = () => {
                 key={item.name}
                 variant={isActive ? "secondary" : "ghost"}
                 className={cn(
-                  "w-full justify-start pl-10 text-sm transition-all duration-200 truncate",
+                  "w-full justify-start pl-10 text-sm transition-all duration-200 truncate relative z-10",
                   isActive && "bg-muted text-foreground font-medium"
                 )}
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   navigate(item.href);
                   setMobileOpen(false);
                 }}
