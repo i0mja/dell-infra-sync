@@ -25,6 +25,7 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   cluster_safety_check: 'Safety Check',
   esxi_upgrade: 'ESXi Upgrade',
   credential_test: 'Credential Test',
+  firmware_inventory_scan: 'Check for Updates',
 };
 
 const StatusIcon = ({ status }: { status: string }) => {

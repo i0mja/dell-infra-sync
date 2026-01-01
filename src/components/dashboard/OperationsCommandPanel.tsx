@@ -37,6 +37,7 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   power_control: 'Power Control',
   health_check: 'Health Check',
   esxi_upgrade: 'ESXi Upgrade',
+  firmware_inventory_scan: 'Check for Updates',
 };
 
 const StatusIcon = ({ status }: { status: string }) => {

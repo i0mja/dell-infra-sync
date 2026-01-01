@@ -5,12 +5,65 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { useJobProgress, formatElapsed } from "@/hooks/useJobProgress";
 import { useVCenterSyncProgress } from "@/hooks/useVCenterSyncProgress";
-import { Clock, Server, Database, Globe, AlertTriangle, CheckCircle2, XCircle, Shield, Loader2 } from "lucide-react";
+import { Clock, Server, Database, Globe, AlertTriangle, CheckCircle2, XCircle, Shield, Loader2, Search, RefreshCw, Cpu, HardDrive, Zap, Settings } from "lucide-react";
 import { useEffect, useState } from "react";
 import { VCenterSyncProgress } from "./VCenterSyncProgress";
 import { isJobStale } from "@/hooks/useStaleJobDetection";
 import { forceCompleteReplicationJob } from "@/lib/stale-job-recovery";
 import { toast } from "sonner";
+
+// User-friendly job type labels
+const JOB_TYPE_LABELS: Record<string, string> = {
+  firmware_inventory_scan: 'Check for Updates',
+  vcenter_sync: 'vCenter Sync',
+  discovery_scan: 'Discovery Scan',
+  firmware_update: 'Firmware Update',
+  full_server_update: 'Full Server Update',
+  power_control: 'Power Control',
+  scp_export: 'SCP Export',
+  scp_import: 'SCP Import',
+  esxi_upgrade: 'ESXi Upgrade',
+  esxi_then_firmware: 'ESXi Then Firmware',
+  firmware_then_esxi: 'Firmware Then ESXi',
+  esxi_preflight_check: 'ESXi Preflight Check',
+  storage_vmotion: 'Storage vMotion',
+  deploy_zfs_target: 'Deploy ZFS Target',
+  onboard_zfs_target: 'Onboard ZFS Target',
+  validate_zfs_template: 'Validate ZFS Template',
+  prepare_zfs_template: 'Prepare ZFS Template',
+  check_zfs_target_health: 'ZFS Health Check',
+  run_replication_sync: 'Replication Sync',
+  failover_preflight_check: 'Failover Preflight',
+  exchange_ssh_keys: 'SSH Key Exchange',
+  test_credentials: 'Credential Test',
+  boot_configuration: 'Boot Configuration',
+  prepare_host_for_update: 'Prepare Host',
+  verify_host_after_update: 'Verify Host',
+  rolling_cluster_update: 'Rolling Cluster Update',
+};
+
+// Icons for different job types
+const getJobTypeIcon = (type: string) => {
+  switch (type) {
+    case 'firmware_inventory_scan':
+      return <Search className="h-5 w-5 text-primary" />;
+    case 'vcenter_sync':
+      return <Database className="h-5 w-5 text-primary" />;
+    case 'discovery_scan':
+      return <Globe className="h-5 w-5 text-primary" />;
+    case 'firmware_update':
+    case 'full_server_update':
+      return <Cpu className="h-5 w-5 text-primary" />;
+    case 'power_control':
+      return <Zap className="h-5 w-5 text-primary" />;
+    case 'storage_vmotion':
+      return <HardDrive className="h-5 w-5 text-primary" />;
+    case 'run_replication_sync':
+      return <RefreshCw className="h-5 w-5 text-primary" />;
+    default:
+      return <Settings className="h-5 w-5 text-primary" />;
+  }
+};
 
 interface Job {
   id: string;
@@ -75,7 +128,7 @@ export const JobProgressHeader = ({ job }: JobProgressHeaderProps) => {
   }, [job.status, job.started_at, job.completed_at]);
 
   const formatJobType = (type: string) => {
-    return type
+    return JOB_TYPE_LABELS[type] || type
       .split('_')
       .map(word => word.charAt(0).toUpperCase() + word.slice(1))
       .join(' ');
@@ -84,6 +137,20 @@ export const JobProgressHeader = ({ job }: JobProgressHeaderProps) => {
   const getTargetInfo = () => {
     const scope = job.target_scope;
     const details = job.details;
+
+    // Firmware inventory scan - show target name or host count
+    if (job.job_type === 'firmware_inventory_scan') {
+      const targetName = scope?.target_name;
+      const hostCount = details?.hosts_total || scope?.server_ids?.length || scope?.vcenter_host_ids?.length || 0;
+      return (
+        <div className="flex items-center gap-2 text-sm">
+          <Search className="h-4 w-4 text-muted-foreground" />
+          <span className="font-medium">
+            {targetName || `${hostCount} ${hostCount === 1 ? 'host' : 'hosts'}`}
+          </span>
+        </div>
+      );
+    }
 
     // vCenter sync - show more detail (prefer current_vcenter_name for running multi-vCenter jobs)
     if (job.job_type === 'vcenter_sync') {
@@ -219,7 +286,10 @@ export const JobProgressHeader = ({ job }: JobProgressHeaderProps) => {
         {/* Job Type and Status */}
         <div className="flex items-start justify-between">
           <div className="space-y-1">
-            <h3 className="text-xl font-semibold">{formatJobType(job.job_type)}</h3>
+            <div className="flex items-center gap-2">
+              {getJobTypeIcon(job.job_type)}
+              <h3 className="text-xl font-semibold">{formatJobType(job.job_type)}</h3>
+            </div>
             {getTargetInfo()}
           </div>
           <Badge 

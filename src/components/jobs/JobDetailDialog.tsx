@@ -10,7 +10,7 @@ import { CheckCircle, XCircle, PlayCircle, Clock, AlertCircle, ListChecks, Link2
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
 import { useMinimizedJobs } from "@/contexts/MinimizedJobsContext";
-import { DiscoveryScanResults, VCenterSyncResults, CredentialTestResults, ScpResults, MultiServerResults, GenericResults, JobTimingCard, EsxiUpgradeResults, EsxiPreflightResults, JobProgressHeader, JobTasksTimeline, JobConsoleLog, StorageVMotionResults, ZfsDeploymentResults, ValidationPreflightResults, ZfsHealthCheckResults, ReplicationSyncResults, FailoverPreflightResults, SshKeyExchangeResults, SLAMonitoringResults } from "./results";
+import { DiscoveryScanResults, VCenterSyncResults, CredentialTestResults, ScpResults, MultiServerResults, GenericResults, JobTimingCard, EsxiUpgradeResults, EsxiPreflightResults, JobProgressHeader, JobTasksTimeline, JobConsoleLog, StorageVMotionResults, ZfsDeploymentResults, ValidationPreflightResults, ZfsHealthCheckResults, ReplicationSyncResults, FailoverPreflightResults, SshKeyExchangeResults, SLAMonitoringResults, UpdateAvailabilityScanResults } from "./results";
 import { PendingJobWarning } from "@/components/activity/PendingJobWarning";
 import { MaintenanceBlockerAlert } from "@/components/maintenance/MaintenanceBlockerAlert";
 import { BlockerResolutionWizard } from "@/components/maintenance/BlockerResolutionWizard";
@@ -306,6 +306,8 @@ export const JobDetailDialog = ({
       case 'scheduled_replication_check':
       case 'rpo_monitoring':
         return <SLAMonitoringResults details={job.details} jobType={job.job_type as 'scheduled_replication_check' | 'rpo_monitoring'} />;
+      case 'firmware_inventory_scan':
+        return <UpdateAvailabilityScanResults details={job.details} status={job.status} />;
       default:
         return <GenericResults details={job.details} />;
     }
