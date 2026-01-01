@@ -22,6 +22,7 @@ import VCenter from "./pages/VCenter";
 import ActivityMonitor from "./pages/ActivityMonitor";
 import MaintenancePlanner from "./pages/MaintenancePlanner";
 import Reports from "./pages/Reports";
+import UpdateReport from "./pages/UpdateReport";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -52,6 +53,7 @@ const App = () => (
                 <Route path="maintenance-planner" element={<MaintenancePlanner />} />
                 <Route path="activity" element={<ActivityMonitor />} />
                 <Route path="reports" element={<Reports />} />
+                <Route path="reports/updates/:scanId" element={<UpdateReport />} />
                 <Route path="settings" element={<Settings />} />
                       </Route>
                       <Route path="*" element={<NotFound />} />
