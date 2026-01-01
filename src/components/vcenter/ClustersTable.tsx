@@ -5,12 +5,24 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
   CheckCircle2,
   XCircle,
   Layers,
+  Search,
+  RefreshCcw,
+  ShieldCheck,
+  Server,
+  MonitorDot,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
@@ -32,6 +44,9 @@ interface ClustersTableProps {
   onExport?: () => void;
   visibleColumns?: string[];
   onToggleColumn?: (column: string) => void;
+  onCheckForUpdates?: (cluster: VCenterCluster) => void;
+  onSafetyCheck?: (clusterName: string) => void;
+  onClusterUpdate?: (clusterName: string) => void;
 }
 
 export function ClustersTable({
@@ -46,6 +61,9 @@ export function ClustersTable({
   onExport,
   visibleColumns: parentVisibleColumns,
   onToggleColumn,
+  onCheckForUpdates,
+  onSafetyCheck,
+  onClusterUpdate,
 }: ClustersTableProps) {
   const [sortField, setSortField] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
@@ -357,13 +375,14 @@ export function ClustersTable({
               );
 
               return (
-                <TableRow
-                  key={cluster.id}
-                  className={`cursor-pointer ${
-                    isSelected ? "bg-accent" : "hover:bg-accent/50"
-                  }`}
-                  onClick={() => onClusterClick(cluster.id)}
-                >
+                <ContextMenu key={cluster.id}>
+                  <ContextMenuTrigger asChild>
+                    <TableRow
+                      className={`cursor-pointer ${
+                        isSelected ? "bg-accent" : "hover:bg-accent/50"
+                      }`}
+                      onClick={() => onClusterClick(cluster.id)}
+                    >
                   <TableCell>
                     <Checkbox
                       checked={selectedClusters.has(cluster.id)}
@@ -466,7 +485,37 @@ export function ClustersTable({
                         : "Never"}
                     </TableCell>
                   )}
-                </TableRow>
+                    </TableRow>
+                  </ContextMenuTrigger>
+                  <ContextMenuContent>
+                    <ContextMenuItem onClick={() => onClusterClick(cluster.id)}>
+                      <Layers className="mr-2 h-4 w-4" />
+                      View Details
+                    </ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem onClick={() => onCheckForUpdates?.(cluster)}>
+                      <Search className="mr-2 h-4 w-4" />
+                      Check for Updates
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => onSafetyCheck?.(cluster.cluster_name)}>
+                      <ShieldCheck className="mr-2 h-4 w-4" />
+                      Safety Check
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => onClusterUpdate?.(cluster.cluster_name)}>
+                      <RefreshCcw className="mr-2 h-4 w-4" />
+                      Cluster Update
+                    </ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem onClick={() => {}}>
+                      <Server className="mr-2 h-4 w-4" />
+                      View Hosts ({cluster.host_count || 0})
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => {}}>
+                      <MonitorDot className="mr-2 h-4 w-4" />
+                      View VMs ({cluster.vm_count || 0})
+                    </ContextMenuItem>
+                  </ContextMenuContent>
+                </ContextMenu>
               );
             })}
           </TableBody>

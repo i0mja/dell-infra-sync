@@ -31,6 +31,8 @@ import { WorkflowJobDialog } from "@/components/jobs/WorkflowJobDialog";
 import { ClusterUpdateWizard } from "@/components/jobs/ClusterUpdateWizard";
 import { IdracNetworkDialog } from "@/components/servers/IdracNetworkDialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { UpdateAvailabilityScanDialog } from "@/components/updates";
+import type { ScanTarget } from "@/components/updates/types";
 import type { Server } from "@/hooks/useServers";
 
 export default function Servers() {
@@ -70,6 +72,8 @@ export default function Servers() {
   const [networkSettingsDialogOpen, setNetworkSettingsDialogOpen] = useState(false);
   const [bulkUpdateServerIds, setBulkUpdateServerIds] = useState<string[]>([]);
   const [preSelectedClusterForUpdate, setPreSelectedClusterForUpdate] = useState<string | undefined>();
+  const [updateScanDialogOpen, setUpdateScanDialogOpen] = useState(false);
+  const [updateScanTarget, setUpdateScanTarget] = useState<ScanTarget | null>(null);
   const { launching: launchingConsole, launchConsole } = useConsoleLauncher();
 
   // Hooks
@@ -429,6 +433,14 @@ export default function Servers() {
           onGroupTestCredentials={handleGroupTestCredentials}
           onGroupFirmwareInventory={handleGroupFirmwareInventory}
           onViewInVCenter={handleViewInVCenter}
+          onCheckForUpdates={(serverIds, name) => {
+            setUpdateScanTarget({
+              type: serverIds.length === 1 ? 'single_host' : 'servers',
+              name,
+              serverIds,
+            });
+            setUpdateScanDialogOpen(true);
+          }}
           />
         </div>
 
@@ -623,6 +635,19 @@ export default function Servers() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Update Availability Scan Dialog */}
+      {updateScanTarget && (
+        <UpdateAvailabilityScanDialog
+          open={updateScanDialogOpen}
+          onOpenChange={setUpdateScanDialogOpen}
+          target={updateScanTarget}
+          onStartScan={async () => {
+            toast.success(`Checking for updates on ${updateScanTarget.name}`);
+            setUpdateScanDialogOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }
