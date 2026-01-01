@@ -149,13 +149,14 @@ export const ZfsApplianceLibrary = ({ onSelectAppliance }: ZfsApplianceLibraryPr
 
   return (
     <>
-      <div className="space-y-4">
+      <div className="space-y-6">
+        {/* Header Row */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <HardDrive className="h-4 w-4" />
-            <span>{readyCount} ready</span>
-            <span className="text-muted-foreground/50">·</span>
-            <span>{totalCount} total appliances</span>
+          <div>
+            <h3 className="text-lg font-semibold">ZFS Appliances Library</h3>
+            <p className="text-sm text-muted-foreground">
+              Manage ZFS storage appliance templates for replication
+            </p>
           </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -176,6 +177,18 @@ export const ZfsApplianceLibrary = ({ onSelectAppliance }: ZfsApplianceLibraryPr
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+        </div>
+
+        {/* Stats Row */}
+        <div className="bg-muted/30 rounded-lg p-4">
+          <div className="flex items-center gap-4 text-sm">
+            <div className="flex items-center gap-2">
+              <HardDrive className="h-4 w-4 text-muted-foreground" />
+              <span className="font-medium">{readyCount} ready</span>
+            </div>
+            <span className="text-muted-foreground/50">·</span>
+            <span className="text-muted-foreground">{totalCount} total appliances</span>
+          </div>
         </div>
 
         {/* Search and Filters */}
