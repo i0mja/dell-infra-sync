@@ -6,6 +6,7 @@ import { useServers } from "@/hooks/useServers";
 import { useConsoleLauncher } from "@/hooks/useConsoleLauncher";
 import { useServerActions } from "@/hooks/useServerActions";
 import { useAutoLinkVCenter } from "@/hooks/useAutoLinkVCenter";
+import { useUpdateAvailabilityScan } from "@/hooks/useUpdateAvailabilityScan";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { logActivityDirect } from "@/hooks/useActivityLog";
@@ -74,7 +75,11 @@ export default function Servers() {
   const [preSelectedClusterForUpdate, setPreSelectedClusterForUpdate] = useState<string | undefined>();
   const [updateScanDialogOpen, setUpdateScanDialogOpen] = useState(false);
   const [updateScanTarget, setUpdateScanTarget] = useState<ScanTarget | null>(null);
+  const [activeScanId, setActiveScanId] = useState<string | null>(null);
   const { launching: launchingConsole, launchConsole } = useConsoleLauncher();
+  
+  // Update availability scan hook
+  const { startScan, isStarting, scan, progress } = useUpdateAvailabilityScan(activeScanId || undefined);
 
   // Hooks
   const {
@@ -640,11 +645,37 @@ export default function Servers() {
       {updateScanTarget && (
         <UpdateAvailabilityScanDialog
           open={updateScanDialogOpen}
-          onOpenChange={setUpdateScanDialogOpen}
+          onOpenChange={(open) => {
+            setUpdateScanDialogOpen(open);
+            if (!open) {
+              setActiveScanId(null);
+            }
+          }}
           target={updateScanTarget}
-          onStartScan={async () => {
-            toast.success(`Checking for updates on ${updateScanTarget.name}`);
-            setUpdateScanDialogOpen(false);
+          isScanning={isStarting || scan?.status === 'running' || scan?.status === 'pending'}
+          scanProgress={progress ? {
+            scannedHosts: progress.scannedHosts,
+            totalHosts: progress.totalHosts,
+            currentHost: progress.currentHost,
+            updatesFound: progress.updatesFound,
+            criticalFound: progress.criticalFound,
+          } : undefined}
+          onStartScan={async (firmwareSource) => {
+            try {
+              const scanId = await startScan({
+                scanType: updateScanTarget.type === 'single_host' ? 'single_host' : 
+                          updateScanTarget.type === 'cluster' ? 'cluster' :
+                          updateScanTarget.type === 'group' ? 'group' : 'servers',
+                targetId: updateScanTarget.type === 'group' ? updateScanTarget.name : undefined,
+                targetName: updateScanTarget.name,
+                serverIds: updateScanTarget.serverIds,
+                firmwareSource,
+              });
+              setActiveScanId(scanId);
+              // Don't close - let dialog show progress
+            } catch (error) {
+              console.error('Failed to start scan:', error);
+            }
           }}
         />
       )}
