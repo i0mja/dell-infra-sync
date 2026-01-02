@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { 
   AlertTriangle, 
   XCircle, 
@@ -7,7 +6,8 @@ import {
   ChevronDown, 
   ChevronUp,
   ExternalLink,
-  X 
+  Check,
+  RotateCcw
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -20,6 +20,13 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { useAlertAcknowledgment } from "@/hooks/useAlertAcknowledgment";
+import { useState } from "react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 const INTERNAL_JOB_TYPES = [
   'idm_authenticate', 'idm_test_auth', 'idm_test_connection',
@@ -39,8 +46,9 @@ interface AlertCategory {
 }
 
 export const PriorityAlertCenter = () => {
-  const [dismissed, setDismissed] = useState(false);
   const [expandedCategories, setExpandedCategories] = useState<string[]>([]);
+  const [showAcknowledged, setShowAcknowledged] = useState(false);
+  const { acknowledge, isAcknowledged, unacknowledge, clearAll } = useAlertAcknowledgment();
 
   const { data: offlineServers } = useQuery({
     queryKey: ['offline-servers-alerts'],
@@ -133,7 +141,47 @@ export const PriorityAlertCenter = () => {
     });
   }
 
-  if (categories.length === 0 || dismissed) return null;
+  // Separate active from acknowledged categories
+  const activeCategories = categories.filter(c => !isAcknowledged(c.id, c.count));
+  const acknowledgedCategories = categories.filter(c => isAcknowledged(c.id, c.count));
+
+  // If no categories at all, return null
+  if (categories.length === 0) return null;
+
+  // If all acknowledged and not showing them, show minimal bar
+  if (activeCategories.length === 0 && acknowledgedCategories.length > 0 && !showAcknowledged) {
+    return (
+      <div className="rounded-lg border bg-muted/30 p-3 flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Check className="h-4 w-4 text-green-500" />
+          <span>{acknowledgedCategories.length} acknowledged issue{acknowledgedCategories.length !== 1 ? 's' : ''}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowAcknowledged(true)}
+            className="text-xs"
+          >
+            Show Details
+          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={clearAll}
+                className="h-7 w-7"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Reset all acknowledgments</TooltipContent>
+          </Tooltip>
+        </div>
+      </div>
+    );
+  }
 
   const toggleCategory = (id: string) => {
     setExpandedCategories(prev => 
@@ -141,8 +189,9 @@ export const PriorityAlertCenter = () => {
     );
   };
 
-  const totalAlerts = categories.reduce((sum, cat) => sum + cat.count, 0);
-  const hasCritical = categories.some(c => c.severity === 'critical');
+  const displayCategories = showAcknowledged ? categories : activeCategories;
+  const totalAlerts = displayCategories.reduce((sum, cat) => sum + cat.count, 0);
+  const hasCritical = displayCategories.some(c => c.severity === 'critical');
 
   const severityColors = {
     critical: 'border-destructive/50 bg-destructive/5',
@@ -174,8 +223,15 @@ export const PriorityAlertCenter = () => {
                 hasCritical ? "text-destructive" : "text-amber-500"
               )} />
             </div>
-            <div>
-              <h3 className="font-semibold">Attention Required</h3>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold">Attention Required</h3>
+                {acknowledgedCategories.length > 0 && !showAcknowledged && (
+                  <Badge variant="outline" className="text-xs">
+                    +{acknowledgedCategories.length} acknowledged
+                  </Badge>
+                )}
+              </div>
               <p className="text-sm text-muted-foreground">
                 {totalAlerts} issue{totalAlerts !== 1 ? 's' : ''} need{totalAlerts === 1 ? 's' : ''} your attention
               </p>
@@ -184,71 +240,130 @@ export const PriorityAlertCenter = () => {
 
           {/* Alert Categories */}
           <div className="space-y-2">
-            {categories.map(category => (
-              <Collapsible
-                key={category.id}
-                open={expandedCategories.includes(category.id)}
-                onOpenChange={() => toggleCategory(category.id)}
-              >
-                <div className="rounded-lg border bg-card/50 overflow-hidden">
-                  <CollapsibleTrigger asChild>
-                    <button className="flex items-center justify-between w-full p-3 hover:bg-muted/50 transition-colors text-left">
-                      <div className="flex items-center gap-3">
-                        <category.icon className={cn(
-                          "h-4 w-4",
-                          category.severity === 'critical' ? "text-destructive" : "text-amber-500"
-                        )} />
-                        <span className="font-medium text-sm">{category.title}</span>
-                        <Badge className={cn("text-xs", severityBadgeColors[category.severity])}>
-                          {category.count}
-                        </Badge>
-                      </div>
-                      {expandedCategories.includes(category.id) 
-                        ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> 
-                        : <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                      }
-                    </button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent>
-                    <div className="px-3 pb-3 space-y-2">
-                      <div className="grid gap-1 max-h-32 overflow-y-auto">
-                        {category.items.slice(0, 5).map(item => (
-                          <div key={item.id} className="text-xs text-muted-foreground flex items-center gap-2 py-1">
-                            <span className="h-1 w-1 rounded-full bg-muted-foreground" />
-                            <span className="truncate">{item.label}</span>
-                            {item.sublabel && (
-                              <span className="text-muted-foreground/60">{item.sublabel}</span>
+            {displayCategories.map(category => {
+              const acked = isAcknowledged(category.id, category.count);
+              return (
+                <Collapsible
+                  key={category.id}
+                  open={expandedCategories.includes(category.id)}
+                  onOpenChange={() => toggleCategory(category.id)}
+                >
+                  <div className={cn(
+                    "rounded-lg border overflow-hidden",
+                    acked ? "bg-muted/30 opacity-60" : "bg-card/50"
+                  )}>
+                    <div className="flex items-center">
+                      <CollapsibleTrigger asChild>
+                        <button className="flex items-center justify-between flex-1 p-3 hover:bg-muted/50 transition-colors text-left">
+                          <div className="flex items-center gap-3">
+                            <category.icon className={cn(
+                              "h-4 w-4",
+                              acked ? "text-muted-foreground" :
+                              category.severity === 'critical' ? "text-destructive" : "text-amber-500"
+                            )} />
+                            <span className={cn("font-medium text-sm", acked && "text-muted-foreground")}>
+                              {category.title}
+                            </span>
+                            <Badge className={cn(
+                              "text-xs",
+                              acked ? "bg-muted text-muted-foreground" : severityBadgeColors[category.severity]
+                            )}>
+                              {category.count}
+                            </Badge>
+                            {acked && (
+                              <Badge variant="outline" className="text-xs text-green-600 border-green-600/30">
+                                Acknowledged
+                              </Badge>
                             )}
                           </div>
-                        ))}
-                        {category.items.length > 5 && (
-                          <div className="text-xs text-muted-foreground py-1">
-                            +{category.items.length - 5} more
-                          </div>
-                        )}
-                      </div>
-                      <Button asChild variant="outline" size="sm" className="w-full mt-2">
-                        <Link to={category.actionLink}>
-                          {category.actionLabel}
-                          <ExternalLink className="h-3 w-3 ml-2" />
-                        </Link>
-                      </Button>
+                          {expandedCategories.includes(category.id) 
+                            ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> 
+                            : <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                          }
+                        </button>
+                      </CollapsibleTrigger>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (acked) {
+                                unacknowledge(category.id);
+                              } else {
+                                acknowledge(category.id, category.count);
+                              }
+                            }}
+                            className="h-8 w-8 mr-2"
+                          >
+                            {acked ? (
+                              <RotateCcw className="h-4 w-4 text-muted-foreground" />
+                            ) : (
+                              <Check className="h-4 w-4 text-muted-foreground hover:text-green-500" />
+                            )}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {acked ? "Unacknowledge" : "Acknowledge (hide until count changes)"}
+                        </TooltipContent>
+                      </Tooltip>
                     </div>
-                  </CollapsibleContent>
-                </div>
-              </Collapsible>
-            ))}
+                    <CollapsibleContent>
+                      <div className="px-3 pb-3 space-y-2">
+                        <div className="grid gap-1 max-h-32 overflow-y-auto">
+                          {category.items.slice(0, 5).map(item => (
+                            <div key={item.id} className="text-xs text-muted-foreground flex items-center gap-2 py-1">
+                              <span className="h-1 w-1 rounded-full bg-muted-foreground" />
+                              <span className="truncate">{item.label}</span>
+                              {item.sublabel && (
+                                <span className="text-muted-foreground/60">{item.sublabel}</span>
+                              )}
+                            </div>
+                          ))}
+                          {category.items.length > 5 && (
+                            <div className="text-xs text-muted-foreground py-1">
+                              +{category.items.length - 5} more
+                            </div>
+                          )}
+                        </div>
+                        <Button asChild variant="outline" size="sm" className="w-full mt-2">
+                          <Link to={category.actionLink}>
+                            {category.actionLabel}
+                            <ExternalLink className="h-3 w-3 ml-2" />
+                          </Link>
+                        </Button>
+                      </div>
+                    </CollapsibleContent>
+                  </div>
+                </Collapsible>
+              );
+            })}
           </div>
-        </div>
 
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setDismissed(true)}
-          className="shrink-0 h-8 w-8"
-        >
-          <X className="h-4 w-4" />
-        </Button>
+          {/* Show/Hide Acknowledged Toggle */}
+          {acknowledgedCategories.length > 0 && (
+            <div className="flex items-center justify-between pt-2 border-t">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowAcknowledged(!showAcknowledged)}
+                className="text-xs text-muted-foreground"
+              >
+                {showAcknowledged ? "Hide Acknowledged" : `Show ${acknowledgedCategories.length} Acknowledged`}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearAll}
+                className="text-xs text-muted-foreground"
+              >
+                <RotateCcw className="h-3 w-3 mr-1" />
+                Reset All
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
