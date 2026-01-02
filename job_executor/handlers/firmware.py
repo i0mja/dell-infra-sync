@@ -627,6 +627,158 @@ class FirmwareHandler(BaseHandler):
         
         return None
     
+    def _check_local_repository_updates(
+        self, 
+        current_inventory: list, 
+        server_model: str,
+        server_id: str
+    ) -> list:
+        """
+        Compare installed firmware against uploaded packages in firmware_packages table.
+        Returns list of available updates in the same format as Dell catalog updates.
+        
+        Args:
+            current_inventory: List of firmware components from iDRAC
+            server_model: Server model string (e.g., 'PowerEdge R750')
+            server_id: Server UUID for logging
+            
+        Returns:
+            List of available update dicts with component_name, available_version, etc.
+        """
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        import requests
+        
+        available_updates = []
+        
+        try:
+            # Query completed firmware packages from database
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/firmware_packages",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY, 
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                params={
+                    'select': '*',
+                    'upload_status': 'eq.completed',
+                    'order': 'dell_version.desc'
+                },
+                verify=VERIFY_SSL,
+                timeout=30
+            )
+            
+            if response.status_code != 200:
+                self.log(f"    ⚠ Could not query firmware packages: {response.status_code}", "WARN")
+                return []
+            
+            packages = response.json()
+            
+            if not packages:
+                self.log(f"    No firmware packages in local repository", "DEBUG")
+                return []
+            
+            self.log(f"    Comparing against {len(packages)} local package(s)")
+            
+            for pkg in packages:
+                # Check model applicability if specified
+                applicable_models = pkg.get('applicable_models') or []
+                
+                if applicable_models and server_model:
+                    model_matches = False
+                    for model in applicable_models:
+                        if model.lower() in server_model.lower() or server_model.lower() in model.lower():
+                            model_matches = True
+                            break
+                    
+                    if not model_matches:
+                        continue
+                
+                pkg_type = (pkg.get('component_type') or '').upper()
+                pkg_version = pkg.get('dell_version', '')
+                pkg_name_pattern = pkg.get('component_name_pattern') or pkg.get('filename', '')
+                
+                # Find matching component in installed inventory
+                for installed in current_inventory:
+                    installed_name = (installed.get('Name') or installed.get('component_name') or '').lower()
+                    installed_type = (installed.get('component_type') or '').upper()
+                    installed_version = installed.get('Version') or installed.get('version') or ''
+                    
+                    # Match by component type
+                    type_match = False
+                    if pkg_type and installed_type:
+                        type_match = pkg_type == installed_type
+                    
+                    # Match by name pattern
+                    name_match = False
+                    if pkg_name_pattern:
+                        pattern_lower = pkg_name_pattern.lower()
+                        if pattern_lower in installed_name or installed_name in pattern_lower:
+                            name_match = True
+                    
+                    # Match by component type in name (fallback)
+                    if not type_match and not name_match:
+                        if pkg_type.lower() in installed_name:
+                            name_match = True
+                    
+                    if type_match or name_match:
+                        # Compare versions - simple string comparison 
+                        # (Dell uses version strings like "2.8.1.0" that compare lexicographically)
+                        if self._is_newer_version(pkg_version, installed_version):
+                            available_updates.append({
+                                'component_name': installed.get('Name') or installed.get('component_name'),
+                                'component_type': installed_type or pkg_type,
+                                'current_version': installed_version,
+                                'available_version': pkg_version,
+                                'criticality': pkg.get('criticality', 'optional'),
+                                'reboot_required': pkg.get('reboot_required', True),
+                                'package_id': pkg.get('id'),
+                                'source': 'local_repository'
+                            })
+                            break  # Only one update per component
+            
+            if available_updates:
+                self.log(f"    Found {len(available_updates)} update(s) in local repository")
+            
+        except Exception as e:
+            self.log(f"    ⚠ Error checking local repository: {e}", "WARN")
+        
+        return available_updates
+    
+    def _is_newer_version(self, new_version: str, current_version: str) -> bool:
+        """
+        Compare Dell firmware version strings.
+        Returns True if new_version is newer than current_version.
+        
+        Handles versions like "2.8.1.0", "8.00.00.00", "1.4.2" etc.
+        """
+        if not new_version or not current_version:
+            return False
+        
+        if new_version == current_version:
+            return False
+        
+        try:
+            # Split into parts and compare numerically
+            new_parts = [int(p) for p in new_version.split('.') if p.isdigit()]
+            cur_parts = [int(p) for p in current_version.split('.') if p.isdigit()]
+            
+            # Pad shorter list with zeros
+            max_len = max(len(new_parts), len(cur_parts))
+            new_parts.extend([0] * (max_len - len(new_parts)))
+            cur_parts.extend([0] * (max_len - len(cur_parts)))
+            
+            for new_p, cur_p in zip(new_parts, cur_parts):
+                if new_p > cur_p:
+                    return True
+                if new_p < cur_p:
+                    return False
+            
+            return False  # Equal versions
+            
+        except (ValueError, AttributeError):
+            # Fall back to string comparison
+            return new_version > current_version
+    
     def _update_job_version_details(self, job_id: str, version_info: dict):
         """Update job details with version information for audit reporting"""
         from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
@@ -863,14 +1015,20 @@ class FirmwareHandler(BaseHandler):
                     available_updates = check_result.get('available_updates', [])
                     current_inventory = check_result.get('current_inventory', [])
                 else:
-                    # For local repository, just get inventory without catalog comparison
+                    # For local repository, get inventory and compare against uploaded firmware packages
                     session_token = self.executor.create_idrac_session(ip, username, password)
                     if not session_token:
                         raise Exception("Failed to authenticate with iDRAC")
                     
                     try:
                         current_inventory = self.executor.get_firmware_inventory(ip, session_token)
-                        available_updates = []  # No catalog comparison for local repo
+                        
+                        # Query local firmware packages and compare against installed versions
+                        available_updates = self._check_local_repository_updates(
+                            current_inventory, 
+                            server.get('model'),
+                            server_id
+                        )
                     finally:
                         self.executor.close_idrac_session(ip, session_token)
                 
