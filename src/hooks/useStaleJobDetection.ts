@@ -60,19 +60,19 @@ export function useStaleJobDetection(
     const consoleArray = Array.isArray(consoleLog) ? consoleLog : 
       (Array.isArray(job.details?.console_log) ? job.details.console_log : []);
     
+    // More precise patterns for completion detection
     const completionPatterns = [
-      'Sync complete',
-      'All VMs synced',
-      'Replication completed',
-      'Successfully synced',
-      'vms_synced',
-      'Transfer complete',
+      /Sync complete: \d+\/\d+ VMs synced/i,
+      /All \d+ VMs synced/i,
+      /Replication completed/i,
+      /Successfully synced \d+/i,
+      /Transfer complete/i,
+      /✓ Verified snapshot on Site B/i,
     ];
     
     const consoleIndicatesComplete = consoleArray.some((log: string) =>
-      completionPatterns.some(pattern => 
-        typeof log === 'string' && log.toLowerCase().includes(pattern.toLowerCase())
-      )
+      typeof log === 'string' && 
+      completionPatterns.some(pattern => pattern.test(log))
     );
 
     // Check job.details for completion indicators
