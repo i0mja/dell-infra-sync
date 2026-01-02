@@ -38,6 +38,7 @@ export function useGlobalSearch() {
       const [
         serversRes,
         vmsRes,
+        vmCustomAttrsRes,
         hostsRes,
         clustersRes,
         datastoresRes,
@@ -63,6 +64,13 @@ export function useGlobalSearch() {
           .select('id, name, ip_address, power_state, guest_os')
           .or(`name.ilike.${term},ip_address.ilike.${term}`)
           .limit(MAX_RESULTS_PER_CATEGORY),
+        
+        // VM Custom Attributes (search by attribute value)
+        supabase
+          .from('vcenter_vm_custom_attributes')
+          .select('vm_id, attribute_key, attribute_value')
+          .ilike('attribute_value', term)
+          .limit(MAX_RESULTS_PER_CATEGORY * 3),
         
         // Hosts
         supabase
@@ -157,9 +165,11 @@ export function useGlobalSearch() {
         });
       }
 
-      // Process VMs
+      // Process VMs - track IDs to avoid duplicates from custom attributes
+      const seenVmIds = new Set<string>();
       if (vmsRes.data) {
         vmsRes.data.forEach(v => {
+          seenVmIds.add(v.id);
           dbResults.push({
             id: v.id,
             category: 'vms',
@@ -169,6 +179,46 @@ export function useGlobalSearch() {
             metadata: { power_state: v.power_state, guest_os: v.guest_os },
           });
         });
+      }
+
+      // Process VM Custom Attributes - fetch VM details for matches
+      if (vmCustomAttrsRes.data && vmCustomAttrsRes.data.length > 0) {
+        const vmIdsFromAttrs = vmCustomAttrsRes.data
+          .filter((attr): attr is { vm_id: string; attribute_key: string; attribute_value: string | null } => 
+            typeof attr.vm_id === 'string' && !seenVmIds.has(attr.vm_id))
+          .map(attr => attr.vm_id);
+        
+        if (vmIdsFromAttrs.length > 0) {
+          const uniqueVmIds = [...new Set(vmIdsFromAttrs)] as string[];
+          const { data: attrVms } = await supabase
+            .from('vcenter_vms')
+            .select('id, name, ip_address, power_state, guest_os')
+            .in('id', uniqueVmIds);
+          
+          if (attrVms) {
+            const vmMap = new Map(attrVms.map(vm => [vm.id, vm]));
+            vmCustomAttrsRes.data.forEach(attr => {
+              if (attr.vm_id && !seenVmIds.has(attr.vm_id)) {
+                const vm = vmMap.get(attr.vm_id);
+                if (vm) {
+                  seenVmIds.add(vm.id);
+                  dbResults.push({
+                    id: vm.id,
+                    category: 'vms',
+                    title: vm.name,
+                    subtitle: `${attr.attribute_key}: ${attr.attribute_value}`,
+                    path: `/vcenter?tab=vms&selected=${vm.id}`,
+                    metadata: { 
+                      power_state: vm.power_state, 
+                      guest_os: vm.guest_os,
+                      matched_attribute: { key: attr.attribute_key, value: attr.attribute_value }
+                    },
+                  });
+                }
+              }
+            });
+          }
+        }
       }
 
       // Process Hosts
