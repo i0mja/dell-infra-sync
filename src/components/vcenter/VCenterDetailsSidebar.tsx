@@ -14,6 +14,8 @@ import { formatDistanceToNow } from "date-fns";
 import { DatastoreVM } from "@/hooks/useDatastoreVMs";
 import { ClusterDatastore } from "@/hooks/useClusterDatastores";
 import { VMDetailsSidebar } from "./VMDetailsSidebar";
+import { SidebarBreadcrumb, SidebarNavItem } from "./SidebarBreadcrumb";
+
 interface VCenterHost {
   id: string;
   name: string;
@@ -50,10 +52,15 @@ interface VCenterDetailsSidebarProps {
   onNavigateToVM?: (vmId: string) => void;
   onNavigateToDatastore?: (datastoreId: string) => void;
   onNavigateToHost?: (hostId: string) => void;
+  onNavigateToCluster?: (clusterId: string) => void;
   onSafetyCheck?: (clusterName: string) => void;
   onNavigateToHosts?: (clusterName: string) => void;
   onNavigateToVMs?: (clusterName: string) => void;
   onCheckForUpdates?: (clusterName: string, hostIds: string[]) => void;
+  // Breadcrumb navigation props
+  navStack?: SidebarNavItem[];
+  onNavigateBack?: () => void;
+  onNavigateTo?: (index: number) => void;
 }
 
 // Helper to format bytes to human-readable
@@ -207,11 +214,27 @@ export function VCenterDetailsSidebar({
   onNavigateToVM,
   onNavigateToDatastore,
   onNavigateToHost,
+  onNavigateToCluster,
   onSafetyCheck,
   onNavigateToHosts,
   onNavigateToVMs,
   onCheckForUpdates,
+  navStack = [],
+  onNavigateBack,
+  onNavigateTo,
 }: VCenterDetailsSidebarProps) {
+
+  // Helper to get current nav item for breadcrumb
+  const getCurrentNavItem = (): SidebarNavItem | null => {
+    if (selectedVm) return { type: 'vm', id: selectedVm.id, name: selectedVm.name };
+    if (selectedHost) return { type: 'host', id: selectedHost.id, name: selectedHost.name };
+    if (selectedClusterData) return { type: 'cluster', id: selectedClusterData.id, name: selectedClusterData.cluster_name };
+    if (selectedDatastore) return { type: 'datastore', id: selectedDatastore.id, name: selectedDatastore.name };
+    return null;
+  };
+
+  const currentNavItem = getCurrentNavItem();
+  const showBreadcrumb = navStack.length > 0 && currentNavItem && onNavigateBack && onNavigateTo;
   
   // VM Details View - Use dedicated component
   if (selectedVm) {
@@ -221,6 +244,10 @@ export function VCenterDetailsSidebar({
         onClose={onClose}
         onNavigateToHost={onNavigateToHost}
         onNavigateToDatastore={onNavigateToDatastore}
+        onNavigateToCluster={onNavigateToCluster}
+        navStack={navStack}
+        onNavigateBack={onNavigateBack}
+        onNavigateTo={onNavigateTo}
       />
     );
   }
@@ -245,10 +272,22 @@ export function VCenterDetailsSidebar({
     const storageTotalTB = totalStorageBytes / (1024 ** 4);
     const storageUsedTB = usedStorageBytes / (1024 ** 4);
 
+    const clusterNavItem: SidebarNavItem = { type: 'cluster', id: selectedClusterData.id, name: selectedClusterData.cluster_name };
+    
     return (
       <div className="w-[440px] border-l bg-card flex-shrink-0 h-full flex flex-col">
         {/* Status bar */}
         <div className={`h-1 ${getStatusColor(selectedClusterData.overall_status)}`} />
+        
+        {/* Breadcrumb navigation */}
+        {showBreadcrumb && (
+          <SidebarBreadcrumb
+            navStack={navStack}
+            currentItem={clusterNavItem}
+            onNavigateBack={onNavigateBack!}
+            onNavigateTo={onNavigateTo!}
+          />
+        )}
         
         <div className="flex items-center justify-between p-4 border-b">
           <div className="flex items-center gap-2">
@@ -507,10 +546,22 @@ export function VCenterDetailsSidebar({
       ? Math.round(((selectedDatastore.capacity_bytes - selectedDatastore.free_bytes) / selectedDatastore.capacity_bytes) * 100)
       : 0;
 
+    const datastoreNavItem: SidebarNavItem = { type: 'datastore', id: selectedDatastore.id, name: selectedDatastore.name };
+    
     return (
       <div className="w-[440px] border-l bg-card flex-shrink-0 h-full flex flex-col">
         {/* Status bar */}
         <div className={`h-1 ${selectedDatastore.accessible ? 'bg-success' : 'bg-destructive'}`} />
+        
+        {/* Breadcrumb navigation */}
+        {showBreadcrumb && (
+          <SidebarBreadcrumb
+            navStack={navStack}
+            currentItem={datastoreNavItem}
+            onNavigateBack={onNavigateBack!}
+            onNavigateTo={onNavigateTo!}
+          />
+        )}
         
         <div className="flex items-center justify-between p-4 border-b">
           <div className="flex items-center gap-2">
@@ -637,10 +688,22 @@ export function VCenterDetailsSidebar({
 
   // Host Details View
   if (selectedHost) {
+    const hostNavItem: SidebarNavItem = { type: 'host', id: selectedHost.id, name: selectedHost.name };
+    
     return (
       <div className="w-[440px] border-l bg-card flex-shrink-0 h-full flex flex-col">
         {/* Status bar */}
         <div className={`h-1 ${selectedHost.status === 'connected' ? 'bg-success' : selectedHost.maintenance_mode ? 'bg-warning' : 'bg-destructive'}`} />
+        
+        {/* Breadcrumb navigation */}
+        {showBreadcrumb && (
+          <SidebarBreadcrumb
+            navStack={navStack}
+            currentItem={hostNavItem}
+            onNavigateBack={onNavigateBack!}
+            onNavigateTo={onNavigateTo!}
+          />
+        )}
         
         <div className="flex items-center justify-between p-4 border-b">
           <div className="flex items-center gap-2">

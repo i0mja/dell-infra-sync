@@ -35,6 +35,7 @@ import { SyncableTabTrigger } from "@/components/vcenter/SyncableTabTrigger";
 import { ServerUpdateWizard } from "@/components/jobs/ServerUpdateWizard";
 import { UpdateAvailabilityScanDialog } from "@/components/updates";
 import type { ScanTarget } from "@/components/updates/types";
+import type { SidebarNavItem } from "@/components/vcenter/SidebarBreadcrumb";
 
 interface VCenterHost {
   id: string;
@@ -135,6 +136,9 @@ export default function VCenter() {
   
   // Update availability scan hook
   const { startScan, isStarting: isScanStarting, scan: activeScan, progress: scanProgress } = useUpdateAvailabilityScan(activeScanId || undefined);
+
+  // Sidebar navigation stack for breadcrumb
+  const [sidebarNavStack, setSidebarNavStack] = useState<SidebarNavItem[]>([]);
   
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -510,29 +514,142 @@ export default function VCenter() {
     setSelectedDatastoreId(selectedDatastoreId === datastoreId ? null : datastoreId);
   };
 
+  // Helper to get current selection info for nav stack
+  const getCurrentNavItem = (): SidebarNavItem | null => {
+    if (selectedVmId) {
+      const vm = vms.find(v => v.id === selectedVmId);
+      if (vm) return { type: 'vm', id: vm.id, name: vm.name };
+    }
+    if (selectedHostId) {
+      const host = hosts.find(h => h.id === selectedHostId);
+      if (host) return { type: 'host', id: host.id, name: host.name };
+    }
+    if (selectedClusterId) {
+      const cluster = clusters.find(c => c.id === selectedClusterId);
+      if (cluster) return { type: 'cluster', id: cluster.id, name: cluster.cluster_name };
+    }
+    if (selectedDatastoreId) {
+      const ds = datastores.find(d => d.id === selectedDatastoreId);
+      if (ds) return { type: 'datastore', id: ds.id, name: ds.name };
+    }
+    return null;
+  };
+
+  // Push current selection to nav stack before navigating away
+  const pushCurrentToNavStack = () => {
+    const current = getCurrentNavItem();
+    if (current) {
+      setSidebarNavStack(prev => [...prev, current]);
+    }
+  };
+
   // Navigate to VMs tab and select a specific VM
   const handleNavigateToVM = (vmId: string) => {
+    pushCurrentToNavStack();
     setActiveTab("vms");
     setSelectedDatastoreId(null);
     setSelectedClusterId(null);
+    setSelectedHostId(null);
     setSelectedVmId(vmId);
   };
 
   // Navigate to Datastores tab and select a specific datastore
   const handleNavigateToDatastore = (datastoreId: string) => {
+    pushCurrentToNavStack();
     setActiveTab("datastores");
     setSelectedClusterId(null);
     setSelectedVmId(null);
+    setSelectedHostId(null);
     setSelectedDatastoreId(datastoreId);
   };
 
   // Navigate to Hosts tab and select a specific host
   const handleNavigateToHost = (hostId: string) => {
+    pushCurrentToNavStack();
     setActiveTab("hosts");
     setSelectedClusterId(null);
     setSelectedVmId(null);
     setSelectedDatastoreId(null);
     setSelectedHostId(hostId);
+  };
+
+  // Navigate to Clusters tab and select a specific cluster
+  const handleNavigateToCluster = (clusterId: string) => {
+    pushCurrentToNavStack();
+    setActiveTab("clusters");
+    setSelectedHostId(null);
+    setSelectedVmId(null);
+    setSelectedDatastoreId(null);
+    setSelectedClusterId(clusterId);
+  };
+
+  // Handle sidebar back navigation
+  const handleSidebarBack = () => {
+    if (sidebarNavStack.length === 0) return;
+    
+    const prev = sidebarNavStack[sidebarNavStack.length - 1];
+    setSidebarNavStack(s => s.slice(0, -1));
+    
+    // Clear all selections first
+    setSelectedHostId(null);
+    setSelectedVmId(null);
+    setSelectedClusterId(null);
+    setSelectedDatastoreId(null);
+    
+    // Restore the previous selection
+    switch (prev.type) {
+      case 'vm':
+        setActiveTab('vms');
+        setSelectedVmId(prev.id);
+        break;
+      case 'host':
+        setActiveTab('hosts');
+        setSelectedHostId(prev.id);
+        break;
+      case 'cluster':
+        setActiveTab('clusters');
+        setSelectedClusterId(prev.id);
+        break;
+      case 'datastore':
+        setActiveTab('datastores');
+        setSelectedDatastoreId(prev.id);
+        break;
+    }
+  };
+
+  // Handle navigating to a specific point in the nav stack
+  const handleSidebarNavigateTo = (index: number) => {
+    if (index < 0 || index >= sidebarNavStack.length) return;
+    
+    const target = sidebarNavStack[index];
+    // Keep only items before this index
+    setSidebarNavStack(s => s.slice(0, index));
+    
+    // Clear all selections first
+    setSelectedHostId(null);
+    setSelectedVmId(null);
+    setSelectedClusterId(null);
+    setSelectedDatastoreId(null);
+    
+    // Restore the target selection
+    switch (target.type) {
+      case 'vm':
+        setActiveTab('vms');
+        setSelectedVmId(target.id);
+        break;
+      case 'host':
+        setActiveTab('hosts');
+        setSelectedHostId(target.id);
+        break;
+      case 'cluster':
+        setActiveTab('clusters');
+        setSelectedClusterId(target.id);
+        break;
+      case 'datastore':
+        setActiveTab('datastores');
+        setSelectedDatastoreId(target.id);
+        break;
+    }
   };
 
   // Handle cluster update - opens the ServerUpdateWizard with the cluster pre-selected
@@ -744,6 +861,7 @@ export default function VCenter() {
     setSelectedVmId(null);
     setSelectedClusterId(null);
     setSelectedDatastoreId(null);
+    setSidebarNavStack([]); // Clear navigation history
   };
 
   const handleTabChange = (newTab: string) => {
@@ -1153,10 +1271,14 @@ export default function VCenter() {
             onNavigateToVM={handleNavigateToVM}
             onNavigateToDatastore={handleNavigateToDatastore}
             onNavigateToHost={handleNavigateToHost}
+            onNavigateToCluster={handleNavigateToCluster}
             onSafetyCheck={handleSafetyCheck}
             onNavigateToHosts={handleNavigateToHosts}
             onNavigateToVMs={handleNavigateToVMs}
             onCheckForUpdates={handleClusterCheckForUpdates}
+            navStack={sidebarNavStack}
+            onNavigateBack={handleSidebarBack}
+            onNavigateTo={handleSidebarNavigateTo}
           />
         )}
         

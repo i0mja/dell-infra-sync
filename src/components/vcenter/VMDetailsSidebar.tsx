@@ -19,12 +19,18 @@ import { useVMNetworks } from "@/hooks/useVMNetworks";
 import { useVMSnapshots, VMSnapshot } from "@/hooks/useVMSnapshots";
 import { useVMCustomAttributes } from "@/hooks/useVMCustomAttributes";
 import { useState } from "react";
+import { SidebarBreadcrumb, SidebarNavItem } from "./SidebarBreadcrumb";
 
 interface VMDetailsSidebarProps {
   vm: any;
   onClose: () => void;
   onNavigateToHost?: (hostId: string) => void;
   onNavigateToDatastore?: (datastoreId: string) => void;
+  onNavigateToCluster?: (clusterId: string) => void;
+  // Breadcrumb navigation props
+  navStack?: SidebarNavItem[];
+  onNavigateBack?: () => void;
+  onNavigateTo?: (index: number) => void;
 }
 
 interface SnapshotNode extends VMSnapshot {
@@ -186,6 +192,10 @@ export function VMDetailsSidebar({
   onClose,
   onNavigateToHost,
   onNavigateToDatastore,
+  onNavigateToCluster,
+  navStack = [],
+  onNavigateBack,
+  onNavigateTo,
 }: VMDetailsSidebarProps) {
   const [openSections, setOpenSections] = useState({
     storage: true,
@@ -212,10 +222,24 @@ export function VMDetailsSidebar({
   // Build snapshot tree
   const snapshotTree = snapshots ? buildSnapshotTree(snapshots) : [];
 
+  // Current nav item for breadcrumb
+  const currentNavItem: SidebarNavItem = { type: 'vm', id: vm.id, name: vm.name };
+  const showBreadcrumb = navStack.length > 0 && onNavigateBack && onNavigateTo;
+
   return (
     <div className="w-[440px] border-l bg-card flex-shrink-0 h-full flex flex-col">
       {/* Status bar */}
       <div className={`h-1 ${powerColor}`} />
+      
+      {/* Breadcrumb navigation */}
+      {showBreadcrumb && (
+        <SidebarBreadcrumb
+          navStack={navStack}
+          currentItem={currentNavItem}
+          onNavigateBack={onNavigateBack}
+          onNavigateTo={onNavigateTo}
+        />
+      )}
       
       <div className="flex items-center justify-between p-4 border-b">
         <div className="flex items-center gap-2">
