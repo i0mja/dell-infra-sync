@@ -1548,6 +1548,68 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
             )
 
 
+    def _cancel_orphaned_running_jobs(self):
+        """Cancel all jobs in 'running' status on executor startup.
+        
+        If the executor is starting, any job marked as 'running' is orphaned
+        because the process that was executing it no longer exists.
+        """
+        try:
+            headers = {
+                'apikey': SERVICE_ROLE_KEY,
+                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            # Fetch all jobs currently in 'running' status
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/jobs",
+                params={
+                    'status': 'eq.running',
+                    'select': 'id,job_type,started_at,details'
+                },
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=15
+            )
+            
+            if response.ok:
+                running_jobs = response.json() or []
+                
+                if running_jobs:
+                    self.log(f"[STARTUP] Found {len(running_jobs)} orphaned running job(s) - cancelling")
+                    
+                    for job in running_jobs:
+                        job_id = job['id']
+                        job_type = job.get('job_type', 'unknown')
+                        started_at = job.get('started_at', 'unknown')
+                        
+                        self.log(f"[STARTUP] Cancelling orphaned {job_type} job {job_id} (started: {started_at})")
+                        
+                        # Preserve existing details and add cancellation info
+                        existing_details = job.get('details') or {}
+                        cancellation_details = {
+                            **existing_details,
+                            'error': 'Job cancelled: executor restarted while job was running',
+                            'cancelled_reason': 'executor_restart',
+                            'cancelled_at': utc_now_iso(),
+                            'executor_id': self.executor_id
+                        }
+                        
+                        self.update_job_status(
+                            job_id, 
+                            'cancelled',
+                            completed_at=utc_now_iso(),
+                            details=cancellation_details
+                        )
+                    
+                    self.log(f"[STARTUP] Cancelled {len(running_jobs)} orphaned job(s)")
+                else:
+                    self.log("[STARTUP] No orphaned running jobs found")
+                    
+        except Exception as e:
+            self.log(f"[STARTUP] Error cancelling orphaned jobs: {e}", "WARN")
+
     def _recover_stale_scheduled_jobs(self):
         """Recover background/scheduled jobs that have been stuck in running state too long."""
         try:
@@ -1601,6 +1663,9 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
         self._validate_service_role_key()
 
         self.log("[OK] Configuration validated", "INFO")
+        
+        # Cancel any orphaned running jobs from previous executor instance
+        self._cancel_orphaned_running_jobs()
         
         # Initialize throttler and display configuration
         try:
