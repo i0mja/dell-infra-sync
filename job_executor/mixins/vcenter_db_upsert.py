@@ -853,7 +853,7 @@ class VCenterDbUpsertMixin:
         job_id: str = None,
         host_id_map: Dict[str, str] = None
     ) -> Dict[str, int]:
-        """Batch upsert VMs."""
+        """Batch upsert VMs with retry logic for failed batches."""
         # DEBUG: Log incoming VM count for diagnosis
         self.log(f"  _upsert_vms_batch: Received {len(vms)} VMs for vCenter {source_vcenter_id}")
         
@@ -888,44 +888,40 @@ class VCenterDbUpsertMixin:
                 host_lookup = {h['name']: h['id'] for h in hosts_list}
         
         synced = 0
+        failed_vms = []
         batch_size = 50
+        errors = []
+        
+        def build_vm_record(v):
+            """Build a VM record dict for upsert."""
+            host_id = host_lookup.get(v.get('host_name', ''))
+            return {
+                'name': v.get('name', ''),
+                'vcenter_id': v.get('id', ''),
+                'source_vcenter_id': source_vcenter_id,
+                'host_id': host_id,
+                'cluster_name': v.get('cluster_name', ''),
+                'power_state': v.get('power_state', 'unknown'),
+                'overall_status': v.get('connection_state', 'unknown'),
+                'cpu_count': v.get('cpu_count', 0),
+                'memory_mb': v.get('memory_mb', 0),
+                'disk_gb': v.get('disk_gb', 0),
+                'guest_os': v.get('guest_os', ''),
+                'ip_address': v.get('ip_address', ''),
+                'is_template': v.get('is_template', False),
+                'tools_status': v.get('tools_status', ''),
+                'tools_version': v.get('tools_version', ''),
+                'resource_pool': v.get('resource_pool', ''),
+                'hardware_version': v.get('hardware_version', ''),
+                'folder_path': v.get('folder_path', ''),
+                'snapshot_count': v.get('snapshot_count', 0),
+                'last_sync': utc_now_iso()
+            }
         
         for i in range(0, len(vms), batch_size):
             batch_vms = vms[i:i+batch_size]
-            batch = []
+            batch = [build_vm_record(v) for v in batch_vms]
             
-            for v in batch_vms:
-                # Resolve host_id from host name (Phase 3 uses host_name)
-                host_id = host_lookup.get(v.get('host_name', ''))
-                
-                batch.append({
-                    'name': v.get('name', ''),
-                    'vcenter_id': v.get('id', ''),
-                    'source_vcenter_id': source_vcenter_id,
-                    'host_id': host_id,
-                    'cluster_name': v.get('cluster_name', ''),
-                    'power_state': v.get('power_state', 'unknown'),
-                    'overall_status': v.get('connection_state', 'unknown'),
-                    # Phase 7: VM resources
-                    'cpu_count': v.get('cpu_count', 0),
-                    'memory_mb': v.get('memory_mb', 0),
-                    'disk_gb': v.get('disk_gb', 0),
-                    # Phase 7: Guest info
-                    'guest_os': v.get('guest_os', ''),
-                    'ip_address': v.get('ip_address', ''),
-                    'is_template': v.get('is_template', False),
-                    # Phase 7: Tools info
-                    'tools_status': v.get('tools_status', ''),
-                    'tools_version': v.get('tools_version', ''),
-                    # Phase 9: New fields
-                    'resource_pool': v.get('resource_pool', ''),
-                    'hardware_version': v.get('hardware_version', ''),
-                    'folder_path': v.get('folder_path', ''),
-                    'snapshot_count': v.get('snapshot_count', 0),
-                    'last_sync': utc_now_iso()
-                })
-            
-            errors = []
             try:
                 response = requests.post(
                     f"{DSM_URL}/rest/v1/vcenter_vms?on_conflict=vcenter_id,source_vcenter_id",
@@ -938,20 +934,122 @@ class VCenterDbUpsertMixin:
                 if response.status_code in [200, 201, 204]:
                     synced += len(batch)
                 else:
-                    error_msg = f"Batch {i//batch_size + 1}: HTTP {response.status_code}: {response.text[:200]}"
-                    self.log(f"  VM batch upsert failed: {error_msg}", "WARN")
-                    errors.append(error_msg)
+                    # Batch failed - queue for individual retry
+                    error_text = response.text[:300] if response.text else "No response"
+                    self.log(f"  VM batch {i//batch_size + 1} failed (HTTP {response.status_code}), will retry individually", "WARN")
+                    failed_vms.extend(batch_vms)
                     
             except Exception as e:
-                error_msg = f"Batch {i//batch_size + 1}: {str(e)}"
-                self.log(f"  VM batch upsert error: {e}", "ERROR")
-                errors.append(error_msg)
+                self.log(f"  VM batch {i//batch_size + 1} error: {e}, will retry individually", "WARN")
+                failed_vms.extend(batch_vms)
         
-        self.log(f"  ✓ Batch upserted {synced}/{len(vms)} VMs")
+        # Retry failed VMs individually to identify and skip only problematic ones
+        if failed_vms:
+            self.log(f"  Retrying {len(failed_vms)} failed VMs individually...")
+            retry_success = 0
+            retry_failures = []
+            
+            for v in failed_vms:
+                record = build_vm_record(v)
+                vm_name = record.get('name', 'unknown')
+                
+                try:
+                    response = requests.post(
+                        f"{DSM_URL}/rest/v1/vcenter_vms?on_conflict=vcenter_id,source_vcenter_id",
+                        headers=headers,
+                        json=[record],
+                        verify=VERIFY_SSL,
+                        timeout=15
+                    )
+                    
+                    if response.status_code in [200, 201, 204]:
+                        retry_success += 1
+                    else:
+                        # Check if it's a name conflict (duplicate name with different moRef)
+                        if 'unique constraint' in response.text.lower() or 'duplicate' in response.text.lower():
+                            # Try to find and update the existing record by name
+                            update_result = self._update_vm_by_name(record, headers)
+                            if update_result:
+                                retry_success += 1
+                            else:
+                                retry_failures.append(f"{vm_name}: constraint conflict")
+                        else:
+                            retry_failures.append(f"{vm_name}: HTTP {response.status_code}")
+                            
+                except Exception as e:
+                    retry_failures.append(f"{vm_name}: {str(e)[:50]}")
+            
+            synced += retry_success
+            
+            if retry_failures:
+                self.log(f"  ⚠ {len(retry_failures)} VMs could not be synced: {retry_failures[:5]}", "WARN")
+                errors.append(f"{len(retry_failures)} VMs failed: {', '.join(retry_failures[:3])}")
+        
+        # Log sync completeness prominently
+        if synced == len(vms):
+            self.log(f"  ✓ Synced {synced}/{len(vms)} VMs (100%)")
+        else:
+            self.log(f"  ⚠ Synced {synced}/{len(vms)} VMs ({100*synced//len(vms)}% - {len(vms)-synced} missing)", "WARN")
+        
         result = {"synced": synced, "total": len(vms)}
         if errors:
             result["error"] = "; ".join(errors)
         return result
+    
+    def _update_vm_by_name(self, record: Dict, headers: Dict) -> bool:
+        """
+        Update an existing VM record by name when moRef has changed.
+        This handles the case where a VM is recreated with a new moRef but same name.
+        
+        Returns True if update succeeded, False otherwise.
+        """
+        vm_name = record.get('name', '')
+        source_vcenter_id = record.get('source_vcenter_id', '')
+        new_moref = record.get('vcenter_id', '')
+        
+        if not vm_name or not source_vcenter_id:
+            return False
+        
+        try:
+            # Find existing VM by name
+            from urllib.parse import quote
+            find_response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_vms?source_vcenter_id=eq.{source_vcenter_id}&name=eq.{quote(vm_name)}&select=id,vcenter_id",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if find_response.status_code == 200:
+                from job_executor.utils import _safe_json_parse
+                existing = _safe_json_parse(find_response)
+                if existing and len(existing) > 0:
+                    existing_id = existing[0].get('id')
+                    old_moref = existing[0].get('vcenter_id', '')
+                    
+                    if existing_id:
+                        # Update the existing record with new data including moRef
+                        update_headers = {**headers, 'Prefer': 'return=minimal'}
+                        update_response = requests.patch(
+                            f"{DSM_URL}/rest/v1/vcenter_vms?id=eq.{existing_id}",
+                            headers=update_headers,
+                            json=record,
+                            verify=VERIFY_SSL,
+                            timeout=10
+                        )
+                        
+                        if update_response.status_code in [200, 204]:
+                            self.log(f"    Updated moRef for VM '{vm_name}': {old_moref} -> {new_moref}")
+                            return True
+            
+            return False
+            
+        except Exception as e:
+            self.log(f"    Failed to update VM by name '{vm_name}': {e}", "WARN")
+            return False
     
     def _upsert_network_vms_batch(
         self,
