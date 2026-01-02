@@ -1049,6 +1049,15 @@ export function useProtectedVMs(groupId?: string) {
   };
 }
 
+export interface EnrichedReplicationJob extends ReplicationJob {
+  group_name?: string;
+  vms_synced?: number;
+  total_vms?: number;
+  current_step?: string;
+  progress_percent?: number;
+  details?: Record<string, unknown>;
+}
+
 export function useReplicationJobs() {
   const { data: jobs = [], isLoading: loading, error, refetch } = useQuery({
     queryKey: ['replication-jobs'],
@@ -1061,7 +1070,7 @@ export function useReplicationJobs() {
         .order('created_at', { ascending: false })
         .limit(100);
       if (error) throw error;
-      // Map jobs table to ReplicationJob interface
+      // Map jobs table to EnrichedReplicationJob interface with additional details
       return (data || []).map(job => {
         const targetScope = job.target_scope as Record<string, unknown> | null;
         const details = job.details as Record<string, unknown> | null;
@@ -1079,8 +1088,15 @@ export function useReplicationJobs() {
           target_snapshot: details?.target_snapshot as string | undefined,
           incremental: details?.incremental as boolean | undefined,
           created_at: job.created_at,
+          // Enriched fields
+          group_name: (details?.group_name || details?.protection_group_name) as string | undefined,
+          vms_synced: (details?.vms_synced as number) || 0,
+          total_vms: (details?.total_vms as number) || 0,
+          current_step: details?.current_step as string | undefined,
+          progress_percent: details?.progress_percent as number | undefined,
+          details: details || undefined,
         };
-      }) as ReplicationJob[];
+      }) as EnrichedReplicationJob[];
     },
     refetchInterval: 10000 // Auto-refresh every 10 seconds
   });
