@@ -4628,6 +4628,7 @@ export type Database = {
           last_sync_error: string | null
           last_sync_status: string | null
           name: string
+          next_sync_at: string | null
           password_encrypted: string | null
           port: number
           site_code: string | null
@@ -4650,6 +4651,7 @@ export type Database = {
           last_sync_error?: string | null
           last_sync_status?: string | null
           name: string
+          next_sync_at?: string | null
           password_encrypted?: string | null
           port?: number
           site_code?: string | null
@@ -4672,6 +4674,7 @@ export type Database = {
           last_sync_error?: string | null
           last_sync_status?: string | null
           name?: string
+          next_sync_at?: string | null
           password_encrypted?: string | null
           port?: number
           site_code?: string | null

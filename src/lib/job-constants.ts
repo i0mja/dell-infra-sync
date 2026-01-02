@@ -10,15 +10,14 @@ export const INTERNAL_JOB_TYPES = [
   'idm_search_ad_groups',
   'idm_search_ad_users',
   'idm_sync_users',
-  'scheduled_vcenter_sync',
 ] as const;
 
 // Scheduled background job types - shown in Background Task Manager, not Active Jobs popover
 // These are recurring/scheduled jobs that run automatically
+// Note: scheduled_vcenter_sync removed - replaced by pg_cron trigger-vcenter-syncs
 export const SCHEDULED_BACKGROUND_JOB_TYPES = [
   'scheduled_replication_check',
   'rpo_monitoring',
-  'scheduled_vcenter_sync',
 ] as const;
 
 // SLA monitoring job types - hidden by default but can be shown via settings
