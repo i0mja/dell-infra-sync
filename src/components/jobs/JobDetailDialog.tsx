@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { getScheduledJobConfig } from "@/lib/scheduled-jobs";
 import { ScheduledJobContextPanel } from "./ScheduledJobContextPanel";
 import { HostBlockerAnalysis } from "@/lib/host-priority-calculator";
+import { VCenterSyncJobView } from "./vcenter-sync";
 import { buildMaintenanceBlockerResolutions } from "@/lib/maintenance-blocker-resolutions";
 interface Job {
   id: string;
@@ -140,6 +141,9 @@ export const JobDetailDialog = ({
   // Check if this is a workflow job type (safe even when job is null)
   const workflowJobTypes = ['prepare_host_for_update', 'verify_host_after_update', 'rolling_cluster_update'];
   const isWorkflowJob = job ? workflowJobTypes.includes(job.job_type) : false;
+  
+  // Check if this is a vCenter sync job - gets its own unified view
+  const isVCenterSyncJob = job?.job_type === 'vcenter_sync';
   
   // Check if this is a scheduled job type
   const scheduledJobConfig = job ? getScheduledJobConfig(job.job_type) : null;
@@ -364,6 +368,20 @@ export const JobDetailDialog = ({
             />
           )}
           <WorkflowExecutionViewer jobId={job.id} workflowType={job.job_type} jobStatus={job.status} jobDetails={job.details} hideHeader={true} />
+        </DialogContent> : isVCenterSyncJob ? <DialogContent className="max-w-4xl max-h-[90vh]">
+          <DialogHeader>
+            <div className="flex items-center justify-between">
+              <DialogTitle>vCenter Sync</DialogTitle>
+              {(job.status === 'running' || job.status === 'pending') && <Button variant="ghost" size="icon" onClick={() => {
+                minimizeJob(job.id, job.job_type);
+                onOpenChange(false);
+              }} title="Minimize to floating monitor">
+                <Minimize2 className="h-4 w-4" />
+              </Button>}
+            </div>
+          </DialogHeader>
+          <ParentWindowBanner />
+          <VCenterSyncJobView job={job} />
         </DialogContent> : <DialogContent className="max-w-4xl max-h-[90vh]">
           <DialogHeader>
             <div className="flex items-center justify-between">
