@@ -160,6 +160,12 @@ export const WorkflowExecutionViewer = ({
   const [consoleLaunching, setConsoleLaunching] = useState(false);
   const [consoleWindowOpen, setConsoleWindowOpen] = useState(false);
   const consoleWindowRef = useRef<Window | null>(null);
+  
+  // Cluster config for HA/DRS status fallback
+  const [clusterConfig, setClusterConfig] = useState<{
+    ha_enabled: boolean | null;
+    drs_enabled: boolean | null;
+  } | null>(null);
 
   const {
     selectedVmIds,
@@ -346,6 +352,25 @@ export const WorkflowExecutionViewer = ({
           });
         } else {
           setMaintenanceWindow(null);
+        }
+        
+        // Fetch cluster HA/DRS config for fallback display
+        const clusterNameToLookup = 
+          details?.cluster_name || 
+          details?.cluster ||
+          (data.target_scope as any)?.cluster_name ||
+          (data.target_scope as any)?.cluster_id;
+          
+        if (clusterNameToLookup) {
+          const { data: clusterData } = await supabase
+            .from('vcenter_clusters')
+            .select('ha_enabled, drs_enabled')
+            .or(`cluster_name.eq.${clusterNameToLookup},id.eq.${clusterNameToLookup}`)
+            .maybeSingle();
+          
+          if (clusterData) {
+            setClusterConfig(clusterData);
+          }
         }
       }
     } catch (error) {
@@ -1248,17 +1273,72 @@ export const WorkflowExecutionViewer = ({
     effectiveJobDetails?.cluster ||
     jobTargetScope?.cluster_name ||
     'Cluster';
-  const haState =
-    effectiveJobDetails?.ha_state ||
-    (effectiveJobDetails?.ha_disabled ? 'Disabled' : effectiveJobDetails?.ha_enabled ? 'Enabled' : null) ||
-    currentOperation?.ha_state ||
-    'Unknown';
-  const drsState =
-    effectiveJobDetails?.drs_state ||
-    (effectiveJobDetails?.drs_disabled ? 'Disabled' : effectiveJobDetails?.drs_enabled ? 'Enabled' : null) ||
-    effectiveJobDetails?.drs_mode ||
-    currentOperation?.drs_state ||
-    'Unknown';
+    
+  // HA state with priority: job actions > job details > current operation > cluster config
+  const haState = useMemo(() => {
+    // Priority 1: Job explicitly says HA was disabled/restored by the workflow
+    if (effectiveJobDetails?.ha_restored) return 'Re-enabled';
+    if (effectiveJobDetails?.ha_disabled_by_job) return 'Disabled (by job)';
+    
+    // Priority 2: Job details have explicit state
+    if (effectiveJobDetails?.ha_state) return effectiveJobDetails.ha_state;
+    if (effectiveJobDetails?.ha_disabled === true) return 'Disabled';
+    if (effectiveJobDetails?.ha_enabled === true) return 'Enabled';
+    
+    // Priority 3: Current operation state
+    if (currentOperation?.ha_state) return currentOperation.ha_state;
+    
+    // Priority 4: Cluster config from database
+    if (clusterConfig?.ha_enabled !== null && clusterConfig?.ha_enabled !== undefined) {
+      return clusterConfig.ha_enabled ? 'Enabled' : 'Disabled';
+    }
+    
+    return 'Unknown';
+  }, [effectiveJobDetails, currentOperation, clusterConfig]);
+  
+  // DRS state with same priority logic
+  const drsState = useMemo(() => {
+    // Priority 1: Job explicitly says DRS was disabled/restored by the workflow
+    if (effectiveJobDetails?.drs_restored) return 'Re-enabled';
+    if (effectiveJobDetails?.drs_disabled_by_job) return 'Disabled (by job)';
+    
+    // Priority 2: Job details have explicit state
+    if (effectiveJobDetails?.drs_state) return effectiveJobDetails.drs_state;
+    if (effectiveJobDetails?.drs_disabled === true) return 'Disabled';
+    if (effectiveJobDetails?.drs_enabled === true) return 'Enabled';
+    if (effectiveJobDetails?.drs_mode) return effectiveJobDetails.drs_mode;
+    
+    // Priority 3: Current operation state
+    if (currentOperation?.drs_state) return currentOperation.drs_state;
+    
+    // Priority 4: Cluster config from database
+    if (clusterConfig?.drs_enabled !== null && clusterConfig?.drs_enabled !== undefined) {
+      return clusterConfig.drs_enabled ? 'Enabled' : 'Disabled';
+    }
+    
+    return 'Unknown';
+  }, [effectiveJobDetails, currentOperation, clusterConfig]);
+  
+  // Badge styling based on HA/DRS state
+  const getHaBadgeStyle = (state: string) => {
+    if (state.includes('Disabled')) {
+      return 'bg-orange-500/10 text-orange-600 border-orange-500/30';
+    }
+    if (state.includes('Re-enabled') || state === 'Enabled') {
+      return 'bg-green-500/10 text-green-600 border-green-500/30';
+    }
+    return 'bg-muted text-muted-foreground border-border';
+  };
+  
+  const getDrsBadgeStyle = (state: string) => {
+    if (state.includes('Disabled')) {
+      return 'bg-orange-500/10 text-orange-600 border-orange-500/30';
+    }
+    if (state.includes('Re-enabled') || state === 'Enabled') {
+      return 'bg-blue-500/10 text-blue-600 border-blue-500/30';
+    }
+    return 'bg-muted text-muted-foreground border-border';
+  };
 
   const evacuatedTotal = useMemo(() => {
     return workflowHostResults.reduce((total: number, host: any) => {
@@ -1398,10 +1478,10 @@ export const WorkflowExecutionViewer = ({
                 <p className="text-sm font-semibold">{clusterName}</p>
               </div>
               <div className="flex items-center gap-2 text-xs">
-                <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30">
+                <Badge variant="outline" className={getHaBadgeStyle(haState)}>
                   HA {haState}
                 </Badge>
-                <Badge variant="outline" className="bg-blue-500/10 text-blue-700 border-blue-500/30 dark:text-blue-400">
+                <Badge variant="outline" className={getDrsBadgeStyle(drsState)}>
                   DRS {drsState}
                 </Badge>
                 {maintenanceHost && (
