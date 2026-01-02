@@ -50,6 +50,9 @@ export function useActiveJobs() {
 
     fetchJobs();
 
+    // Debounce ref for fetch calls to prevent flickering
+    const debounceRef = { current: null as NodeJS.Timeout | null };
+
     const channel = supabase
       .channel(`active-jobs-${Date.now()}`)
       .on(
@@ -59,13 +62,27 @@ export function useActiveJobs() {
           schema: 'public',
           table: 'jobs'
         },
-        () => {
-          fetchJobs();
+        (payload) => {
+          const newJob = payload.new as Job | null;
+          const oldJob = payload.old as { status?: string } | null;
+          
+          // Skip vcenter_sync progress-only updates (status unchanged)
+          // This prevents flickering from frequent progress updates
+          if (newJob?.job_type === 'vcenter_sync' && 
+              payload.eventType === 'UPDATE' && 
+              oldJob?.status === newJob?.status) {
+            return;
+          }
+          
+          // Debounce fetches to prevent rapid successive calls
+          if (debounceRef.current) clearTimeout(debounceRef.current);
+          debounceRef.current = setTimeout(fetchJobs, 300);
         }
       )
       .subscribe();
 
     return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
       supabase.removeChannel(channel);
     };
   }, [session]);

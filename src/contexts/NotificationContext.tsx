@@ -410,6 +410,14 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
 
     fetchActiveJobs();
     
+    // Debounce ref for fetch calls
+    const debounceRef = { current: null as NodeJS.Timeout | null };
+    
+    const debouncedFetchJobs = () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(fetchActiveJobs, 300);
+    };
+    
     const channel = supabase
       .channel('global-notification-jobs')
       .on(
@@ -420,8 +428,6 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
           table: 'jobs',
         },
         (payload) => {
-          console.log('Job change received:', payload);
-          
           const newJob = payload.new as Job | null;
           const oldJob = payload.old as Job | null;
           
@@ -430,11 +436,25 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
             return;
           }
           
+          // Skip vcenter_sync progress-only updates (status unchanged, just details changing)
+          // This prevents flickering from frequent progress updates during sync
+          if (newJob?.job_type === 'vcenter_sync' && 
+              payload.eventType === 'UPDATE' && 
+              oldJob?.status === newJob?.status) {
+            return;
+          }
+          
           // Check if job is silent (should not show toast notifications)
+          // Silent jobs include: explicitly marked silent, or triggered by scheduled sync
           const isSilentJob = (job: Job | null): boolean => {
             if (!job) return false;
             const details = job.details;
-            return typeof details === 'object' && details !== null && (details as any).silent === true;
+            if (typeof details !== 'object' || details === null) return false;
+            // Explicitly marked silent
+            if ((details as any).silent === true) return true;
+            // Triggered by scheduled/automatic sync
+            if ((details as any).triggered_by === 'scheduled') return true;
+            return false;
           };
           
           // Detect state transitions and show toasts
@@ -473,17 +493,18 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
             setPreviousJobStatuses(prev => new Map(prev).set(newJob.id, newJob.status));
           }
           
-          fetchActiveJobs();
+          // Use debounced fetch for refetching active jobs list
+          debouncedFetchJobs();
         }
       )
       .subscribe((status, err) => {
-        console.log('Jobs subscription status:', status);
         if (err) {
           console.error('Jobs subscription error:', err);
         }
       });
 
     return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
       supabase.removeChannel(channel);
     };
   }, [settings.enabled, session, fetchActiveJobs, addRecentlyCompleted]);
