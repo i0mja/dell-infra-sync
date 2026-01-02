@@ -788,30 +788,43 @@ class ClusterHandler(BaseHandler):
                         else:
                             self.log(f"    ✓ No maintenance blockers detected")
                 
-                # Check for available firmware updates (if enabled and using Dell catalog)
-                if check_available_updates and firmware_source == 'dell_online_catalog':
+                # Check for available firmware updates (if enabled)
+                if check_available_updates:
                     self.log(f"    Checking for available updates...")
                     try:
-                        from job_executor.dell_redfish import DellOperations, DellRedfishAdapter
-                        adapter = DellRedfishAdapter(
-                            self.executor.throttler, 
-                            self.executor._get_dell_logger(), 
-                            self.executor._log_dell_redfish_command
-                        )
-                        dell_ops = DellOperations(adapter)
+                        if firmware_source == 'dell_online_catalog':
+                            # Use Dell catalog for update checking
+                            from job_executor.dell_redfish import DellOperations, DellRedfishAdapter
+                            adapter = DellRedfishAdapter(
+                                self.executor.throttler, 
+                                self.executor._get_dell_logger(), 
+                                self.executor._log_dell_redfish_command
+                            )
+                            dell_ops = DellOperations(adapter)
+                            
+                            catalog_url = dell_catalog_url or 'https://downloads.dell.com/catalog/Catalog.xml'
+                            check_result = dell_ops.check_available_catalog_updates(
+                                ip=server['ip_address'],
+                                username=username,
+                                password=password,
+                                catalog_url=catalog_url,
+                                server_id=host['server_id'],
+                                job_id=job['id'],
+                                user_id=job.get('created_by')
+                            )
+                            
+                            available_updates = check_result.get('available_updates', [])
+                        else:
+                            # Use local repository for update checking
+                            available_updates = self._check_local_repository_updates(
+                                server['ip_address'],
+                                username,
+                                password,
+                                server.get('model'),
+                                host['server_id'],
+                                job['id']
+                            )
                         
-                        catalog_url = dell_catalog_url or 'https://downloads.dell.com/catalog/Catalog.xml'
-                        check_result = dell_ops.check_available_catalog_updates(
-                            ip=server['ip_address'],
-                            username=username,
-                            password=password,
-                            catalog_url=catalog_url,
-                            server_id=host['server_id'],
-                            job_id=job['id'],
-                            user_id=job.get('created_by')
-                        )
-                        
-                        available_updates = check_result.get('available_updates', [])
                         host_creds['available_updates'] = available_updates
                         host_creds['needs_update'] = len(available_updates) > 0
                         
@@ -821,8 +834,8 @@ class ClusterHandler(BaseHandler):
                             self.log(f"    ✓ {len(available_updates)} update(s) available")
                             # Log first few updates
                             for upd in available_updates[:3]:
-                                upd_name = upd.get('name', upd.get('component', 'Unknown'))[:40]
-                                upd_ver = upd.get('version', 'N/A')
+                                upd_name = upd.get('name', upd.get('component_name', 'Unknown'))[:40]
+                                upd_ver = upd.get('version', upd.get('available_version', 'N/A'))
                                 self.log(f"      - {upd_name} → {upd_ver}")
                             if len(available_updates) > 3:
                                 self.log(f"      ... and {len(available_updates) - 3} more")
@@ -1384,6 +1397,174 @@ class ClusterHandler(BaseHandler):
         except Exception as e:
             self.log(f"    ⚠ Error querying firmware packages: {e}", "WARN")
             return []
+    
+    def _check_local_repository_updates(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        server_model: str,
+        server_id: str,
+        job_id: str
+    ) -> list:
+        """
+        Compare installed firmware against uploaded packages in firmware_packages table.
+        Returns list of available updates in the same format as Dell catalog updates.
+        
+        Args:
+            ip: Server iDRAC IP address
+            username: iDRAC username
+            password: iDRAC password
+            server_model: Server model string (e.g., 'PowerEdge R750')
+            server_id: Server UUID for logging
+            job_id: Job ID for session logging
+            
+        Returns:
+            List of available update dicts with component_name, available_version, etc.
+        """
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        import requests
+        
+        available_updates = []
+        
+        try:
+            # Get current firmware inventory from iDRAC
+            session = self.executor.create_idrac_session(
+                ip, username, password,
+                log_to_db=True, server_id=server_id, job_id=job_id
+            )
+            
+            if not session:
+                self.log(f"      Failed to create iDRAC session for local repo check", "WARN")
+                return []
+            
+            try:
+                current_inventory = self.executor.get_firmware_inventory(ip, session)
+            finally:
+                self.executor.delete_idrac_session(session, ip, server_id, job_id)
+            
+            if not current_inventory:
+                self.log(f"      No firmware inventory returned", "WARN")
+                return []
+            
+            # Query completed firmware packages from database
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/firmware_packages",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY, 
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                params={
+                    'select': '*',
+                    'upload_status': 'eq.completed',
+                    'order': 'dell_version.desc'
+                },
+                verify=VERIFY_SSL,
+                timeout=30
+            )
+            
+            if response.status_code != 200:
+                self.log(f"      Could not query firmware packages: {response.status_code}", "WARN")
+                return []
+            
+            packages = response.json()
+            
+            if not packages:
+                return []
+            
+            for pkg in packages:
+                # Check model applicability if specified
+                applicable_models = pkg.get('applicable_models') or []
+                
+                if applicable_models and server_model:
+                    model_matches = False
+                    for model in applicable_models:
+                        if model.lower() in server_model.lower() or server_model.lower() in model.lower():
+                            model_matches = True
+                            break
+                    
+                    if not model_matches:
+                        continue
+                
+                pkg_type = (pkg.get('component_type') or '').upper()
+                pkg_version = pkg.get('dell_version', '')
+                pkg_name_pattern = pkg.get('component_name_pattern') or pkg.get('filename', '')
+                
+                # Find matching component in installed inventory
+                for installed in current_inventory:
+                    installed_name = (installed.get('Name') or installed.get('component_name') or '').lower()
+                    installed_type = (installed.get('component_type') or '').upper()
+                    installed_version = installed.get('Version') or installed.get('version') or ''
+                    
+                    # Match by component type
+                    type_match = pkg_type and installed_type and pkg_type == installed_type
+                    
+                    # Match by name pattern
+                    name_match = False
+                    if pkg_name_pattern:
+                        pattern_lower = pkg_name_pattern.lower()
+                        if pattern_lower in installed_name or installed_name in pattern_lower:
+                            name_match = True
+                    
+                    # Match by component type in name (fallback)
+                    if not type_match and not name_match and pkg_type:
+                        if pkg_type.lower() in installed_name:
+                            name_match = True
+                    
+                    if type_match or name_match:
+                        # Compare versions
+                        if self._is_newer_version(pkg_version, installed_version):
+                            available_updates.append({
+                                'component_name': installed.get('Name') or installed.get('component_name'),
+                                'component_type': installed_type or pkg_type,
+                                'current_version': installed_version,
+                                'available_version': pkg_version,
+                                'version': pkg_version,
+                                'name': installed.get('Name') or installed.get('component_name'),
+                                'criticality': pkg.get('criticality', 'optional'),
+                                'reboot_required': pkg.get('reboot_required', True),
+                                'package_id': pkg.get('id'),
+                                'source': 'local_repository'
+                            })
+                            break  # Only one update per component
+            
+        except Exception as e:
+            self.log(f"      Error checking local repository: {e}", "WARN")
+        
+        return available_updates
+    
+    def _is_newer_version(self, new_version: str, current_version: str) -> bool:
+        """
+        Compare Dell firmware version strings.
+        Returns True if new_version is newer than current_version.
+        """
+        if not new_version or not current_version:
+            return False
+        
+        if new_version == current_version:
+            return False
+        
+        try:
+            # Split into parts and compare numerically
+            new_parts = [int(p) for p in new_version.split('.') if p.isdigit()]
+            cur_parts = [int(p) for p in current_version.split('.') if p.isdigit()]
+            
+            # Pad shorter list with zeros
+            max_len = max(len(new_parts), len(cur_parts))
+            new_parts.extend([0] * (max_len - len(new_parts)))
+            cur_parts.extend([0] * (max_len - len(cur_parts)))
+            
+            for new_p, cur_p in zip(new_parts, cur_parts):
+                if new_p > cur_p:
+                    return True
+                if new_p < cur_p:
+                    return False
+            
+            return False  # Equal versions
+            
+        except (ValueError, AttributeError):
+            # Fall back to string comparison
+            return new_version > current_version
     
     def execute_prepare_host_for_update(self, job: Dict):
         """Workflow: Prepare ESXi host for firmware updates"""
@@ -2001,11 +2182,12 @@ class ClusterHandler(BaseHandler):
             # if no hosts need updates
             firmware_source = details.get('firmware_source', 'manual_repository')
             dell_catalog_url = details.get('dell_catalog_url', 'https://downloads.dell.com/catalog/Catalog.xml')
-            check_updates_in_preflight = firmware_source == 'dell_online_catalog'
+            # Enable update checking for both Dell catalog and local repository
+            check_updates_in_preflight = firmware_source in ('dell_online_catalog', 'local_repository')
             
             self._log_workflow_step(job['id'], 'rolling_cluster_update', 0,
                 f"Pre-flight checks ({len(eligible_hosts)} hosts)", 'running',
-                step_details={'checking_updates': check_updates_in_preflight})
+                step_details={'checking_updates': check_updates_in_preflight, 'firmware_source': firmware_source})
             
             host_credentials = self._execute_batch_preflight_checks(
                 job, eligible_hosts, cleanup_state,
