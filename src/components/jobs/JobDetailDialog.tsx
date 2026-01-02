@@ -436,8 +436,8 @@ export const JobDetailDialog = ({
 
             <TabsContent value="progress" className="space-y-4 mt-4">
               <JobProgressHeader job={job} />
-              {/* Hide task timeline for vcenter_sync jobs since VCenterSyncProgress shows phase progress */}
-              {job.job_type !== 'vcenter_sync' && <JobTasksTimeline jobId={job.id} />}
+              {/* Hide task timeline for jobs that have their own progress components */}
+              {!['vcenter_sync', 'firmware_inventory_scan'].includes(job.job_type) && <JobTasksTimeline jobId={job.id} />}
             </TabsContent>
 
             <TabsContent value="console" className="mt-4">
