@@ -1697,10 +1697,56 @@ class ReplicationHandler(BaseHandler):
                                             )
                                             if not snapshot_exists:
                                                 add_console_log(
-                                                    f"⚠️ Incremental base @{previous_snapshot} not found on Site B. "
-                                                    f"Falling back to full send to re-establish replication chain."
+                                                    f"⚠️ Incremental base @{previous_snapshot} not found on Site B."
                                                 )
-                                                previous_snapshot = None  # Force full send for recovery
+                                                
+                                                # Try to find a common snapshot for incremental recovery
+                                                # This is much faster than a full send if a common base exists
+                                                common_snapshot = self.zfs_replication.find_common_snapshot(
+                                                    source_dataset=source_dataset,
+                                                    target_dataset=target_dataset,
+                                                    source_host=ssh_hostname,
+                                                    source_username=ssh_username,
+                                                    source_port=ssh_port,
+                                                    target_host=dr_hostname,
+                                                    target_username=dr_username,
+                                                    target_port=dr_port,
+                                                    source_key_data=ssh_key_data,
+                                                    target_key_data=dr_key_data
+                                                )
+                                                
+                                                if common_snapshot:
+                                                    add_console_log(
+                                                        f"✓ Found common snapshot @{common_snapshot}, using for incremental recovery"
+                                                    )
+                                                    previous_snapshot = common_snapshot
+                                                else:
+                                                    add_console_log(
+                                                        f"⚠️ No common snapshots found. Cleaning target for full send..."
+                                                    )
+                                                    # Delete orphaned snapshots on target to allow full send
+                                                    cleanup_result = self.zfs_replication.delete_all_snapshots(
+                                                        target_dataset,
+                                                        target_host=dr_hostname,
+                                                        ssh_username=dr_username,
+                                                        ssh_port=dr_port,
+                                                        ssh_key_data=dr_key_data
+                                                    )
+                                                    if cleanup_result.get('success'):
+                                                        add_console_log(
+                                                            f"✓ Cleaned {cleanup_result['deleted']} orphaned snapshot(s) from target"
+                                                        )
+                                                    elif cleanup_result.get('deleted', 0) > 0:
+                                                        # Partial cleanup - some deleted, some errors
+                                                        add_console_log(
+                                                            f"⚠️ Partial cleanup: {cleanup_result['deleted']} deleted, "
+                                                            f"errors: {cleanup_result.get('errors', [])[:2]}"
+                                                        )
+                                                    else:
+                                                        add_console_log(
+                                                            f"⚠️ Cleanup errors: {cleanup_result.get('errors', [])[:2]}"
+                                                        )
+                                                    previous_snapshot = None  # Force full send
                                     
                                     # Get expected send size BEFORE transfer using zfs send -nP
                                     size_result = self.zfs_replication.get_snapshot_send_size(

@@ -1221,6 +1221,204 @@ class ZFSReplicationReal:
                 'message': f'Failed to delete snapshot: {result.get("stderr")}'
             }
     
+    def find_common_snapshot(self, source_dataset: str, target_dataset: str,
+                             source_host: str = None, source_username: str = 'root', source_port: int = 22,
+                             target_host: str = None, target_username: str = 'root', target_port: int = 22,
+                             source_key_data: str = None, target_key_data: str = None) -> Optional[str]:
+        """
+        Find the most recent snapshot that exists on both source and target.
+        
+        This allows incremental recovery when the last-used snapshot is missing,
+        by finding a common earlier snapshot to use as the incremental base.
+        
+        Args:
+            source_dataset: ZFS dataset on source
+            target_dataset: ZFS dataset on target
+            source_host: Source SSH host
+            source_username: Source SSH username
+            source_port: Source SSH port
+            target_host: Target SSH host
+            target_username: Target SSH username
+            target_port: Target SSH port
+            source_key_data: Source SSH key data
+            target_key_data: Target SSH key data
+            
+        Returns:
+            Snapshot name if common snapshot found, None otherwise
+        """
+        logger.info(f"Finding common snapshot between {source_dataset} and {target_dataset}")
+        
+        # Get snapshots from source
+        source_snapshots = self.list_snapshots_with_key(
+            source_dataset, source_host, source_username, source_port, source_key_data
+        )
+        
+        # Get snapshots from target
+        target_snapshots = self.list_snapshots_with_key(
+            target_dataset, target_host, target_username, target_port, target_key_data
+        )
+        
+        source_names = {s['name'] for s in source_snapshots}
+        target_names = {s['name'] for s in target_snapshots}
+        
+        common = source_names & target_names
+        
+        if not common:
+            logger.info(f"No common snapshots found between source and target")
+            return None
+        
+        # Return most recent common snapshot (zerfaux snapshots sort by timestamp in name)
+        sorted_common = sorted(common, reverse=True)
+        found = sorted_common[0] if sorted_common else None
+        
+        if found:
+            logger.info(f"Found common snapshot: @{found}")
+        
+        return found
+    
+    def list_snapshots_with_key(self, dataset: str, target_host: str = None,
+                                 ssh_username: str = 'root', ssh_port: int = 22,
+                                 ssh_key_data: str = None) -> List[Dict]:
+        """
+        List ZFS snapshots with SSH key support.
+        
+        Extended version of list_snapshots that accepts key_data for authentication.
+        """
+        logger.info(f"Listing snapshots for: {dataset} on {target_host or 'localhost'}")
+        
+        command = f"zfs list -t snapshot -H -o name,creation,used,referenced {dataset}"
+        
+        if target_host:
+            if not PARAMIKO_AVAILABLE:
+                return []
+            
+            ssh = self._get_ssh_client(target_host, ssh_port, ssh_username, key_data=ssh_key_data)
+            if not ssh:
+                logger.warning(f"SSH connection failed to {target_host}")
+                return []
+            
+            try:
+                result = self._exec_ssh_command(ssh, command, timeout=60)
+            finally:
+                ssh.close()
+        else:
+            import subprocess
+            try:
+                proc = subprocess.run(command.split(), capture_output=True, text=True, timeout=60)
+                result = {
+                    'success': proc.returncode == 0,
+                    'stdout': proc.stdout,
+                    'stderr': proc.stderr
+                }
+            except Exception as e:
+                logger.error(f"Local snapshot list failed: {e}")
+                return []
+        
+        if not result.get('success'):
+            logger.warning(f"Snapshot list failed: {result.get('stderr', 'Unknown error')}")
+            return []
+        
+        snapshots = []
+        for line in result.get('stdout', '').strip().split('\n'):
+            if not line:
+                continue
+            
+            parts = line.split('\t')
+            if len(parts) >= 4:
+                full_name = parts[0]
+                name = full_name.split('@')[-1] if '@' in full_name else full_name
+                
+                snapshots.append({
+                    'name': name,
+                    'full_name': full_name,
+                    'created_at': parts[1],
+                    'used_bytes': self._parse_zfs_size(parts[2]) * 1024**3,
+                    'referenced_bytes': self._parse_zfs_size(parts[3]) * 1024**3
+                })
+        
+        return snapshots
+    
+    def delete_all_snapshots(self, dataset: str, target_host: str = None,
+                             ssh_username: str = 'root', ssh_port: int = 22,
+                             ssh_key_data: str = None) -> Dict:
+        """
+        Delete all snapshots for a dataset to prepare for full send.
+        
+        When no common snapshot exists between source and target, the target's
+        orphaned snapshots must be deleted before ZFS can receive a full stream.
+        
+        Args:
+            dataset: ZFS dataset path
+            target_host: Target SSH host
+            ssh_username: SSH username
+            ssh_port: SSH port
+            ssh_key_data: SSH private key data
+            
+        Returns:
+            Dict with: success, deleted count, errors list
+        """
+        logger.info(f"Deleting all snapshots for: {dataset} on {target_host or 'localhost'}")
+        
+        snapshots = self.list_snapshots_with_key(
+            dataset, target_host, ssh_username, ssh_port, ssh_key_data
+        )
+        
+        if not snapshots:
+            logger.info(f"No snapshots to delete for {dataset}")
+            return {'success': True, 'deleted': 0, 'errors': []}
+        
+        deleted = 0
+        errors = []
+        
+        # Connect once and delete all snapshots
+        if target_host:
+            if not PARAMIKO_AVAILABLE:
+                return {'success': False, 'deleted': 0, 'errors': ['paramiko not installed']}
+            
+            ssh = self._get_ssh_client(target_host, ssh_port, ssh_username, key_data=ssh_key_data)
+            if not ssh:
+                return {'success': False, 'deleted': 0, 'errors': ['SSH connection failed']}
+            
+            try:
+                for snap in snapshots:
+                    full_snapshot = f"{dataset}@{snap['name']}"
+                    command = f"zfs destroy {full_snapshot}"
+                    result = self._exec_ssh_command(ssh, command, timeout=60)
+                    
+                    if result.get('success'):
+                        deleted += 1
+                        logger.info(f"Deleted snapshot: {full_snapshot}")
+                    else:
+                        error_msg = f"{snap['name']}: {result.get('stderr', 'Unknown error')}"
+                        errors.append(error_msg)
+                        logger.warning(f"Failed to delete {full_snapshot}: {result.get('stderr')}")
+            finally:
+                ssh.close()
+        else:
+            import subprocess
+            for snap in snapshots:
+                full_snapshot = f"{dataset}@{snap['name']}"
+                try:
+                    proc = subprocess.run(
+                        ['zfs', 'destroy', full_snapshot],
+                        capture_output=True, text=True, timeout=60
+                    )
+                    if proc.returncode == 0:
+                        deleted += 1
+                    else:
+                        errors.append(f"{snap['name']}: {proc.stderr}")
+                except Exception as e:
+                    errors.append(f"{snap['name']}: {str(e)}")
+        
+        logger.info(f"Deleted {deleted}/{len(snapshots)} snapshots, {len(errors)} errors")
+        
+        return {
+            'success': len(errors) == 0,
+            'deleted': deleted,
+            'total': len(snapshots),
+            'errors': errors
+        }
+    
     def _get_vcenter_settings(self, vcenter_id: str) -> Optional[Dict]:
         """Get vCenter settings from database"""
         if not self.executor:
