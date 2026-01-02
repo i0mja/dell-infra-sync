@@ -23,7 +23,6 @@ const formatJobTypeLabel = (type: string): string => {
   const typeMap: Record<string, string> = {
     'discovery_scan': 'Initial Server Sync',
     'vcenter_sync': 'vCenter Sync',
-    'scheduled_vcenter_sync': 'Scheduled vCenter Sync',
     'refresh_server_info': 'Refresh Server Info',
     'scp_export': 'SCP Export',
     'scp_import': 'SCP Import',

@@ -41,12 +41,6 @@ interface BackgroundTaskConfig {
 
 const BACKGROUND_TASK_REGISTRY: BackgroundTaskConfig[] = [
   {
-    type: 'scheduled_vcenter_sync',
-    label: 'vCenter Sync',
-    icon: Server,
-    description: 'Synchronizes VM and host data from vCenter',
-  },
-  {
     type: 'scheduled_replication_check',
     label: 'Replication Check',
     icon: Shield,
