@@ -1990,45 +1990,68 @@ class ReplicationHandler(BaseHandler):
             
             add_console_log(f"Sync complete: {results['vms_synced']}/{total_vms} VMs synced")
             
-            # Update group
-            self._update_protection_group(
-                group_id,
-                last_replication_at=utc_now_iso(),
-                current_rpo_seconds=0,
-                status='meeting_sla' if not results['errors'] else 'warning',
-                sync_in_progress=False
-            )
+            # Wrap post-sync updates in try/except to ensure job always completes
+            avg_throughput = 0.0
+            try:
+                # Update group (non-critical, don't fail job if this fails)
+                self._update_protection_group(
+                    group_id,
+                    last_replication_at=utc_now_iso(),
+                    current_rpo_seconds=0,
+                    status='meeting_sla' if not results['errors'] else 'warning',
+                    sync_in_progress=False
+                )
+                
+                # Calculate throughput from sync safely
+                sync_start = results.get('sync_start_time')
+                elapsed_seconds = 1
+                if sync_start:
+                    try:
+                        start_dt = datetime.fromisoformat(sync_start.replace('Z', '+00:00'))
+                        elapsed_seconds = max(1, (datetime.now(timezone.utc) - start_dt).total_seconds())
+                    except Exception as calc_err:
+                        self.executor.log(f"[{job_id}] Warning: throughput calc failed: {calc_err}", "WARN")
+                avg_throughput = (results.get('bytes_transferred', 0) / 1_000_000) / elapsed_seconds
+                
+                # Insert metrics (non-critical)
+                self._insert_replication_metrics(group_id, {
+                    'current_rpo_seconds': 0,
+                    'pending_bytes': 0,
+                    'throughput_mbps': round(avg_throughput, 2)
+                })
+            except Exception as post_sync_err:
+                self.executor.log(f"[{job_id}] Warning: post-sync updates failed: {post_sync_err}", "WARN")
+                # Continue to complete the job anyway
             
-            # Calculate throughput from sync
-            sync_start = results.get('sync_start_time')
-            elapsed_seconds = 1
-            if sync_start:
-                try:
-                    start_dt = datetime.fromisoformat(sync_start.replace('Z', '+00:00'))
-                    elapsed_seconds = max(1, (datetime.now(timezone.utc) - start_dt).total_seconds())
-                except:
-                    pass
-            avg_throughput = (results.get('bytes_transferred', 0) / 1_000_000) / elapsed_seconds
-            
-            # Insert metrics with actual throughput
-            self._insert_replication_metrics(group_id, {
-                'current_rpo_seconds': 0,
-                'pending_bytes': 0,
-                'throughput_mbps': round(avg_throughput, 2)
-            })
-            
+            # ALWAYS complete the job - this is the critical part
             success = len(results['errors']) == 0
-            self.update_job_status(
-                job_id,
-                'completed' if success else 'failed',
-                completed_at=utc_now_iso(),
-                details=results
-            )
+            final_status = 'completed' if success else 'failed'
+            try:
+                self.update_job_status(
+                    job_id,
+                    final_status,
+                    completed_at=utc_now_iso(),
+                    details=results
+                )
+            except Exception as status_err:
+                self.executor.log(f"[{job_id}] ERROR: Failed to update job status: {status_err}", "ERROR")
+                # Last resort - minimal update with bare essentials
+                try:
+                    self.update_job_status(job_id, final_status)
+                except:
+                    pass  # Truly can't update - will be caught by stale detection
+            
             self.executor.log(f"[{job_id}] Replication sync complete: {results['vms_synced']} VMs synced")
             
         except Exception as e:
             self.executor.log(f"[{job_id}] Error in replication sync: {e}", "ERROR")
-            self.update_job_status(job_id, 'failed', completed_at=utc_now_iso(), details={'error': str(e)})
+            try:
+                self.update_job_status(job_id, 'failed', completed_at=utc_now_iso(), details={'error': str(e)})
+            except:
+                try:
+                    self.update_job_status(job_id, 'failed')
+                except:
+                    pass
     
     def execute_pause_protection_group(self, job: Dict):
         """Pause replication for a protection group"""

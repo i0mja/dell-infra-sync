@@ -160,7 +160,9 @@ class DatabaseMixin:
         job_id: str,
         status: str,
         details: Optional[Dict] = None,
-        error: Optional[str] = None
+        error: Optional[str] = None,
+        completed_at: Optional[str] = None,
+        started_at: Optional[str] = None
     ) -> bool:
         """
         Update job status in database with robust JSON serialization and fallback.
@@ -170,6 +172,8 @@ class DatabaseMixin:
             status: New status (pending, running, completed, failed, cancelled, paused)
             details: Optional details dict to merge with existing details
             error: Optional error message for failed jobs
+            completed_at: Optional ISO timestamp for completion (auto-set if not provided)
+            started_at: Optional ISO timestamp for start (auto-set if not provided)
             
         Returns:
             True if update successful, False otherwise
@@ -189,11 +193,11 @@ class DatabaseMixin:
             # Build update payload
             payload = {"status": status}
             
-            # Set timestamps
+            # Set timestamps - use provided values or auto-generate
             if status == "running":
-                payload["started_at"] = datetime.now().isoformat()
+                payload["started_at"] = started_at or datetime.now().isoformat()
             elif status in ["completed", "failed", "cancelled"]:
-                payload["completed_at"] = datetime.now().isoformat()
+                payload["completed_at"] = completed_at or datetime.now().isoformat()
             
             # Merge details if provided
             merged_details = {}
