@@ -559,7 +559,8 @@ class ZFSReplicationReal:
                           target_ssh_key_data: str = None,
                           use_syncoid: bool = False,
                           source_host: str = None, source_ssh_username: str = None,
-                          source_ssh_port: int = 22, source_ssh_key_data: str = None) -> Dict:
+                          source_ssh_port: int = 22, source_ssh_key_data: str = None,
+                          expected_bytes: int = 0) -> Dict:
         """
         Replicate a ZFS dataset to a remote target.
         
@@ -604,7 +605,6 @@ class ZFSReplicationReal:
         # Small transfers (<1MB): 2 minutes max
         # Medium transfers (1MB-1GB): 10 minutes
         # Large transfers (>1GB): 1 hour
-        expected_bytes = kwargs.get('expected_bytes', 0)
         if expected_bytes and expected_bytes < 1_000_000:  # < 1MB
             transfer_timeout = 120  # 2 minutes
         elif expected_bytes and expected_bytes < 1_000_000_000:  # < 1GB
