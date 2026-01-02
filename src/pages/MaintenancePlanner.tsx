@@ -145,12 +145,27 @@ export default function MaintenancePlanner() {
 
     fetchJobs();
 
+    // Debounce ref for fetch calls to prevent flickering
+    const debounceRef = { current: null as NodeJS.Timeout | null };
+
     const channel = supabase
       .channel('maintenance-planner-jobs')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, fetchJobs)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, (payload) => {
+        const newJob = payload.new as Job | null;
+        
+        // Only refetch for maintenance job types
+        if (!newJob || !MAINTENANCE_JOB_TYPES.includes(newJob.job_type as any)) {
+          return;
+        }
+        
+        // Debounce fetches
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(fetchJobs, 300);
+      })
       .subscribe();
 
     return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
       supabase.removeChannel(channel);
     };
   }, []);
