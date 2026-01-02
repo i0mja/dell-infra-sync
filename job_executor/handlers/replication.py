@@ -1685,6 +1685,22 @@ class ReplicationHandler(BaseHandler):
                                         if not dest_exists:
                                             add_console_log(f"⚠️ Destination {target_dataset} doesn't exist on Site B, will do full send")
                                             previous_snapshot = None  # Force full send
+                                        else:
+                                            # Dataset exists - verify the incremental source snapshot also exists
+                                            snapshot_exists = self.zfs_replication.check_snapshot_exists(
+                                                target_dataset,
+                                                previous_snapshot,
+                                                ssh_hostname=dr_hostname,
+                                                ssh_username=dr_username,
+                                                ssh_port=dr_port,
+                                                ssh_key_data=dr_key_data
+                                            )
+                                            if not snapshot_exists:
+                                                add_console_log(
+                                                    f"⚠️ Incremental base @{previous_snapshot} not found on Site B. "
+                                                    f"Falling back to full send to re-establish replication chain."
+                                                )
+                                                previous_snapshot = None  # Force full send for recovery
                                     
                                     # Get expected send size BEFORE transfer using zfs send -nP
                                     size_result = self.zfs_replication.get_snapshot_send_size(

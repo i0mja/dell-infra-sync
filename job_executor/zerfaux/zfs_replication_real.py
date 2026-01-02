@@ -552,6 +552,62 @@ class ZFSReplicationReal:
                 'message': f'Failed to create snapshot: {result.get("stderr")}'
             }
     
+    def check_snapshot_exists(self, dataset: str, snapshot_name: str,
+                              ssh_hostname: str = None, ssh_username: str = None,
+                              ssh_port: int = 22, ssh_key_data: str = None) -> bool:
+        """
+        Check if a specific snapshot exists on a dataset (local or remote).
+        
+        Args:
+            dataset: ZFS dataset path
+            snapshot_name: Snapshot name (without @ prefix)
+            ssh_hostname: Remote hostname (None for local)
+            ssh_username: SSH username
+            ssh_port: SSH port
+            ssh_key_data: SSH private key data
+            
+        Returns:
+            True if the snapshot exists, False otherwise
+        """
+        # Clean snapshot name (remove @ if present)
+        if snapshot_name.startswith('@'):
+            snapshot_name = snapshot_name[1:]
+        
+        full_snapshot = f"{dataset}@{snapshot_name}"
+        command = f"zfs list -t snapshot -H -o name {full_snapshot} 2>/dev/null"
+        
+        logger.info(f"Checking if snapshot exists: {full_snapshot} on {ssh_hostname or 'localhost'}")
+        
+        if ssh_hostname:
+            # Remote check via SSH
+            ssh = self._get_ssh_client(ssh_hostname, ssh_port, ssh_username, key_data=ssh_key_data)
+            if not ssh:
+                logger.warning(f"Cannot connect to {ssh_hostname} to check snapshot")
+                return False
+            
+            try:
+                result = self._exec_ssh_command(ssh, command, timeout=30)
+                exists = result.get('success', False) and full_snapshot in result.get('stdout', '')
+                logger.info(f"Snapshot {full_snapshot} exists on {ssh_hostname}: {exists}")
+                return exists
+            finally:
+                ssh.close()
+        else:
+            # Local check
+            try:
+                result = subprocess.run(
+                    command.split(),
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                exists = result.returncode == 0 and full_snapshot in result.stdout
+                logger.info(f"Snapshot {full_snapshot} exists locally: {exists}")
+                return exists
+            except Exception as e:
+                logger.error(f"Error checking local snapshot: {e}")
+                return False
+    
     def replicate_dataset(self, source_dataset: str, source_snapshot: str,
                           target_host: str, target_dataset: str,
                           incremental_from: str = None,
