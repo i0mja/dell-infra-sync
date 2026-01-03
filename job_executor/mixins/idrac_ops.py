@@ -1404,6 +1404,56 @@ class IdracMixin:
         except Exception as e:
             self.log(f"  Error syncing NICs for server {server_id}: {e}", "WARN")
 
+    def _should_backup_server(self, server_id: str, max_age_days: int) -> bool:
+        """Check if server needs a backup based on age threshold"""
+        try:
+            from datetime import timedelta, timezone
+            
+            headers = {
+                "apikey": SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+            }
+            
+            # Get most recent backup for this server
+            url = f"{DSM_URL}/rest/v1/scp_backups"
+            params = {
+                "server_id": f"eq.{server_id}",
+                "select": "created_at",
+                "order": "created_at.desc",
+                "limit": "1"
+            }
+            response = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL)
+            
+            if response.status_code != 200:
+                return True  # If we can't check, run the backup
+            
+            backups = response.json()
+            if not backups:
+                return True  # No existing backup, run it
+            
+            # Parse the most recent backup date
+            last_backup_str = backups[0]['created_at']
+            # Handle ISO format with or without timezone
+            if last_backup_str.endswith('Z'):
+                last_backup_str = last_backup_str.replace('Z', '+00:00')
+            last_backup = datetime.fromisoformat(last_backup_str)
+            
+            # Ensure timezone-aware comparison
+            if last_backup.tzinfo is None:
+                last_backup = last_backup.replace(tzinfo=timezone.utc)
+            
+            cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+            
+            is_stale = last_backup < cutoff
+            if not is_stale:
+                self.log(f"  → Last backup from {last_backup.strftime('%Y-%m-%d')} is within {max_age_days} days", "DEBUG")
+            
+            return is_stale  # True if backup is stale and needs refresh
+            
+        except Exception as e:
+            self.log(f"  Warning: Could not check backup age: {e}", "DEBUG")
+            return True  # If check fails, run the backup
+
     def _perform_inline_scp_export(self, server_id: str, ip: str, username: str, password: str, backup_name: str, job_id: str) -> bool:
         """Execute SCP export inline without creating a separate job (alias for _execute_inline_scp_export)"""
         return self._execute_inline_scp_export(server_id, ip, username, password, backup_name, job_id)
@@ -1646,6 +1696,15 @@ class IdracMixin:
             except Exception:
                 base_details = {}
             
+            # Extract fetch_options to control which data to collect
+            fetch_options = base_details.get('fetch_options', {})
+            should_backup_scp = fetch_options.get('scp_backup', True)  # Default True for backwards compat
+            scp_max_age_days = fetch_options.get('scp_backup_max_age_days', 30)
+            scp_only_if_stale = fetch_options.get('scp_backup_only_if_stale', True)
+            
+            if not should_backup_scp:
+                self.log(f"SCP backup disabled via fetch_options - will skip config backup phase")
+            
             for index, server in enumerate(servers):
                 ip = server['ip_address']
                 task = task_by_server.get(server['id'])
@@ -1848,31 +1907,41 @@ class IdracMixin:
                             }
                         )
                         
-                        # Run SCP backup inline (no separate job queue) for immediate completion
-                        # Update job to show SCP phase
-                        self.update_job_status(
-                            job['id'],
-                            'running',
-                            details={
-                                **base_details,
-                                'current_stage': 'scp',
-                                'current_step': f'Backing up config {refreshed_count}/{total_servers}',
-                                'current_server_ip': ip,
-                                'servers_refreshed': refreshed_count,
-                                'servers_total': total_servers,
-                                'scp_completed': scp_completed,
-                            }
-                        )
-                        
-                        backup_name = f'Initial-{datetime.now().strftime("%Y%m%d-%H%M%S")}'
-                        scp_success = self._execute_inline_scp_export(
-                            server['id'], ip, username, password, backup_name, job['id']
-                        )
-                        if scp_success:
-                            scp_completed += 1
-                            self.log(f"  ✓ SCP backup created for {ip}", "INFO")
-                        else:
-                            self.log(f"  ⚠ SCP backup skipped for {ip}", "WARN")
+                        # Run SCP backup inline only if enabled in fetch_options
+                        if should_backup_scp:
+                            # Check if backup should be skipped due to staleness check
+                            should_run_backup = True
+                            if scp_only_if_stale:
+                                should_run_backup = self._should_backup_server(server['id'], scp_max_age_days)
+                            
+                            if should_run_backup:
+                                # Update job to show SCP phase
+                                self.update_job_status(
+                                    job['id'],
+                                    'running',
+                                    details={
+                                        **base_details,
+                                        'current_stage': 'scp',
+                                        'current_step': f'Backing up config {refreshed_count}/{total_servers}',
+                                        'current_server_ip': ip,
+                                        'servers_refreshed': refreshed_count,
+                                        'servers_total': total_servers,
+                                        'scp_completed': scp_completed,
+                                    }
+                                )
+                                
+                                backup_name = f'Initial-{datetime.now().strftime("%Y%m%d-%H%M%S")}'
+                                scp_success = self._execute_inline_scp_export(
+                                    server['id'], ip, username, password, backup_name, job['id']
+                                )
+                                if scp_success:
+                                    scp_completed += 1
+                                    self.log(f"  ✓ SCP backup created for {ip}", "INFO")
+                                else:
+                                    self.log(f"  ⚠ SCP backup failed for {ip}", "WARN")
+                            else:
+                                self.log(f"  → Skipping SCP backup for {ip} - recent backup exists", "DEBUG")
+                                scp_completed += 1  # Count as complete since backup exists
                     else:
                         error_detail = {
                             'ip': ip,
