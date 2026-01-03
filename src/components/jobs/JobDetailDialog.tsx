@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CheckCircle, XCircle, PlayCircle, Clock, AlertCircle, ListChecks, Link2, ExternalLink, Calendar, Minimize2, Settings } from "lucide-react";
+import { CheckCircle, XCircle, PlayCircle, Clock, AlertCircle, ListChecks, Link2, ExternalLink, Calendar, Minimize2, Settings, RefreshCw } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
 import { useMinimizedJobs } from "@/contexts/MinimizedJobsContext";
@@ -20,6 +20,8 @@ import { ScheduledJobContextPanel } from "./ScheduledJobContextPanel";
 import { HostBlockerAnalysis } from "@/lib/host-priority-calculator";
 import { VCenterSyncJobView } from "./vcenter-sync";
 import { buildMaintenanceBlockerResolutions } from "@/lib/maintenance-blocker-resolutions";
+import { useStaleJobDetection } from "@/hooks/useStaleJobDetection";
+import { forceCompleteReplicationJob } from "@/lib/stale-job-recovery";
 interface Job {
   id: string;
   job_type: string;
@@ -54,9 +56,14 @@ export const JobDetailDialog = ({
   const [loading, setLoading] = useState(true);
   const [parentWindow, setParentWindow] = useState<ParentWindow | null>(null);
   const [showBlockerWizard, setShowBlockerWizard] = useState(false);
+  const [tasks, setTasks] = useState<{ id: string; status: string; progress?: number }[]>([]);
+  const [isRecovering, setIsRecovering] = useState(false);
   const {
     minimizeJob
   } = useMinimizedJobs();
+
+  // Stale job detection
+  const staleInfo = useStaleJobDetection(job, tasks);
 
   const workflowBlockers = useMemo(() => {
     const hostResults = job?.details?.workflow_results?.host_results ?? [];
@@ -148,11 +155,29 @@ export const JobDetailDialog = ({
   // Check if this is a scheduled job type
   const scheduledJobConfig = job ? getScheduledJobConfig(job.job_type) : null;
   const isScheduledJob = !!scheduledJobConfig;
+  // Fetch job tasks for stale detection
+  const fetchTasks = async () => {
+    if (!job) return;
+    try {
+      const { data } = await supabase
+        .from('job_tasks')
+        .select('id, status, progress')
+        .eq('job_id', job.id);
+      setTasks(data || []);
+    } catch (error) {
+      console.error('Error fetching tasks:', error);
+    }
+  };
+
   useEffect(() => {
     if (!open || !job) return;
 
     // Check if this job belongs to a maintenance window
     fetchParentWindow();
+    
+    // Fetch tasks for stale detection
+    fetchTasks();
+    
     if (isWorkflowJob) return;
 
     // Fetch sub-jobs for full_server_update jobs
@@ -177,6 +202,25 @@ export const JobDetailDialog = ({
       }
     };
   }, [open, job, isWorkflowJob]);
+
+  // Handle stale job recovery
+  const handleForceComplete = async () => {
+    if (!job) return;
+    setIsRecovering(true);
+    try {
+      const result = await forceCompleteReplicationJob(job.id);
+      if (result.success) {
+        toast.success('Job marked as complete');
+        onOpenChange(false);
+      } else {
+        toast.error(`Failed to recover job: ${result.error}`);
+      }
+    } catch (error: any) {
+      toast.error(`Error: ${error.message}`);
+    } finally {
+      setIsRecovering(false);
+    }
+  };
 
   // Early return if no job selected (after all hooks)
   if (!job) {
@@ -392,9 +436,36 @@ export const JobDetailDialog = ({
 
           <ParentWindowBanner />
 
+          {/* Stale Job Recovery Alert */}
+          {staleInfo.isStale && staleInfo.suggestedAction === 'force_complete' && (
+            <Alert className="border-orange-500/50 bg-orange-500/10">
+              <AlertCircle className="h-4 w-4 text-orange-500" />
+              <AlertTitle className="text-orange-600">Job Appears Complete</AlertTitle>
+              <AlertDescription className="mt-2">
+                <p className="text-sm text-muted-foreground mb-3">
+                  {staleInfo.staleReason}
+                </p>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={handleForceComplete}
+                  disabled={isRecovering}
+                  className="border-orange-500/50 hover:bg-orange-500/10"
+                >
+                  {isRecovering ? (
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <CheckCircle className="h-4 w-4 mr-2" />
+                  )}
+                  Mark as Complete
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* Show warning for pending jobs that require executor */}
           {job.status === 'pending' && (
-            <PendingJobWarning 
+            <PendingJobWarning
               job={job} 
               onCancel={async () => {
                 try {

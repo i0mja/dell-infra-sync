@@ -5022,6 +5022,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      auto_complete_stale_replication_jobs: { Args: never; Returns: Json }
       check_auth_rate_limit: {
         Args: {
           p_identifier: string
