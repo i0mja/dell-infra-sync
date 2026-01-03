@@ -103,6 +103,11 @@ class DiscoveryHandler(BaseHandler):
             auth_failures = []
             stage1_filtered = 0  # Port closed
             stage2_filtered = 0  # Not an iDRAC
+            stage1_passed = 0    # Port open
+            stage2_passed = 0    # iDRAC detected
+            server_results = []  # Per-server results for UI
+            ips_processed = 0
+            total_ips = len(ips_to_scan)
             
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
                 futures = {}
@@ -126,31 +131,75 @@ class DiscoveryHandler(BaseHandler):
                 
                 for future in concurrent.futures.as_completed(futures):
                     ip = futures[future]
+                    ips_processed += 1
+                    
                     try:
                         result = future.result(timeout=30)  # 30s timeout per IP
+                        
+                        # Track per-server result for UI
+                        server_result = {'ip': ip, 'status': 'filtered'}
+                        
                         if result['success']:
                             self.log(f"✓ Found iDRAC at {ip}: {result['model']} (using {result['credential_set_name']})")
                             discovered.append(result)
+                            stage1_passed += 1
+                            stage2_passed += 1
+                            server_result = {
+                                'ip': ip,
+                                'status': 'synced',
+                                'model': result.get('model'),
+                                'service_tag': result.get('service_tag'),
+                                'credential_set': result.get('credential_set_name'),
+                            }
                         elif result.get('idrac_detected') and result.get('auth_failed'):
                             # Only add to auth_failures if we CONFIRMED an iDRAC exists (got 401/403)
                             auth_failures.append({
                                 'ip': ip,
                                 'reason': 'iDRAC detected but authentication failed'
                             })
+                            stage1_passed += 1
+                            stage2_passed += 1
+                            server_result = {'ip': ip, 'status': 'auth_failed'}
                         elif not result.get('idrac_detected'):
                             # Track filtering stages
                             if not result.get('port_open', True):
                                 stage1_filtered += 1
+                                server_result = {'ip': ip, 'status': 'filtered', 'filter_reason': 'port_closed'}
                             else:
+                                stage1_passed += 1
                                 stage2_filtered += 1
-                        # else: No iDRAC at this IP - don't add to anything
+                                server_result = {'ip': ip, 'status': 'filtered', 'filter_reason': 'not_idrac'}
+                        
+                        server_results.append(server_result)
+                        
+                        # Update progress every 5 IPs or on significant events
+                        if ips_processed % 5 == 0 or result['success'] or result.get('auth_failed'):
+                            self.update_job_status(
+                                job['id'],
+                                'running',
+                                details={
+                                    "current_ip": ip,
+                                    "current_stage": "authenticating",
+                                    "ips_processed": ips_processed,
+                                    "ips_total": total_ips,
+                                    "stage1_passed": stage1_passed,
+                                    "stage1_filtered": stage1_filtered,
+                                    "stage2_passed": stage2_passed,
+                                    "stage2_filtered": stage2_filtered,
+                                    "discovered_count": len(discovered),
+                                    "auth_failures": len(auth_failures),
+                                    "server_results": server_results[-20:],  # Last 20 for UI
+                                }
+                            )
+                        
                     except concurrent.futures.TimeoutError:
                         timeout_count += 1
+                        server_results.append({'ip': ip, 'status': 'filtered', 'filter_reason': 'timeout'})
                         # If >30% of requests timeout, warn about overload
                         if timeout_count / total_requests > 0.3:
                             self.log("⚠️  Multiple timeouts detected - iDRACs may be overloaded. Consider reducing discovery_max_threads in settings.", "WARN")
                     except Exception as e:
-                        pass  # Silent fail for non-responsive IPs
+                        server_results.append({'ip': ip, 'status': 'filtered', 'filter_reason': str(e)})
             
             self.log(f"Discovery complete:")
             self.log(f"  ✓ {len(discovered)} servers authenticated")
@@ -201,9 +250,14 @@ class DiscoveryHandler(BaseHandler):
                     "scanned_ips": len(ips_to_scan),
                     "auth_failure_ips": [f['ip'] for f in auth_failures],
                     "auto_refresh_triggered": len(discovered) > 0,
+                    "stage1_passed": stage1_passed,
                     "stage1_filtered": stage1_filtered,
+                    "stage2_passed": stage2_passed,
                     "stage2_filtered": stage2_filtered,
-                    "optimization_enabled": True
+                    "stage3_passed": len(discovered),
+                    "stage3_failed": len(auth_failures),
+                    "optimization_enabled": True,
+                    "server_results": server_results,
                 }
             )
             
