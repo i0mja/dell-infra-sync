@@ -3270,6 +3270,113 @@ export type Database = {
           },
         ]
       }
+      server_nics: {
+        Row: {
+          auto_negotiate: boolean | null
+          created_at: string | null
+          current_speed_mbps: number | null
+          description: string | null
+          duplex: string | null
+          firmware_version: string | null
+          fqdd: string
+          health: string | null
+          id: string
+          ipv4_addresses: Json | null
+          ipv6_addresses: Json | null
+          last_sync: string | null
+          link_status: string | null
+          mac_address: string | null
+          manufacturer: string | null
+          max_speed_mbps: number | null
+          model: string | null
+          mtu: number | null
+          name: string | null
+          part_number: string | null
+          permanent_mac_address: string | null
+          port_id: string | null
+          serial_number: string | null
+          server_id: string
+          status: string | null
+          switch_connection_id: string | null
+          switch_name: string | null
+          switch_port_description: string | null
+          updated_at: string | null
+          vlan_id: number | null
+        }
+        Insert: {
+          auto_negotiate?: boolean | null
+          created_at?: string | null
+          current_speed_mbps?: number | null
+          description?: string | null
+          duplex?: string | null
+          firmware_version?: string | null
+          fqdd: string
+          health?: string | null
+          id?: string
+          ipv4_addresses?: Json | null
+          ipv6_addresses?: Json | null
+          last_sync?: string | null
+          link_status?: string | null
+          mac_address?: string | null
+          manufacturer?: string | null
+          max_speed_mbps?: number | null
+          model?: string | null
+          mtu?: number | null
+          name?: string | null
+          part_number?: string | null
+          permanent_mac_address?: string | null
+          port_id?: string | null
+          serial_number?: string | null
+          server_id: string
+          status?: string | null
+          switch_connection_id?: string | null
+          switch_name?: string | null
+          switch_port_description?: string | null
+          updated_at?: string | null
+          vlan_id?: number | null
+        }
+        Update: {
+          auto_negotiate?: boolean | null
+          created_at?: string | null
+          current_speed_mbps?: number | null
+          description?: string | null
+          duplex?: string | null
+          firmware_version?: string | null
+          fqdd?: string
+          health?: string | null
+          id?: string
+          ipv4_addresses?: Json | null
+          ipv6_addresses?: Json | null
+          last_sync?: string | null
+          link_status?: string | null
+          mac_address?: string | null
+          manufacturer?: string | null
+          max_speed_mbps?: number | null
+          model?: string | null
+          mtu?: number | null
+          name?: string | null
+          part_number?: string | null
+          permanent_mac_address?: string | null
+          port_id?: string | null
+          serial_number?: string | null
+          server_id?: string
+          status?: string | null
+          switch_connection_id?: string | null
+          switch_name?: string | null
+          switch_port_description?: string | null
+          updated_at?: string | null
+          vlan_id?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "server_nics_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       servers: {
         Row: {
           bios_version: string | null
