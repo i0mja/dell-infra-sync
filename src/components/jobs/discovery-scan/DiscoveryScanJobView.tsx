@@ -103,6 +103,12 @@ export function DiscoveryScanJobView({ job }: DiscoveryScanJobViewProps) {
           <DiscoveryScanServerList
             serverResults={progress.serverResults}
             isRunning={isRunning}
+            serversRefreshed={progress.serversRefreshed}
+            serversTotal={progress.serversTotal}
+            scpCompleted={progress.scpCompleted}
+            currentServerIp={progress.currentServerIp}
+            currentStage={progress.currentStage}
+            currentStep={progress.currentStep}
           />
         )}
 
