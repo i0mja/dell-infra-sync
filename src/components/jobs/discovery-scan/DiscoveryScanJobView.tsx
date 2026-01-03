@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { supabase } from "@/integrations/supabase/client";
 import { DiscoveryScanHeader } from "./DiscoveryScanHeader";
 import { DiscoveryScanLiveProgress } from "./DiscoveryScanLiveProgress";
@@ -7,6 +9,8 @@ import { DiscoveryScanServerList } from "./DiscoveryScanServerList";
 import { DiscoveryScanTimeline } from "./DiscoveryScanTimeline";
 import { DiscoveryScanResults } from "../results/DiscoveryScanResults";
 import { useDiscoveryScanProgress } from "@/hooks/useDiscoveryScanProgress";
+import { toast } from "sonner";
+import { AlertTriangle, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 
 interface Job {
   id: string;
@@ -25,11 +29,16 @@ interface DiscoveryScanJobViewProps {
 
 export function DiscoveryScanJobView({ job }: DiscoveryScanJobViewProps) {
   const [consoleLogs, setConsoleLogs] = useState<string[]>([]);
+  const [isForcing, setIsForcing] = useState(false);
   const isRunning = job.status === 'running' || job.status === 'pending';
   const isCompleted = job.status === 'completed' || job.status === 'failed';
+  const isCancelled = job.status === 'cancelled';
 
   // Get real-time progress updates
   const progress = useDiscoveryScanProgress(job.id, isRunning);
+
+  // Detect orphaned job: job is "running" but all work is complete
+  const isOrphanedComplete = isRunning && progress.isEffectivelyComplete;
 
   // Parse console logs from job details
   useEffect(() => {
@@ -51,6 +60,58 @@ export function DiscoveryScanJobView({ job }: DiscoveryScanJobViewProps) {
   const ipList = job.target_scope?.ip_list;
   const ipCount = ipList?.length || job.details?.scanned_ips || progress.ipsTotal;
 
+  const handleForceComplete = async () => {
+    setIsForcing(true);
+    try {
+      const { error } = await supabase.functions.invoke('update-job', {
+        body: {
+          jobId: job.id,
+          status: 'completed',
+          details: {
+            ...job.details,
+            force_completed: true,
+            force_completed_at: new Date().toISOString(),
+            force_completed_reason: 'Manually completed by operator - executor failed to finalize'
+          }
+        }
+      });
+      
+      if (error) throw error;
+      toast.success('Job marked as completed');
+    } catch (err) {
+      console.error('Failed to force complete job:', err);
+      toast.error('Failed to complete job');
+    } finally {
+      setIsForcing(false);
+    }
+  };
+
+  const handleForceCancel = async () => {
+    setIsForcing(true);
+    try {
+      const { error } = await supabase.functions.invoke('update-job', {
+        body: {
+          jobId: job.id,
+          status: 'cancelled',
+          details: {
+            ...job.details,
+            force_cancelled: true,
+            force_cancelled_at: new Date().toISOString(),
+            force_cancelled_reason: 'Manually cancelled by operator'
+          }
+        }
+      });
+      
+      if (error) throw error;
+      toast.success('Job cancelled');
+    } catch (err) {
+      console.error('Failed to force cancel job:', err);
+      toast.error('Failed to cancel job');
+    } finally {
+      setIsForcing(false);
+    }
+  };
+
   return (
     <ScrollArea className="h-[calc(90vh-120px)]">
       <div className="space-y-6 pr-4">
@@ -64,11 +125,80 @@ export function DiscoveryScanJobView({ job }: DiscoveryScanJobViewProps) {
           ipCount={ipCount}
         />
 
+        {/* Orphaned job warning */}
+        {isOrphanedComplete && (
+          <Alert variant="default" className="border-warning bg-warning/10">
+            <AlertTriangle className="h-4 w-4 text-warning" />
+            <AlertTitle>Job appears complete but is still running</AlertTitle>
+            <AlertDescription className="mt-2">
+              <p className="text-sm text-muted-foreground mb-3">
+                All work has finished ({progress.serversRefreshed}/{progress.serversTotal} synced, {progress.scpCompleted}/{progress.serversTotal} backed up) 
+                but the executor failed to finalize the job status.
+              </p>
+              <div className="flex gap-2">
+                <Button 
+                  size="sm" 
+                  onClick={handleForceComplete}
+                  disabled={isForcing}
+                >
+                  {isForcing ? (
+                    <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="mr-2 h-3 w-3" />
+                  )}
+                  Force Complete
+                </Button>
+                <Button 
+                  size="sm" 
+                  variant="outline"
+                  onClick={handleForceCancel}
+                  disabled={isForcing}
+                >
+                  <XCircle className="mr-2 h-3 w-3" />
+                  Cancel Job
+                </Button>
+              </div>
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Force cancel for stuck running jobs that aren't complete */}
+        {isRunning && !isOrphanedComplete && job.started_at && (
+          (() => {
+            const runningMinutes = Math.floor((Date.now() - new Date(job.started_at).getTime()) / 60000);
+            // Show force cancel after 10 minutes of running
+            if (runningMinutes > 10) {
+              return (
+                <Alert variant="default" className="border-muted">
+                  <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+                  <AlertTitle className="text-sm">Job running for {runningMinutes} minutes</AlertTitle>
+                  <AlertDescription className="mt-2">
+                    <Button 
+                      size="sm" 
+                      variant="outline"
+                      onClick={handleForceCancel}
+                      disabled={isForcing}
+                    >
+                      {isForcing ? (
+                        <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                      ) : (
+                        <XCircle className="mr-2 h-3 w-3" />
+                      )}
+                      Force Cancel
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              );
+            }
+            return null;
+          })()
+        )}
+
         {/* Live progress rail (only when running) */}
         {isRunning && (
           <DiscoveryScanLiveProgress
             currentPhase={progress.currentPhase}
-            isRunning={isRunning}
+            isRunning={isRunning && !isOrphanedComplete}
             progressPercent={progress.progressPercent}
             currentIp={progress.currentIp}
             currentStage={progress.currentStage}
@@ -113,7 +243,7 @@ export function DiscoveryScanJobView({ job }: DiscoveryScanJobViewProps) {
         )}
 
         {/* Final results summary (completed only) */}
-        {isCompleted && (
+        {(isCompleted || isCancelled) && (
           <DiscoveryScanResults details={job.details} />
         )}
 
