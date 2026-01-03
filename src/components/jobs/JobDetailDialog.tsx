@@ -57,7 +57,11 @@ export const JobDetailDialog = ({
   const [loading, setLoading] = useState(true);
   const [parentWindow, setParentWindow] = useState<ParentWindow | null>(null);
   const [showBlockerWizard, setShowBlockerWizard] = useState(false);
-  const [tasks, setTasks] = useState<{ id: string; status: string; progress?: number }[]>([]);
+  const [tasks, setTasks] = useState<{
+    id: string;
+    status: string;
+    progress?: number;
+  }[]>([]);
   const [isRecovering, setIsRecovering] = useState(false);
   const {
     minimizeJob
@@ -65,23 +69,14 @@ export const JobDetailDialog = ({
 
   // Stale job detection
   const staleInfo = useStaleJobDetection(job, tasks);
-
   const workflowBlockers = useMemo(() => {
     const hostResults = job?.details?.workflow_results?.host_results ?? [];
     const blockers: Record<string, HostBlockerAnalysis> = {};
-
     hostResults.forEach((host: any, index: number) => {
       const maintenanceBlockers = host?.maintenance_blockers;
       if (!maintenanceBlockers?.blockers?.length) return;
-
-      const hostId =
-        maintenanceBlockers.host_id ||
-        host?.host_id ||
-        host?.server_id ||
-        host?.host_name ||
-        `host-${index}`;
+      const hostId = maintenanceBlockers.host_id || host?.host_id || host?.server_id || host?.host_name || `host-${index}`;
       const hostName = maintenanceBlockers.host_name || host?.host_name || 'Unknown Host';
-
       blockers[hostId] = {
         host_id: hostId,
         host_name: hostName,
@@ -90,33 +85,25 @@ export const JobDetailDialog = ({
         warnings: maintenanceBlockers.warnings ?? [],
         total_powered_on_vms: maintenanceBlockers.total_powered_on_vms ?? 0,
         migratable_vms: maintenanceBlockers.migratable_vms ?? 0,
-        blocked_vms:
-          maintenanceBlockers.blocked_vms ?? maintenanceBlockers.blockers?.length ?? 0,
+        blocked_vms: maintenanceBlockers.blocked_vms ?? maintenanceBlockers.blockers?.length ?? 0,
         estimated_evacuation_time: maintenanceBlockers.estimated_evacuation_time ?? 0
       };
     });
-
     return blockers;
   }, [job?.details?.workflow_results?.host_results]);
-
   const workflowBlockerDetails = useMemo(() => {
-    return Object.values(workflowBlockers).flatMap((analysis) =>
-      analysis.blockers.map((blocker) => ({
-        ...blocker,
-        vm_name: `${blocker.vm_name} (${analysis.host_name})`
-      }))
-    );
+    return Object.values(workflowBlockers).flatMap(analysis => analysis.blockers.map(blocker => ({
+      ...blocker,
+      vm_name: `${blocker.vm_name} (${analysis.host_name})`
+    })));
   }, [workflowBlockers]);
-
   const resolvedHostBlockers = useMemo(() => {
     if (Object.keys(workflowBlockers).length > 0) {
       return workflowBlockers;
     }
-
     if (!job?.details?.maintenance_blockers) {
       return null;
     }
-
     const maintenanceBlockers = job.details.maintenance_blockers;
     return {
       [maintenanceBlockers.host_id || 'unknown']: {
@@ -140,22 +127,18 @@ export const JobDetailDialog = ({
       }
     };
   }, [job?.details?.blocker_details, job?.details?.maintenance_blockers, workflowBlockers]);
-
-  const shouldShowMaintenanceAlert =
-    (job?.details?.blocker_details && job.details.blocker_details.length > 0) ||
-    job?.details?.maintenance_blockers?.blockers ||
-    workflowBlockerDetails.length > 0;
+  const shouldShowMaintenanceAlert = job?.details?.blocker_details && job.details.blocker_details.length > 0 || job?.details?.maintenance_blockers?.blockers || workflowBlockerDetails.length > 0;
 
   // Check if this is a workflow job type (safe even when job is null)
   const workflowJobTypes = ['prepare_host_for_update', 'verify_host_after_update', 'rolling_cluster_update'];
   const isWorkflowJob = job ? workflowJobTypes.includes(job.job_type) : false;
-  
+
   // Check if this is a vCenter sync job - gets its own unified view
   const isVCenterSyncJob = job?.job_type === 'vcenter_sync';
-  
+
   // Check if this is a discovery scan job - gets its own unified view
   const isDiscoveryScanJob = job?.job_type === 'discovery_scan';
-  
+
   // Check if this is a scheduled job type
   const scheduledJobConfig = job ? getScheduledJobConfig(job.job_type) : null;
   const isScheduledJob = !!scheduledJobConfig;
@@ -163,25 +146,22 @@ export const JobDetailDialog = ({
   const fetchTasks = async () => {
     if (!job) return;
     try {
-      const { data } = await supabase
-        .from('job_tasks')
-        .select('id, status, progress')
-        .eq('job_id', job.id);
+      const {
+        data
+      } = await supabase.from('job_tasks').select('id, status, progress').eq('job_id', job.id);
       setTasks(data || []);
     } catch (error) {
       console.error('Error fetching tasks:', error);
     }
   };
-
   useEffect(() => {
     if (!open || !job) return;
 
     // Check if this job belongs to a maintenance window
     fetchParentWindow();
-    
+
     // Fetch tasks for stale detection
     fetchTasks();
-    
     if (isWorkflowJob) return;
 
     // Fetch sub-jobs for full_server_update jobs
@@ -297,11 +277,9 @@ export const JobDetailDialog = ({
       running: "default",
       pending: "outline"
     };
-    return (
-      <Badge variant={variants[status] || "outline"} className="capitalize">
+    return <Badge variant={variants[status] || "outline"} className="capitalize">
         {status}
-      </Badge>
-    );
+      </Badge>;
   };
   const validationErrors = job.details?.validation_errors;
   const formatValidationErrors = () => {
@@ -406,24 +384,16 @@ export const JobDetailDialog = ({
             </div>
           </DialogHeader>
           <ParentWindowBanner />
-          {job.status !== 'running' && shouldShowMaintenanceAlert && (
-            <MaintenanceBlockerAlert
-              blockerDetails={job.details?.blocker_details || workflowBlockerDetails}
-              remediationSummary={job.details?.remediation_summary}
-              maintenanceBlockers={job.details?.maintenance_blockers}
-              onResolveBlockers={() => setShowBlockerWizard(true)}
-              className="mb-4"
-            />
-          )}
+          {job.status !== 'running' && shouldShowMaintenanceAlert && <MaintenanceBlockerAlert blockerDetails={job.details?.blocker_details || workflowBlockerDetails} remediationSummary={job.details?.remediation_summary} maintenanceBlockers={job.details?.maintenance_blockers} onResolveBlockers={() => setShowBlockerWizard(true)} className="mb-4" />}
           <WorkflowExecutionViewer jobId={job.id} workflowType={job.job_type} jobStatus={job.status} jobDetails={job.details} hideHeader={true} />
         </DialogContent> : isVCenterSyncJob ? <DialogContent className="max-w-4xl max-h-[90vh]">
           <DialogHeader>
             <div className="flex items-center justify-between">
               <DialogTitle>vCenter Sync</DialogTitle>
               {(job.status === 'running' || job.status === 'pending') && <Button variant="ghost" size="icon" onClick={() => {
-                minimizeJob(job.id, job.job_type);
-                onOpenChange(false);
-              }} title="Minimize to floating monitor">
+            minimizeJob(job.id, job.job_type);
+            onOpenChange(false);
+          }} title="Minimize to floating monitor">
                 <Minimize2 className="h-4 w-4" />
               </Button>}
             </div>
@@ -432,15 +402,7 @@ export const JobDetailDialog = ({
           <VCenterSyncJobView job={job} />
         </DialogContent> : isDiscoveryScanJob ? <DialogContent className="max-w-4xl max-h-[90vh]">
           <DialogHeader>
-            <div className="flex items-center justify-between">
-              <DialogTitle>Discovery Scan</DialogTitle>
-              {(job.status === 'running' || job.status === 'pending') && <Button variant="ghost" size="icon" onClick={() => {
-                minimizeJob(job.id, job.job_type);
-                onOpenChange(false);
-              }} title="Minimize to floating monitor">
-                <Minimize2 className="h-4 w-4" />
-              </Button>}
-            </div>
+            
           </DialogHeader>
           <ParentWindowBanner />
           <DiscoveryScanJobView job={job} />
@@ -455,72 +417,51 @@ export const JobDetailDialog = ({
           <ParentWindowBanner />
 
           {/* Stale Job Recovery Alert */}
-          {staleInfo.isStale && staleInfo.suggestedAction === 'force_complete' && (
-            <Alert className="border-orange-500/50 bg-orange-500/10">
+          {staleInfo.isStale && staleInfo.suggestedAction === 'force_complete' && <Alert className="border-orange-500/50 bg-orange-500/10">
               <AlertCircle className="h-4 w-4 text-orange-500" />
               <AlertTitle className="text-orange-600">Job Appears Complete</AlertTitle>
               <AlertDescription className="mt-2">
                 <p className="text-sm text-muted-foreground mb-3">
                   {staleInfo.staleReason}
                 </p>
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  onClick={handleForceComplete}
-                  disabled={isRecovering}
-                  className="border-orange-500/50 hover:bg-orange-500/10"
-                >
-                  {isRecovering ? (
-                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <CheckCircle className="h-4 w-4 mr-2" />
-                  )}
+                <Button variant="outline" size="sm" onClick={handleForceComplete} disabled={isRecovering} className="border-orange-500/50 hover:bg-orange-500/10">
+                  {isRecovering ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle className="h-4 w-4 mr-2" />}
                   Mark as Complete
                 </Button>
               </AlertDescription>
-            </Alert>
-          )}
+            </Alert>}
 
           {/* Show warning for pending jobs that require executor */}
-          {job.status === 'pending' && (
-            <PendingJobWarning
-              job={job} 
-              onCancel={async () => {
-                try {
-                  const { error } = await supabase
-                    .from('jobs')
-                    .update({ 
-                      status: 'cancelled', 
-                      completed_at: new Date().toISOString(),
-                      details: {
-                        ...((job.details as object) || {}),
-                        cancellation_reason: 'Cancelled by user - job was stuck in pending state'
-                      }
-                    })
-                    .eq('id', job.id);
-                  
-                  if (error) throw error;
-                  toast.success('Job cancelled successfully');
-                  onOpenChange(false);
-                } catch (error) {
-                  console.error('Error cancelling job:', error);
-                  toast.error('Failed to cancel job');
-                }
-              }}
-            />
-          )}
+          {job.status === 'pending' && <PendingJobWarning job={job} onCancel={async () => {
+        try {
+          const {
+            error
+          } = await supabase.from('jobs').update({
+            status: 'cancelled',
+            completed_at: new Date().toISOString(),
+            details: {
+              ...(job.details as object || {}),
+              cancellation_reason: 'Cancelled by user - job was stuck in pending state'
+            }
+          }).eq('id', job.id);
+          if (error) throw error;
+          toast.success('Job cancelled successfully');
+          onOpenChange(false);
+        } catch (error) {
+          console.error('Error cancelling job:', error);
+          toast.error('Failed to cancel job');
+        }
+      }} />}
 
           <Tabs defaultValue="progress" className="w-full">
             <TabsList className={`grid w-full ${isScheduledJob ? 'grid-cols-4' : 'grid-cols-3'}`}>
               <TabsTrigger value="progress">Progress</TabsTrigger>
               <TabsTrigger value="console">Console</TabsTrigger>
               <TabsTrigger value="results">Results</TabsTrigger>
-              {isScheduledJob && (
-                <TabsTrigger value="configuration" className="flex items-center gap-1">
+              {isScheduledJob && <TabsTrigger value="configuration" className="flex items-center gap-1">
                   <Settings className="h-3 w-3" />
                   Config
-                </TabsTrigger>
-              )}
+                </TabsTrigger>}
             </TabsList>
 
             <TabsContent value="progress" className="space-y-4 mt-4">
@@ -545,29 +486,15 @@ export const JobDetailDialog = ({
                 </Card>}
 
             {/* Maintenance Blocker Alert with Remediation Details */}
-            {job.status !== 'running' && shouldShowMaintenanceAlert && (
-              <MaintenanceBlockerAlert
-                blockerDetails={job.details?.blocker_details || workflowBlockerDetails}
-                remediationSummary={job.details?.remediation_summary}
-                maintenanceBlockers={job.details?.maintenance_blockers}
-                onResolveBlockers={() => setShowBlockerWizard(true)}
-              />
-            )}
+            {job.status !== 'running' && shouldShowMaintenanceAlert && <MaintenanceBlockerAlert blockerDetails={job.details?.blocker_details || workflowBlockerDetails} remediationSummary={job.details?.remediation_summary} maintenanceBlockers={job.details?.maintenance_blockers} onResolveBlockers={() => setShowBlockerWizard(true)} />}
 
             {/* Error Alert for Failed Jobs - including nested vcenter_results errors */}
-            {job.status === 'failed' && (
-              job.details?.error || 
-              job.details?.vcenter_results?.some((r: any) => r?.error)
-            ) && !job.details?.blocker_details && <Alert variant="destructive">
+            {job.status === 'failed' && (job.details?.error || job.details?.vcenter_results?.some((r: any) => r?.error)) && !job.details?.blocker_details && <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Job Failed</AlertTitle>
                 <AlertDescription className="mt-2">
                   <div className="font-mono text-sm whitespace-pre-wrap">
-                    {job.details?.error || 
-                     job.details?.vcenter_results
-                       ?.filter((r: any) => r?.error)
-                       .map((r: any) => `${r.vcenter_name || r.vcenter_host || 'vCenter'}: ${r.error}`)
-                       .join('\n')}
+                    {job.details?.error || job.details?.vcenter_results?.filter((r: any) => r?.error).map((r: any) => `${r.vcenter_name || r.vcenter_host || 'vCenter'}: ${r.error}`).join('\n')}
                   </div>
                 </AlertDescription>
               </Alert>}
@@ -637,55 +564,38 @@ export const JobDetailDialog = ({
             </TabsContent>
 
             {/* Configuration Tab for Scheduled Jobs */}
-            {isScheduledJob && scheduledJobConfig && (
-              <TabsContent value="configuration" className="mt-4">
-                <ScheduledJobContextPanel 
-                  jobType={job.job_type}
-                  config={scheduledJobConfig}
-                  jobDetails={job.details}
-                />
-              </TabsContent>
-            )}
+            {isScheduledJob && scheduledJobConfig && <TabsContent value="configuration" className="mt-4">
+                <ScheduledJobContextPanel jobType={job.job_type} config={scheduledJobConfig} jobDetails={job.details} />
+              </TabsContent>}
 
           </Tabs>
         </DialogContent>}
       
       {/* Blocker Resolution Wizard */}
-      {job && showBlockerWizard && resolvedHostBlockers && (
-        <BlockerResolutionWizard
-          open={showBlockerWizard}
-          onOpenChange={setShowBlockerWizard}
-          hostBlockers={resolvedHostBlockers}
-          onComplete={(resolutionPayload, hostOrder) => {
-            const saveResolutions = async () => {
-              // resolutionPayload is already transformed by the wizard with multiple keys
-              const nextDetails = {
-                ...(job.details || {}),
-                maintenance_blocker_resolutions: resolutionPayload,
-                host_update_order: hostOrder
-              };
-
-              const { error } = await supabase
-                .from('jobs')
-                .update({ details: nextDetails })
-                .eq('id', job.id);
-
-              if (error) {
-                throw error;
-              }
-            };
-
-            saveResolutions()
-              .then(() => {
-                setShowBlockerWizard(false);
-                toast.success('Blocker resolutions saved. Retry the job when ready.');
-              })
-              .catch((error) => {
-                console.error('Failed to save blocker resolutions:', error);
-                toast.error('Failed to save blocker resolutions');
-              });
-          }}
-        />
-      )}
+      {job && showBlockerWizard && resolvedHostBlockers && <BlockerResolutionWizard open={showBlockerWizard} onOpenChange={setShowBlockerWizard} hostBlockers={resolvedHostBlockers} onComplete={(resolutionPayload, hostOrder) => {
+      const saveResolutions = async () => {
+        // resolutionPayload is already transformed by the wizard with multiple keys
+        const nextDetails = {
+          ...(job.details || {}),
+          maintenance_blocker_resolutions: resolutionPayload,
+          host_update_order: hostOrder
+        };
+        const {
+          error
+        } = await supabase.from('jobs').update({
+          details: nextDetails
+        }).eq('id', job.id);
+        if (error) {
+          throw error;
+        }
+      };
+      saveResolutions().then(() => {
+        setShowBlockerWizard(false);
+        toast.success('Blocker resolutions saved. Retry the job when ready.');
+      }).catch(error => {
+        console.error('Failed to save blocker resolutions:', error);
+        toast.error('Failed to save blocker resolutions');
+      });
+    }} />}
     </Dialog>;
 };
