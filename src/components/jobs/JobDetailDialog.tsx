@@ -19,6 +19,7 @@ import { getScheduledJobConfig } from "@/lib/scheduled-jobs";
 import { ScheduledJobContextPanel } from "./ScheduledJobContextPanel";
 import { HostBlockerAnalysis } from "@/lib/host-priority-calculator";
 import { VCenterSyncJobView } from "./vcenter-sync";
+import { DiscoveryScanJobView } from "./discovery-scan";
 import { buildMaintenanceBlockerResolutions } from "@/lib/maintenance-blocker-resolutions";
 import { useStaleJobDetection } from "@/hooks/useStaleJobDetection";
 import { forceCompleteReplicationJob } from "@/lib/stale-job-recovery";
@@ -151,6 +152,9 @@ export const JobDetailDialog = ({
   
   // Check if this is a vCenter sync job - gets its own unified view
   const isVCenterSyncJob = job?.job_type === 'vcenter_sync';
+  
+  // Check if this is a discovery scan job - gets its own unified view
+  const isDiscoveryScanJob = job?.job_type === 'discovery_scan';
   
   // Check if this is a scheduled job type
   const scheduledJobConfig = job ? getScheduledJobConfig(job.job_type) : null;
@@ -426,6 +430,20 @@ export const JobDetailDialog = ({
           </DialogHeader>
           <ParentWindowBanner />
           <VCenterSyncJobView job={job} />
+        </DialogContent> : isDiscoveryScanJob ? <DialogContent className="max-w-4xl max-h-[90vh]">
+          <DialogHeader>
+            <div className="flex items-center justify-between">
+              <DialogTitle>Discovery Scan</DialogTitle>
+              {(job.status === 'running' || job.status === 'pending') && <Button variant="ghost" size="icon" onClick={() => {
+                minimizeJob(job.id, job.job_type);
+                onOpenChange(false);
+              }} title="Minimize to floating monitor">
+                <Minimize2 className="h-4 w-4" />
+              </Button>}
+            </div>
+          </DialogHeader>
+          <ParentWindowBanner />
+          <DiscoveryScanJobView job={job} />
         </DialogContent> : <DialogContent className="max-w-4xl max-h-[90vh]">
           <DialogHeader>
             <div className="flex items-center justify-between">
