@@ -23,6 +23,7 @@ interface DiscoveryScanServerListProps {
   currentServerIp?: string;
   currentStage?: string;
   currentStep?: string;
+  scpDisabled?: boolean;
 }
 
 export function DiscoveryScanServerList({
@@ -35,6 +36,7 @@ export function DiscoveryScanServerList({
   currentServerIp,
   currentStage,
   currentStep,
+  scpDisabled = false,
 }: DiscoveryScanServerListProps) {
   if (serverResults.length === 0 && !isRunning) {
     return null;
@@ -143,7 +145,7 @@ export function DiscoveryScanServerList({
               {serversRefreshed}{serversTotal > 0 ? `/${serversTotal}` : ''} synced
             </Badge>
           )}
-          {scpCompleted > 0 && (
+          {!scpDisabled && scpCompleted > 0 && (
             <Badge variant="outline" className="gap-1">
               <CheckCircle className="h-3 w-3" />
               {scpCompleted}{serversTotal > 0 ? `/${serversTotal}` : ''} backed up

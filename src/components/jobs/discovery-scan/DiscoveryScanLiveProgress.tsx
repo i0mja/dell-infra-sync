@@ -3,6 +3,15 @@ import { Check, Loader2, Circle } from "lucide-react";
 import { DISCOVERY_PHASES, type DiscoveryPhase } from "@/lib/discovery-scan-messages";
 import { Progress } from "@/components/ui/progress";
 
+interface FetchOptions {
+  scp_backup?: boolean;
+  firmware?: boolean;
+  health?: boolean;
+  bios?: boolean;
+  storage?: boolean;
+  nics?: boolean;
+}
+
 interface DiscoveryScanLiveProgressProps {
   currentPhase: DiscoveryPhase;
   isRunning: boolean;
@@ -32,6 +41,7 @@ interface DiscoveryScanLiveProgressProps {
   serversRefreshed: number;
   serversTotal: number;
   scpCompleted: number;
+  fetchOptions?: FetchOptions;
 }
 
 export function DiscoveryScanLiveProgress({
@@ -50,9 +60,18 @@ export function DiscoveryScanLiveProgress({
   serversRefreshed,
   serversTotal,
   scpCompleted,
+  fetchOptions,
 }: DiscoveryScanLiveProgressProps) {
+  // Filter phases based on fetch_options - hide SCP if disabled
+  const visiblePhases = DISCOVERY_PHASES.filter(phase => {
+    if (phase.id === 'scp' && fetchOptions?.scp_backup === false) {
+      return false;
+    }
+    return true;
+  });
+
   const getPhaseIndex = (phaseId: DiscoveryPhase) => {
-    return DISCOVERY_PHASES.findIndex(p => p.id === phaseId);
+    return visiblePhases.findIndex(p => p.id === phaseId);
   };
 
   const currentPhaseIndex = getPhaseIndex(currentPhase);
@@ -159,7 +178,7 @@ export function DiscoveryScanLiveProgress({
 
       {/* Phase rail */}
       <div className="flex items-center justify-between gap-2 py-3">
-        {DISCOVERY_PHASES.map((phase, index) => {
+        {visiblePhases.map((phase, index) => {
           const stats = getPhaseStats(phase.id);
           const hasActiveWork = (stats.active ?? 0) > 0;
           

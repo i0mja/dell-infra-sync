@@ -120,6 +120,9 @@ export function useDiscoveryScanProgress(jobId: string | undefined, isRunning: b
     const scpCompleted = details.scp_completed ?? 0;
     const currentStage = details.current_stage;
     
+    // Check if SCP backup is disabled in fetch_options
+    const scpDisabled = details.fetch_options?.scp_backup === false;
+    
     // Get stage stats - use discovered_count as fallback for stage3 since it may be set after discovery
     const stage1Passed = details.stage1_passed ?? 0;
     const stage2Passed = details.stage2_passed ?? 0;
@@ -127,7 +130,7 @@ export function useDiscoveryScanProgress(jobId: string | undefined, isRunning: b
     
     // If we're in sync/scp phases and have serversTotal but no stage data,
     // discovery phases completed - infer from serversTotal
-    const discoveryCompleted = (currentStage === 'sync' || currentStage === 'scp') && serversTotal > 0;
+    const discoveryCompleted = (currentStage === 'sync' || currentStage === 'scp' || currentStage === 'complete') && serversTotal > 0;
     const effectiveStage3Passed = stage3Passed > 0 ? stage3Passed : (discoveryCompleted ? serversTotal : 0);
     const effectiveStage2Passed = stage2Passed > 0 ? stage2Passed : (discoveryCompleted ? serversTotal : 0);
     const effectiveStage1Passed = stage1Passed > 0 ? stage1Passed : (discoveryCompleted ? serversTotal : 0);
@@ -136,20 +139,31 @@ export function useDiscoveryScanProgress(jobId: string | undefined, isRunning: b
     const effectivePhase = determineEffectivePhase(currentStage, serversRefreshed, scpCompleted);
     
     // Calculate progress percentage based on phase
-    // Port scan/detection/auth = 50%, Sync = 30%, SCP = 20%
+    // If SCP is disabled: Port scan/detection/auth = 60%, Sync = 40%
+    // If SCP is enabled: Port scan/detection/auth = 50%, Sync = 30%, SCP = 20%
     let progressPercent = 0;
     
     if (discoveryCompleted) {
-      // Discovery is done, calculate from sync/scp
-      progressPercent = 50; // Discovery complete
-      if (serversTotal > 0) {
-        const syncPercent = (serversRefreshed / serversTotal) * 30;
-        const scpPercent = (scpCompleted / serversTotal) * 20;
-        progressPercent = 50 + syncPercent + scpPercent;
+      if (scpDisabled) {
+        // SCP disabled: Discovery = 60%, Sync = 40%
+        progressPercent = 60; // Discovery complete
+        if (serversTotal > 0) {
+          const syncPercent = (serversRefreshed / serversTotal) * 40;
+          progressPercent = 60 + syncPercent;
+        }
+      } else {
+        // SCP enabled: Discovery = 50%, Sync = 30%, SCP = 20%
+        progressPercent = 50; // Discovery complete
+        if (serversTotal > 0) {
+          const syncPercent = (serversRefreshed / serversTotal) * 30;
+          const scpPercent = (scpCompleted / serversTotal) * 20;
+          progressPercent = 50 + syncPercent + scpPercent;
+        }
       }
     } else if (ipsTotal > 0) {
       // Still in discovery phases
-      const discoveryPercent = (ipsProcessed / ipsTotal) * 50;
+      const discoveryWeight = scpDisabled ? 60 : 50;
+      const discoveryPercent = (ipsProcessed / ipsTotal) * discoveryWeight;
       progressPercent = discoveryPercent;
     }
     
@@ -172,11 +186,12 @@ export function useDiscoveryScanProgress(jobId: string | undefined, isRunning: b
     const inScp = currentStage === 'scp' ? 1 : 0;
 
     // Detect if job is effectively complete (all work done)
+    // If SCP is disabled, don't require scpCompleted to match serversTotal
     const isEffectivelyComplete = 
       currentStage === 'complete' || 
       (serversTotal > 0 && 
        serversRefreshed >= serversTotal && 
-       scpCompleted >= serversTotal);
+       (scpDisabled || scpCompleted >= serversTotal));
 
     return {
       currentIp: details.current_ip,
