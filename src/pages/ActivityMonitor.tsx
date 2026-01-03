@@ -388,13 +388,24 @@ export default function ActivityMonitor() {
   // Job management handlers
   const handleCancelJob = async (jobId: string) => {
     try {
+      // First fetch the current job to preserve existing details
+      const { data: currentJob } = await supabase
+        .from('jobs')
+        .select('details')
+        .eq('id', jobId)
+        .single();
+
       const { error } = await supabase.functions.invoke('update-job', {
         body: { 
           job: { 
             id: jobId, 
             status: 'cancelled', 
             completed_at: new Date().toISOString(),
-            details: { cancellation_reason: 'Cancelled by user' }
+            details: {
+              ...(typeof currentJob?.details === 'object' && currentJob?.details !== null ? currentJob.details : {}),
+              cancelled_at: new Date().toISOString(),
+              cancellation_reason: 'Cancelled by user'
+            }
           } 
         }
       });
