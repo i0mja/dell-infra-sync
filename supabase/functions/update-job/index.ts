@@ -109,6 +109,51 @@ serve(async (req) => {
         );
       }
 
+      // Fetch current job status to prevent status regression
+      const { data: currentJob, error: fetchError } = await supabase
+        .from('jobs')
+        .select('status, details')
+        .eq('id', jobId)
+        .single();
+
+      if (fetchError) {
+        logger.error(`Failed to fetch job ${jobId}: ${fetchError.message}`);
+        throw fetchError;
+      }
+
+      // Terminal states - once reached, don't allow regression to running/pending
+      const terminalStates = ['cancelled', 'failed', 'completed'];
+      const currentStatus = currentJob?.status;
+
+      // If job is already in a terminal state, protect against regression
+      if (terminalStates.includes(currentStatus)) {
+        if (job.status && !terminalStates.includes(job.status)) {
+          // Attempting to regress from terminal to non-terminal - block this
+          logger.warn(`Blocked attempt to regress job ${jobId} from ${currentStatus} to ${job.status}`);
+          return new Response(JSON.stringify({ 
+            success: false, 
+            error: `Job is already ${currentStatus} - cannot change to ${job.status}`,
+            current_status: currentStatus
+          }), {
+            status: 409, // Conflict
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+        
+        // If job is cancelled/completed, also block details-only updates from executor
+        // to prevent overwriting the final state with stale progress
+        if (!job.status && job.details) {
+          logger.debug(`Ignoring details-only update for terminal job ${jobId}`);
+          return new Response(JSON.stringify({ 
+            success: true, 
+            message: 'Job already in terminal state, update ignored',
+            current_status: currentStatus
+          }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+      }
+
       const updateData: any = {};
       if (job.status) updateData.status = job.status;
       if (job.started_at) updateData.started_at = job.started_at;
