@@ -33,11 +33,14 @@ export interface DiscoveryScanProgress {
   inPortCheck: number;
   inDetecting: number;
   inAuthenticating: number;
+  inSyncing: number;
+  inScp: number;
   
   // Final counts
   discovered: number;
   authFailures: number;
   scpBackups: number;
+  scpCompleted: number;
   
   // Per-server results (if available)
   serverResults: ServerResult[];
@@ -48,6 +51,7 @@ export interface DiscoveryScanProgress {
   currentServer?: string;
   currentServerIp?: string;
   scpProgress?: number;
+  currentStep?: string;
 }
 
 const defaultProgress: DiscoveryScanProgress = {
@@ -64,9 +68,12 @@ const defaultProgress: DiscoveryScanProgress = {
   inPortCheck: 0,
   inDetecting: 0,
   inAuthenticating: 0,
+  inSyncing: 0,
+  inScp: 0,
   discovered: 0,
   authFailures: 0,
   scpBackups: 0,
+  scpCompleted: 0,
   serverResults: [],
   serversRefreshed: 0,
   serversTotal: 0,
@@ -82,18 +89,27 @@ export function useDiscoveryScanProgress(jobId: string | undefined, isRunning: b
     const ipsTotal = details.ips_total ?? details.scanned_ips ?? 0;
     const serversRefreshed = details.servers_refreshed ?? 0;
     const serversTotal = details.servers_total ?? 0;
+    const scpCompleted = details.scp_completed ?? 0;
+    const currentStage = details.current_stage;
     
-    // Calculate progress percentage
+    // Calculate progress percentage based on phase
+    // Port scan/detection/auth = 50%, Sync = 30%, SCP = 20%
     let progressPercent = 0;
     if (ipsTotal > 0) {
-      // Discovery phase is 60% of progress
-      const discoveryPercent = (ipsProcessed / ipsTotal) * 60;
-      // Refresh phase is 40% of progress
-      const refreshPercent = serversTotal > 0 
-        ? (serversRefreshed / serversTotal) * 40 
-        : 0;
-      progressPercent = Math.round(discoveryPercent + refreshPercent);
+      // Discovery phases (port scan, detection, auth) = 50%
+      const discoveryPercent = (ipsProcessed / ipsTotal) * 50;
+      progressPercent = discoveryPercent;
     }
+    
+    if (serversTotal > 0) {
+      // Sync phase = 30% 
+      const syncPercent = (serversRefreshed / serversTotal) * 30;
+      // SCP phase = 20%
+      const scpPercent = (scpCompleted / serversTotal) * 20;
+      progressPercent = 50 + syncPercent + scpPercent;
+    }
+    
+    progressPercent = Math.min(Math.round(progressPercent), 100);
 
     // Parse server results if available
     const serverResults: ServerResult[] = (details.server_results ?? []).map((r: any) => ({
@@ -106,11 +122,15 @@ export function useDiscoveryScanProgress(jobId: string | undefined, isRunning: b
       filterReason: r.filter_reason,
       scpProgress: r.scp_progress,
     }));
+    
+    // Determine active counts based on current stage
+    const inSyncing = currentStage === 'sync' ? 1 : 0;
+    const inScp = currentStage === 'scp' ? 1 : 0;
 
     return {
       currentIp: details.current_ip,
-      currentStage: details.current_stage,
-      currentPhase: mapStageToPhase(details.current_stage),
+      currentStage,
+      currentPhase: mapStageToPhase(currentStage),
       ipsProcessed,
       ipsTotal,
       progressPercent,
@@ -123,15 +143,19 @@ export function useDiscoveryScanProgress(jobId: string | undefined, isRunning: b
       inPortCheck: details.in_port_check ?? 0,
       inDetecting: details.in_detecting ?? 0,
       inAuthenticating: details.in_authenticating ?? 0,
+      inSyncing,
+      inScp,
       discovered: details.discovered_count ?? details.discovered ?? 0,
       authFailures: details.auth_failures ?? 0,
       scpBackups: details.scp_backups_created ?? 0,
+      scpCompleted,
       serverResults,
       serversRefreshed,
       serversTotal,
       currentServer: details.current_server,
       currentServerIp: details.current_server_ip,
       scpProgress: details.scp_progress,
+      currentStep: details.current_step,
     };
   }, []);
 

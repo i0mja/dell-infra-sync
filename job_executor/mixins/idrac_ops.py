@@ -1634,12 +1634,39 @@ class IdracMixin:
             update_errors = []
             scp_completed = 0  # Track inline SCP backup results
             
+            # Fetch current job details to preserve discovery progress
+            try:
+                job_details_url = f"{DSM_URL}/rest/v1/jobs?id=eq.{job['id']}&select=details"
+                job_details_response = requests.get(job_details_url, headers=headers, verify=VERIFY_SSL)
+                if job_details_response.status_code == 200:
+                    job_records = job_details_response.json()
+                    base_details = job_records[0].get('details', {}) if job_records else {}
+                else:
+                    base_details = {}
+            except Exception:
+                base_details = {}
+            
             for index, server in enumerate(servers):
                 ip = server['ip_address']
                 task = task_by_server.get(server['id'])
                 
                 # Calculate base progress percentage for this server
                 base_progress = int((index / total_servers) * 100) if total_servers > 0 else 0
+                
+                # Update job with per-server progress (preserves discovery phase details)
+                self.update_job_status(
+                    job['id'],
+                    'running',
+                    details={
+                        **base_details,  # Preserve all discovery phase details
+                        'current_stage': 'sync',
+                        'current_step': f'Syncing server {index + 1}/{total_servers}',
+                        'current_server_ip': ip,
+                        'servers_refreshed': refreshed_count,
+                        'servers_total': total_servers,
+                        'scp_completed': scp_completed,
+                    }
+                )
                 
                 # Update task to running
                 if task:
@@ -1822,6 +1849,21 @@ class IdracMixin:
                         )
                         
                         # Run SCP backup inline (no separate job queue) for immediate completion
+                        # Update job to show SCP phase
+                        self.update_job_status(
+                            job['id'],
+                            'running',
+                            details={
+                                **base_details,
+                                'current_stage': 'scp',
+                                'current_step': f'Backing up config {refreshed_count}/{total_servers}',
+                                'current_server_ip': ip,
+                                'servers_refreshed': refreshed_count,
+                                'servers_total': total_servers,
+                                'scp_completed': scp_completed,
+                            }
+                        )
+                        
                         backup_name = f'Initial-{datetime.now().strftime("%Y%m%d-%H%M%S")}'
                         scp_success = self._execute_inline_scp_export(
                             server['id'], ip, username, password, backup_name, job['id']
@@ -1883,18 +1925,24 @@ class IdracMixin:
                 summary += f", {failed_count} failed"
             
             job_details = {
+                **base_details,  # Preserve discovery phase details
                 'summary': summary,
                 'synced': refreshed_count,
                 'failed': failed_count,
                 'scp_completed': scp_completed,  # SCP backups run inline
+                'servers_refreshed': refreshed_count,
+                'servers_total': total_servers,
+                'current_stage': 'complete',
             }
             if update_errors:
                 job_details['update_errors'] = update_errors
             
+            # Note: Do not set completed status here when called from discovery
+            # Discovery handler will handle final completion
+            # Only update details to preserve progress
             self.update_job_status(
                 job['id'],
-                'completed',
-                completed_at=datetime.now().isoformat(),
+                'running',  # Keep running, discovery handler completes
                 details=job_details
             )
             

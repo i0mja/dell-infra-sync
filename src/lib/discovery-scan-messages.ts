@@ -152,6 +152,7 @@ export const DISCOVERY_PHASES = [
   { id: 'detection', label: 'Detection', description: 'Checking for iDRAC endpoints' },
   { id: 'auth', label: 'Authentication', description: 'Testing credentials' },
   { id: 'sync', label: 'Data Sync', description: 'Collecting server information' },
+  { id: 'scp', label: 'Config Backup', description: 'Backing up server configuration' },
 ] as const;
 
 export type DiscoveryPhase = typeof DISCOVERY_PHASES[number]['id'];
@@ -178,6 +179,11 @@ export function mapStageToPhase(stage?: string): DiscoveryPhase {
     case 'refresh':
     case 'data_sync':
       return 'sync';
+    case 'scp':
+    case 'scp_backup':
+    case 'config_backup':
+    case 'backup':
+      return 'scp';
     default:
       return 'port_scan';
   }
