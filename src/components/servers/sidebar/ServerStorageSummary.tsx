@@ -77,7 +77,7 @@ export function ServerStorageSummary({
       icon={HardDrive} 
       title="Storage" 
       count={countDisplay}
-      defaultOpen={true}
+      defaultOpen={false}
     >
       {/* Health Summary */}
       <div className="flex items-center gap-3 mb-2 text-xs">

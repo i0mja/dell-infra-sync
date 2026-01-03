@@ -17,9 +17,8 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
 
 export function ServerSystemInfo({ server }: ServerSystemInfoProps) {
   return (
-    <CollapsibleSection icon={Info} title="System Information" defaultOpen={true}>
-      <div className="space-y-2">
-        <InfoRow label="Service Tag" value={<span className="font-mono">{server.service_tag}</span>} />
+    <CollapsibleSection icon={Info} title="System Information" defaultOpen={false}>
+      <div className="space-y-1.5">
         <InfoRow label="iDRAC FW" value={server.idrac_firmware} />
         <InfoRow label="BIOS" value={server.bios_version} />
         {server.redfish_version && (
