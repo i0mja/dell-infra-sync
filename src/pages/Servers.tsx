@@ -12,7 +12,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { logActivityDirect } from "@/hooks/useActivityLog";
 import { ServerStatsBar } from "@/components/servers/ServerStatsBar";
 import { ServersTable } from "@/components/servers/ServersTable";
-import { ServerQuickView } from "@/components/servers/ServerQuickView";
+import { ServerDetailsSidebar } from "@/components/servers/ServerDetailsSidebar";
 import { AddServerDialog } from "@/components/servers/AddServerDialog";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { EditServerDialog } from "@/components/servers/EditServerDialog";
@@ -449,26 +449,44 @@ export default function Servers() {
           />
         </div>
 
-        {/* Server Quick View Sidebar - normal flex child */}
-        {selectedServer && (
-          <ServerQuickView
-            server={selectedServer}
-            onClose={() => setSelectedServer(null)}
-            onRefresh={() => handleRefreshInfo(selectedServer)}
-            onPowerControl={() => setPowerControlDialogOpen(true)}
-            onBiosConfig={() => setBiosConfigDialogOpen(true)}
-            onBootConfig={() => setBootConfigDialogOpen(true)}
-            onScpBackup={() => setScpBackupDialogOpen(true)}
-            onVirtualMedia={() => setVirtualMediaDialogOpen(true)}
-            onEventLog={() => setEventLogDialogOpen(true)}
-            onHealthCheck={() => setHealthDialogOpen(true)}
-            onConsoleLaunch={() => handleLaunchConsole(selectedServer)}
-            onLinkVCenter={() => setLinkDialogOpen(true)}
-            onAudit={() => setAuditDialogOpen(true)}
-            onNetworkSettings={() => setNetworkSettingsDialogOpen(true)}
-            refreshing={refreshing === selectedServer.id}
-          />
-        )}
+        {/* Server Details Sidebar */}
+        <ServerDetailsSidebar
+          selectedServer={selectedServer}
+          selectedGroup={selectedGroupData ? {
+            id: selectedGroupData.group?.id || selectedGroupData.cluster || 'ungrouped',
+            name: selectedGroupData.name,
+            type: selectedGroupData.group ? 'manual' : (selectedGroupData.cluster ? 'vcenter' : undefined),
+            servers: selectedGroupData.servers,
+            onlineCount: selectedGroupData.onlineCount,
+            linkedCount: selectedGroupData.linkedCount,
+          } : null}
+          onClose={() => {
+            setSelectedServer(null);
+            setSelectedGroup(null);
+          }}
+          onEdit={() => setEditDialogOpen(true)}
+          onDelete={() => setDeleteDialogOpen(true)}
+          onRefreshInfo={() => selectedServer && handleRefreshInfo(selectedServer)}
+          onTestConnection={() => selectedServer && handleTestConnection(selectedServer)}
+          onPowerControl={() => setPowerControlDialogOpen(true)}
+          onBiosConfig={() => setBiosConfigDialogOpen(true)}
+          onBootConfig={() => setBootConfigDialogOpen(true)}
+          onVirtualMedia={() => setVirtualMediaDialogOpen(true)}
+          onScpBackup={() => setScpBackupDialogOpen(true)}
+          onViewAudit={() => setAuditDialogOpen(true)}
+          onViewProperties={() => setPropertiesDialogOpen(true)}
+          onViewHealth={() => setHealthDialogOpen(true)}
+          onViewEventLog={() => setEventLogDialogOpen(true)}
+          onLinkVCenter={() => setLinkDialogOpen(true)}
+          onAssignCredentials={() => setAssignCredentialsDialogOpen(true)}
+          onWorkflow={() => setWorkflowDialogOpen(true)}
+          onCreateJob={() => selectedServer && handleBulkUpdate([selectedServer.id])}
+          onNetworkSettings={() => setNetworkSettingsDialogOpen(true)}
+          onLaunchConsole={() => selectedServer && handleLaunchConsole(selectedServer)}
+          isRefreshing={selectedServer ? refreshing === selectedServer.id : false}
+          isTesting={selectedServer ? testing === selectedServer.id : false}
+          isLaunchingConsole={launchingConsole}
+        />
       </div>
 
       {/* Dialogs */}
