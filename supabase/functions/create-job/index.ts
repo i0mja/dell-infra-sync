@@ -253,8 +253,10 @@ serve(async (req) => {
       console.log(`Created ${subJobs.length} sub-jobs for full server update ${newJob.id}`);
     }
 
-    // Create job tasks based on target scope (for non-full_server_update jobs)
+    // Create job tasks based on target scope (for jobs that use per-server task tracking)
+    // Skip for: full_server_update (uses sub-jobs), discovery_scan (uses server_results in details)
     if (jobRequest.job_type !== 'full_server_update' && 
+        jobRequest.job_type !== 'discovery_scan' &&
         jobRequest.target_scope.server_ids && 
         Array.isArray(jobRequest.target_scope.server_ids)) {
       const tasks = jobRequest.target_scope.server_ids.map((server_id: string) => ({
