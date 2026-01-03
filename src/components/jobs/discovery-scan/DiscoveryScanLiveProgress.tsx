@@ -163,10 +163,17 @@ export function DiscoveryScanLiveProgress({
           const stats = getPhaseStats(phase.id);
           const hasActiveWork = (stats.active ?? 0) > 0;
           
-          // Special handling for sync phase - mark complete once we have SCP progress
-          const isSyncPhaseComplete = phase.id === 'sync' && scpCompleted > 0;
+          // Sync phase is complete only when ALL servers have been synced
+          const isSyncPhaseComplete = phase.id === 'sync' && 
+            serversRefreshed >= serversTotal && 
+            serversTotal > 0;
           
-          const isCompleted = (index < currentPhaseIndex && !hasActiveWork) || isSyncPhaseComplete;
+          // SCP phase is complete when ALL backups are done
+          const isScpPhaseComplete = phase.id === 'scp' && 
+            scpCompleted >= serversTotal && 
+            serversTotal > 0;
+          
+          const isCompleted = (index < currentPhaseIndex && !hasActiveWork) || isSyncPhaseComplete || isScpPhaseComplete;
           const isCurrent = !isCompleted && ((index === currentPhaseIndex && isRunning) || hasActiveWork);
           const isPending = index > currentPhaseIndex && !hasActiveWork && !isCompleted;
 
