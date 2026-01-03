@@ -186,12 +186,17 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
 
       if (error) throw error;
       
-      // Filter out scheduled/automatic replication syncs (only show manually triggered ones)
+      // Filter out scheduled/automatic jobs (only show manually triggered ones)
       const filteredData = (data || []).filter(job => {
-        if (job.job_type === 'run_replication_sync') {
-          const details = job.details as Record<string, unknown> | null;
-          // Hide if triggered automatically (has triggered_by set)
-          if (details?.triggered_by) return false;
+        const details = job.details as Record<string, unknown> | null;
+        // Hide any job that was triggered by scheduled/automatic process
+        if (details?.triggered_by === 'scheduled' || 
+            details?.triggered_by === 'scheduled_sync') {
+          return false;
+        }
+        // Also hide explicitly silent jobs
+        if (details?.silent === true) {
+          return false;
         }
         return true;
       });

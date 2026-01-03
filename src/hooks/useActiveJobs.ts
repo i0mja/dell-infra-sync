@@ -37,7 +37,23 @@ export function useActiveJobs() {
         .order("created_at", { ascending: false });
 
       if (error) throw error;
-      setJobs(data || []);
+      
+      // Filter out scheduled/automatic jobs (only show manually triggered ones)
+      const filteredJobs = (data || []).filter(job => {
+        const details = job.details as Record<string, unknown> | null;
+        // Hide any job that was triggered by scheduled/automatic process
+        if (details?.triggered_by === 'scheduled' || 
+            details?.triggered_by === 'scheduled_sync') {
+          return false;
+        }
+        // Also hide explicitly silent jobs
+        if (details?.silent === true) {
+          return false;
+        }
+        return true;
+      });
+      
+      setJobs(filteredJobs);
     } catch (error) {
       console.error("Error fetching active jobs:", error);
     } finally {
