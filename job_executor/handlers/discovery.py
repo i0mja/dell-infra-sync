@@ -96,7 +96,8 @@ class DiscoveryHandler(BaseHandler):
             
             # Get activity settings for discovery thread limit
             settings = self.executor.fetch_activity_settings()
-            max_threads = settings.get('discovery_max_threads', 5)
+            # OPTIMIZED: Higher default for discovery (read-only operations are safer)
+            max_threads = settings.get('discovery_max_threads', 10)  # Increased from 5
             self.log(f"Using {max_threads} concurrent threads for discovery")
             
             discovered = []
@@ -112,11 +113,11 @@ class DiscoveryHandler(BaseHandler):
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
                 futures = {}
                 
-                # Submit jobs with pacing to avoid thundering herd
+                # OPTIMIZED: Reduced pacing delay (25-75ms vs 50-200ms)
                 for i, ip in enumerate(ips_to_scan):
-                    # Add small random delay between starting each scan (50-200ms)
-                    if i > 0 and len(ips_to_scan) > 10:
-                        time.sleep(0.05 + (0.15 * (i % 10) / 10.0))
+                    # Minimal pacing to avoid thundering herd but not slow discovery
+                    if i > 0 and len(ips_to_scan) > 20:
+                        time.sleep(0.025 + (0.05 * (i % 5) / 5.0))
                     
                     future = executor.submit(
                         self.executor.discover_single_ip,
