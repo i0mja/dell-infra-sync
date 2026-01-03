@@ -11,6 +11,8 @@ export const INTERNAL_JOB_TYPES = [
   'idm_search_ad_users',
   'idm_sync_users',
   'scheduled_vcenter_sync', // Deprecated - replaced by pg_cron trigger-vcenter-syncs
+  'idrac_network_read',  // Quick silent operation - should not show in notifications
+  'idrac_network_write', // Quick silent operation - should not show in notifications
 ] as const;
 
 // Scheduled background job types - shown in Background Task Manager, not Active Jobs popover
