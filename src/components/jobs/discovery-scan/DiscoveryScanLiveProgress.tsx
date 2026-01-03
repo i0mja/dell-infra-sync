@@ -130,13 +130,27 @@ export function DiscoveryScanLiveProgress({
 
   const currentOperation = formatCurrentOperation();
 
+  // Determine what to show in the progress header based on current phase
+  const getProgressLabel = () => {
+    const inSyncOrScp = currentStage === 'sync' || currentStage === 'scp';
+    
+    if (inSyncOrScp && serversTotal > 0) {
+      // In sync/scp phase - show server progress
+      return `${serversTotal} servers discovered`;
+    } else if (ipsTotal > 0) {
+      // In discovery phase - show IP progress  
+      return `${ipsProcessed} / ${ipsTotal} IPs processed`;
+    }
+    return 'Initializing...';
+  };
+
   return (
     <div className="space-y-4">
       {/* Overall progress bar */}
       <div className="space-y-2">
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">
-            {ipsProcessed} / {ipsTotal} IPs processed
+            {getProgressLabel()}
           </span>
           <span className="font-medium">{progressPercent}%</span>
         </div>
@@ -201,16 +215,32 @@ export function DiscoveryScanLiveProgress({
                 {(isCompleted || isCurrent || hasActiveWork) && (
                   <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground">
                     {hasActiveWork ? (
-                      <span className="text-primary font-medium">{stats.active} active</span>
-                    ) : stats.passed !== undefined ? (
                       <>
-                        <span className="text-success">{stats.passed}</span>
-                        {stats.filtered !== undefined && stats.filtered > 0 && (
-                          <span className="text-muted-foreground">/{stats.filtered}</span>
+                        {/* For sync/scp, show X/Y with active indicator */}
+                        {(phase.id === 'sync' || phase.id === 'scp') && stats.total !== undefined && stats.total > 0 ? (
+                          <span className="text-primary font-medium">
+                            {stats.passed ?? 0}/{stats.total}
+                          </span>
+                        ) : (
+                          <span className="text-primary font-medium">{stats.active} active</span>
                         )}
-                        {stats.failed !== undefined && stats.failed > 0 && (
-                          <span className="text-destructive">/{stats.failed}</span>
-                        )}
+                      </>
+                    ) : stats.passed !== undefined && (stats.passed > 0 || stats.total !== undefined) ? (
+                      <>
+                        {/* For sync/scp phases, show X/Y format */}
+                        {(phase.id === 'sync' || phase.id === 'scp') && stats.total !== undefined && stats.total > 0 ? (
+                          <span className="text-success">{stats.passed}/{stats.total}</span>
+                        ) : stats.passed > 0 ? (
+                          <>
+                            <span className="text-success">{stats.passed}</span>
+                            {stats.filtered !== undefined && stats.filtered > 0 && (
+                              <span className="text-muted-foreground">/{stats.filtered}</span>
+                            )}
+                            {stats.failed !== undefined && stats.failed > 0 && (
+                              <span className="text-destructive">/{stats.failed}</span>
+                            )}
+                          </>
+                        ) : null}
                       </>
                     ) : null}
                   </div>
