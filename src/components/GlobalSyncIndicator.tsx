@@ -16,13 +16,24 @@ export function GlobalSyncIndicator() {
 
   useEffect(() => {
     const fetchRunningJobs = async () => {
-      const { error, count } = await supabase
+      const { data, error } = await supabase
         .from('jobs')
-        .select('id', { count: 'exact' })
+        .select('id, job_type, details')
         .in('job_type', ['run_replication_sync', 'storage_vmotion', 'create_dr_shell'])
         .in('status', ['pending', 'running']);
 
-      if (!error && count !== null) {
+      if (!error && data) {
+        // Filter out scheduled/automatic replication syncs (only show manually triggered ones)
+        const manualJobs = data.filter(job => {
+          if (job.job_type === 'run_replication_sync') {
+            const details = job.details as Record<string, unknown> | null;
+            // Only show if NOT triggered by scheduled/automatic process
+            return !details?.triggered_by;
+          }
+          return true;
+        });
+        
+        const count = manualJobs.length;
         setRunningJobs(count);
         // Reset dismissed state when new jobs start
         if (count > 0 && runningJobs === 0) {
