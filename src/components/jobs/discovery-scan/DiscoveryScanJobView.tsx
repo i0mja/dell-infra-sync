@@ -80,6 +80,11 @@ export function DiscoveryScanJobView({ job }: DiscoveryScanJobViewProps) {
               stage3Passed: progress.stage3Passed,
               stage3Failed: progress.stage3Failed,
             }}
+            activeCounts={{
+              inPortCheck: progress.inPortCheck,
+              inDetecting: progress.inDetecting,
+              inAuthenticating: progress.inAuthenticating,
+            }}
             ipsProcessed={progress.ipsProcessed}
             ipsTotal={progress.ipsTotal}
           />

@@ -1965,12 +1965,18 @@ class IdracMixin:
         except:
             return False
     
-    def discover_single_ip(self, ip: str, credential_sets: List[Dict], job_id: str) -> Dict:
+    def discover_single_ip(self, ip: str, credential_sets: List[Dict], job_id: str, stage_callback=None) -> Dict:
         """
         3-Stage optimized IP discovery:
         Stage 1: Quick TCP port check (443)
         Stage 2: Unauthenticated iDRAC detection (/redfish/v1)
         Stage 3: Full authentication only on confirmed iDRACs
+        
+        Args:
+            ip: IP address to discover
+            credential_sets: List of credential sets to try
+            job_id: Job ID for logging
+            stage_callback: Optional callback(ip, stage) for real-time progress
         
         Priority:
           1. Credential sets matching IP ranges (highest priority)
@@ -1978,6 +1984,9 @@ class IdracMixin:
         """
         
         # Stage 1: Quick port check - skip IPs with closed port 443
+        if stage_callback:
+            stage_callback(ip, 'port_check')
+        
         port_open = self._quick_port_check(ip, port=443, timeout=1.0)
         if not port_open:
             return {
@@ -1989,6 +1998,9 @@ class IdracMixin:
             }
         
         # Stage 2: Quick iDRAC detection - skip non-iDRAC devices
+        if stage_callback:
+            stage_callback(ip, 'detecting')
+        
         if not self._detect_idrac(ip, timeout=2.0):
             return {
                 'success': False,
@@ -1999,6 +2011,9 @@ class IdracMixin:
             }
         
         # Stage 3: Full authentication on confirmed iDRACs
+        if stage_callback:
+            stage_callback(ip, 'authenticating')
+        
         self.log(f"iDRAC detected at {ip}, attempting authentication...", "INFO")
         
         # Step 1: Get credential sets that match this IP's range

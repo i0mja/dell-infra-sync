@@ -110,6 +110,72 @@ class DiscoveryHandler(BaseHandler):
             ips_processed = 0
             total_ips = len(ips_to_scan)
             
+            # Track per-IP current stage for real-time progress
+            import threading
+            ip_stages = {}  # {"10.0.0.1": "port_check", ...}
+            ip_stages_lock = threading.Lock()
+            last_update_time = [0]  # Use list for mutable in closure
+            
+            def stage_callback(ip: str, stage: str):
+                """Callback to track real-time per-IP stage progress"""
+                with ip_stages_lock:
+                    ip_stages[ip] = stage
+                    
+                    # Throttle updates to max every 200ms
+                    current_time = time.time()
+                    if current_time - last_update_time[0] < 0.2:
+                        return
+                    last_update_time[0] = current_time
+                    
+                    # Count IPs in each stage
+                    stage_counts = {'port_check': 0, 'detecting': 0, 'authenticating': 0}
+                    for s in ip_stages.values():
+                        if s in stage_counts:
+                            stage_counts[s] += 1
+                    
+                    # Update job with real-time stage distribution
+                    self.update_job_status(
+                        job['id'],
+                        'running',
+                        details={
+                            "current_ip": ip,
+                            "current_stage": stage,
+                            "ips_processed": ips_processed,
+                            "ips_total": total_ips,
+                            "in_port_check": stage_counts['port_check'],
+                            "in_detecting": stage_counts['detecting'],
+                            "in_authenticating": stage_counts['authenticating'],
+                            "stage1_passed": stage1_passed,
+                            "stage1_filtered": stage1_filtered,
+                            "stage2_passed": stage2_passed,
+                            "stage2_filtered": stage2_filtered,
+                            "discovered_count": len(discovered),
+                            "auth_failures": len(auth_failures),
+                            "server_results": server_results[-20:],
+                        }
+                    )
+            
+            # Report initial state immediately (fixes 0/0 IPs issue)
+            self.update_job_status(
+                job['id'],
+                'running',
+                details={
+                    "ips_total": total_ips,
+                    "ips_processed": 0,
+                    "current_stage": "port_check",
+                    "in_port_check": 0,
+                    "in_detecting": 0,
+                    "in_authenticating": 0,
+                    "stage1_passed": 0,
+                    "stage1_filtered": 0,
+                    "stage2_passed": 0,
+                    "stage2_filtered": 0,
+                    "discovered_count": 0,
+                    "auth_failures": 0,
+                    "server_results": [],
+                }
+            )
+            
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
                 futures = {}
                 
@@ -123,7 +189,8 @@ class DiscoveryHandler(BaseHandler):
                         self.executor.discover_single_ip,
                         ip,
                         credential_sets,
-                        job['id']
+                        job['id'],
+                        stage_callback  # Pass stage callback
                     )
                     futures[future] = ip
                 

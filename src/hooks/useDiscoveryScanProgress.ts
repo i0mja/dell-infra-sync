@@ -29,6 +29,11 @@ export interface DiscoveryScanProgress {
   stage3Passed: number;  // Auth success
   stage3Failed: number;  // Auth failed
   
+  // Active counts (real-time)
+  inPortCheck: number;
+  inDetecting: number;
+  inAuthenticating: number;
+  
   // Final counts
   discovered: number;
   authFailures: number;
@@ -56,6 +61,9 @@ const defaultProgress: DiscoveryScanProgress = {
   stage2Filtered: 0,
   stage3Passed: 0,
   stage3Failed: 0,
+  inPortCheck: 0,
+  inDetecting: 0,
+  inAuthenticating: 0,
   discovered: 0,
   authFailures: 0,
   scpBackups: 0,
@@ -112,6 +120,9 @@ export function useDiscoveryScanProgress(jobId: string | undefined, isRunning: b
       stage2Filtered: details.stage2_filtered ?? 0,
       stage3Passed: details.stage3_passed ?? details.discovered_count ?? 0,
       stage3Failed: details.stage3_failed ?? details.auth_failures ?? 0,
+      inPortCheck: details.in_port_check ?? 0,
+      inDetecting: details.in_detecting ?? 0,
+      inAuthenticating: details.in_authenticating ?? 0,
       discovered: details.discovered_count ?? details.discovered ?? 0,
       authFailures: details.auth_failures ?? 0,
       scpBackups: details.scp_backups_created ?? 0,

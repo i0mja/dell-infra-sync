@@ -17,6 +17,11 @@ interface DiscoveryScanLiveProgressProps {
     stage3Passed: number;
     stage3Failed: number;
   };
+  activeCounts: {
+    inPortCheck: number;
+    inDetecting: number;
+    inAuthenticating: number;
+  };
   ipsProcessed: number;
   ipsTotal: number;
 }
@@ -28,6 +33,7 @@ export function DiscoveryScanLiveProgress({
   currentIp,
   currentStage,
   stageStats,
+  activeCounts,
   ipsProcessed,
   ipsTotal,
 }: DiscoveryScanLiveProgressProps) {
@@ -44,26 +50,30 @@ export function DiscoveryScanLiveProgress({
           passed: stageStats.stage1Passed,
           filtered: stageStats.stage1Filtered,
           total: ipsTotal,
+          active: activeCounts.inPortCheck,
         };
       case 'detection':
         return {
           passed: stageStats.stage2Passed,
           filtered: stageStats.stage2Filtered,
           total: stageStats.stage1Passed,
+          active: activeCounts.inDetecting,
         };
       case 'auth':
         return {
           passed: stageStats.stage3Passed,
           failed: stageStats.stage3Failed,
           total: stageStats.stage2Passed,
+          active: activeCounts.inAuthenticating,
         };
       case 'sync':
         return {
           passed: stageStats.stage3Passed,
           total: stageStats.stage3Passed,
+          active: 0,
         };
       default:
-        return {};
+        return { active: 0 };
     }
   };
 
@@ -100,10 +110,11 @@ export function DiscoveryScanLiveProgress({
       {/* Phase rail */}
       <div className="flex items-center justify-between gap-2 py-3">
         {DISCOVERY_PHASES.map((phase, index) => {
-          const isCompleted = index < currentPhaseIndex || !isRunning;
-          const isCurrent = index === currentPhaseIndex && isRunning;
-          const isPending = index > currentPhaseIndex;
           const stats = getPhaseStats(phase.id);
+          const hasActiveWork = (stats.active ?? 0) > 0;
+          const isCompleted = index < currentPhaseIndex && !hasActiveWork;
+          const isCurrent = (index === currentPhaseIndex && isRunning) || hasActiveWork;
+          const isPending = index > currentPhaseIndex && !hasActiveWork;
 
           return (
             <div key={phase.id} className="flex-1 relative">
@@ -130,6 +141,8 @@ export function DiscoveryScanLiveProgress({
                 >
                   {isCompleted ? (
                     <Check className="h-4 w-4" />
+                  ) : hasActiveWork ? (
+                    <Loader2 className="h-4 w-4 text-primary animate-spin" />
                   ) : isCurrent ? (
                     <Loader2 className="h-4 w-4 text-primary animate-spin" />
                   ) : (
@@ -141,23 +154,29 @@ export function DiscoveryScanLiveProgress({
                 <span
                   className={cn(
                     "text-xs mt-2 font-medium text-center",
-                    isCurrent && "text-primary",
+                    (isCurrent || hasActiveWork) && "text-primary",
                     isPending && "text-muted-foreground"
                   )}
                 >
                   {phase.label}
                 </span>
 
-                {/* Phase stats */}
-                {(isCompleted || isCurrent) && stats.passed !== undefined && (
+                {/* Phase stats - show active count or passed/filtered */}
+                {(isCompleted || isCurrent || hasActiveWork) && (
                   <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground">
-                    <span className="text-success">{stats.passed}</span>
-                    {stats.filtered !== undefined && stats.filtered > 0 && (
-                      <span className="text-muted-foreground">/{stats.filtered}</span>
-                    )}
-                    {stats.failed !== undefined && stats.failed > 0 && (
-                      <span className="text-destructive">/{stats.failed}</span>
-                    )}
+                    {hasActiveWork ? (
+                      <span className="text-primary font-medium">{stats.active} active</span>
+                    ) : stats.passed !== undefined ? (
+                      <>
+                        <span className="text-success">{stats.passed}</span>
+                        {stats.filtered !== undefined && stats.filtered > 0 && (
+                          <span className="text-muted-foreground">/{stats.filtered}</span>
+                        )}
+                        {stats.failed !== undefined && stats.failed > 0 && (
+                          <span className="text-destructive">/{stats.failed}</span>
+                        )}
+                      </>
+                    ) : null}
                   </div>
                 )}
               </div>
