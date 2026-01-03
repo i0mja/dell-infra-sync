@@ -322,6 +322,22 @@ class ScpMixin:
                 details={'error': str(e)}
             )
 
+    def _fetch_current_job_details(self, job_id: str) -> dict:
+        """Fetch current job details from database to preserve during updates."""
+        try:
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/jobs?id=eq.{job_id}&select=details",
+                headers=self.headers,
+                verify=VERIFY_SSL
+            )
+            if response.status_code == 200:
+                jobs = response.json()
+                if jobs and len(jobs) > 0:
+                    return jobs[0].get('details', {}) or {}
+        except Exception as e:
+            self.log(f"    Warning: Could not fetch current job details: {e}", "WARN")
+        return {}
+
     def _wait_for_scp_export(
         self,
         ip: str,
@@ -344,6 +360,9 @@ class ScpMixin:
         endpoint = urlparse(monitor_url).path
 
         self.log(f"  SCP export accepted, polling task: {monitor_url}")
+
+        # Fetch current job details ONCE at the start to preserve discovery progress
+        preserved_details = self._fetch_current_job_details(job['id']) if job else {}
 
         start_time = time.time()
         last_state = None
@@ -372,9 +391,11 @@ class ScpMixin:
                     job['id'],
                     'running',
                     details={
-                        **job.get('details', {}),
-                        'current_step': f'SCP Export {percent_complete}%',
-                        'scp_progress': percent_complete
+                        **preserved_details,  # Preserve ALL existing discovery details
+                        'current_stage': 'scp',
+                        'current_step': f'Backing up config: {ip} ({percent_complete}%)',
+                        'current_server_ip': ip,
+                        'scp_progress': percent_complete,
                     }
                 )
                 last_percent = percent_complete
