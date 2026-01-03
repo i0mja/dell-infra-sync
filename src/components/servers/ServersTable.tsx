@@ -62,6 +62,7 @@ import {
   Cpu,
   Key,
   Edit,
+  Settings,
 } from "lucide-react";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 import { useColumnVisibility } from "@/hooks/useColumnVisibility";
@@ -125,6 +126,7 @@ interface ServersTableProps {
   onGroupDelete?: (groupId: string) => void;
   onViewInVCenter?: (clusterName: string) => void;
   onCheckForUpdates?: (serverIds: string[], name: string) => void;
+  onIdracSettings?: (server: Server) => void;
 }
 
 export function ServersTable({
@@ -170,6 +172,7 @@ export function ServersTable({
   onGroupDelete,
   onViewInVCenter,
   onCheckForUpdates,
+  onIdracSettings,
 }: ServersTableProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [sortField, setSortField] = useState<string | null>(null);
@@ -765,6 +768,12 @@ export function ServersTable({
                         <Power className="mr-2 h-4 w-4" />
                         Power Controls
                       </ContextMenuItem>
+                      {onIdracSettings && (
+                        <ContextMenuItem onClick={() => onIdracSettings(server)}>
+                          <Settings className="mr-2 h-4 w-4" />
+                          iDRAC Settings
+                        </ContextMenuItem>
+                      )}
                       {onAutoLinkVCenter && !server.vcenter_host_id && (
                         <>
                           <ContextMenuSeparator />

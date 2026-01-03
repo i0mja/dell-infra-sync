@@ -35,6 +35,7 @@ interface ServerActionsProps {
   onVirtualMedia?: () => void;
   onScpBackup?: () => void;
   onNetworkSettings?: () => void;
+  onIdracSettings?: () => void;
   onViewEventLog?: () => void;
   onViewHealth?: () => void;
   onViewAudit?: () => void;
@@ -61,6 +62,7 @@ export function ServerActions({
   onVirtualMedia,
   onScpBackup,
   onNetworkSettings,
+  onIdracSettings,
   onViewEventLog,
   onViewHealth,
   onAssignCredentials,
@@ -151,6 +153,10 @@ export function ServerActions({
         <Button variant="ghost" size="sm" className="justify-start h-7 text-xs" onClick={onScpBackup}>
           <Save className="mr-2 h-3 w-3" />
           SCP
+        </Button>
+        <Button variant="ghost" size="sm" className="justify-start h-7 text-xs" onClick={onIdracSettings}>
+          <Settings className="mr-2 h-3 w-3" />
+          iDRAC
         </Button>
         <Button variant="ghost" size="sm" className="justify-start h-7 text-xs" onClick={onViewEventLog}>
           <ScrollText className="mr-2 h-3 w-3" />

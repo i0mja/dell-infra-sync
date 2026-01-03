@@ -31,6 +31,7 @@ import { DiscoveryScanDialog } from "@/components/servers/DiscoveryScanDialog";
 import { WorkflowJobDialog } from "@/components/jobs/WorkflowJobDialog";
 import { ClusterUpdateWizard } from "@/components/jobs/ClusterUpdateWizard";
 import { IdracNetworkDialog } from "@/components/servers/IdracNetworkDialog";
+import { IdracSettingsDialog } from "@/components/servers/IdracSettingsDialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { UpdateAvailabilityScanDialog } from "@/components/updates";
 import type { ScanTarget } from "@/components/updates/types";
@@ -71,6 +72,7 @@ export default function Servers() {
   const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
   const [updateWizardOpen, setUpdateWizardOpen] = useState(false);
   const [networkSettingsDialogOpen, setNetworkSettingsDialogOpen] = useState(false);
+  const [idracSettingsDialogOpen, setIdracSettingsDialogOpen] = useState(false);
   const [bulkUpdateServerIds, setBulkUpdateServerIds] = useState<string[]>([]);
   const [preSelectedClusterForUpdate, setPreSelectedClusterForUpdate] = useState<string | undefined>();
   const [updateScanDialogOpen, setUpdateScanDialogOpen] = useState(false);
@@ -446,6 +448,10 @@ export default function Servers() {
             });
             setUpdateScanDialogOpen(true);
           }}
+          onIdracSettings={(server) => {
+            setSelectedServer(server as any);
+            setIdracSettingsDialogOpen(true);
+          }}
           />
         </div>
 
@@ -482,6 +488,7 @@ export default function Servers() {
           onWorkflow={() => setWorkflowDialogOpen(true)}
           onCreateJob={() => selectedServer && handleBulkUpdate([selectedServer.id])}
           onNetworkSettings={() => setNetworkSettingsDialogOpen(true)}
+          onIdracSettings={() => setIdracSettingsDialogOpen(true)}
           onLaunchConsole={() => selectedServer && handleLaunchConsole(selectedServer)}
           isRefreshing={selectedServer ? refreshing === selectedServer.id : false}
           isTesting={selectedServer ? testing === selectedServer.id : false}
@@ -697,6 +704,18 @@ export default function Servers() {
           }}
         />
       )}
+
+      {/* iDRAC Settings Dialog */}
+      <IdracSettingsDialog
+        open={idracSettingsDialogOpen}
+        onOpenChange={setIdracSettingsDialogOpen}
+        server={selectedServer || undefined}
+        onSyncNow={() => {
+          if (selectedServer) {
+            handleRefreshInfo(selectedServer);
+          }
+        }}
+      />
     </div>
   );
 }
