@@ -1,6 +1,12 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Plus, RefreshCw, Activity, Server, AlertCircle } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Plus, RefreshCw, Activity, Server, AlertCircle, Settings, ChevronDown } from "lucide-react";
 
 interface ServerStatsBarProps {
   totalServers: number;
@@ -15,6 +21,7 @@ interface ServerStatsBarProps {
   onDiscovery: () => void;
   onBulkRefresh?: () => void;
   bulkRefreshing?: boolean;
+  onIdracSettings?: () => void;
 }
 
 export function ServerStatsBar({
@@ -30,6 +37,7 @@ export function ServerStatsBar({
   onDiscovery,
   onBulkRefresh,
   bulkRefreshing = false,
+  onIdracSettings,
 }: ServerStatsBarProps) {
   return (
     <div className="border-b bg-card">
@@ -93,16 +101,33 @@ export function ServerStatsBar({
           </Button>
 
           {onBulkRefresh && (
-            <Button 
-              variant="outline" 
-              size="sm"
-              className="h-7 text-xs px-2"
-              onClick={onBulkRefresh}
-              disabled={bulkRefreshing || totalServers === 0}
-            >
-              <Activity className="mr-1.5 h-3.5 w-3.5" />
-              {bulkRefreshing ? "..." : "iDRAC"}
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  className="h-7 text-xs px-2"
+                  disabled={bulkRefreshing}
+                >
+                  <Activity className="mr-1.5 h-3.5 w-3.5" />
+                  {bulkRefreshing ? "..." : "iDRAC"}
+                  <ChevronDown className="ml-1 h-3 w-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem 
+                  onClick={onBulkRefresh}
+                  disabled={totalServers === 0}
+                >
+                  <RefreshCw className="mr-2 h-3.5 w-3.5" />
+                  Sync All Servers
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={onIdracSettings}>
+                  <Settings className="mr-2 h-3.5 w-3.5" />
+                  iDRAC Settings
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
 
           <Button variant="outline" size="sm" className="h-7 text-xs px-2" onClick={onDiscovery}>

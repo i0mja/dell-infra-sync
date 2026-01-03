@@ -379,6 +379,10 @@ export default function Servers() {
         onDiscovery={handleDiscovery}
         onBulkRefresh={handleBulkRefresh}
         bulkRefreshing={bulkRefreshing}
+        onIdracSettings={() => {
+          setSelectedServer(null);
+          setIdracSettingsDialogOpen(true);
+        }}
       />
 
       {/* Main: Table + Sidebar Layout */}
