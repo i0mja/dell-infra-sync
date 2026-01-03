@@ -693,7 +693,10 @@ export function VCenterDetailsSidebar({
     return (
       <div className="w-[440px] border-l bg-card flex-shrink-0 h-full flex flex-col">
         {/* Status bar */}
-        <div className={`h-1 ${selectedHost.status === 'connected' ? 'bg-success' : selectedHost.maintenance_mode ? 'bg-warning' : 'bg-destructive'}`} />
+        {(() => {
+          const isHostOnline = selectedHost.status === 'connected' || selectedHost.status === 'online';
+          return <div className={`h-1 ${isHostOnline ? 'bg-success' : selectedHost.maintenance_mode ? 'bg-warning' : 'bg-destructive'}`} />;
+        })()}
         
         {/* Breadcrumb navigation */}
         {showBreadcrumb && (
@@ -723,12 +726,17 @@ export function VCenterDetailsSidebar({
                 <h3 className="text-lg font-semibold truncate">{selectedHost.name}</h3>
                 <p className="text-sm text-muted-foreground">{selectedHost.cluster || "Unclustered"}</p>
               </div>
-              <Badge 
-                variant={selectedHost.status === "connected" ? "default" : "destructive"} 
-                className={selectedHost.status === 'connected' ? 'bg-success hover:bg-success' : selectedHost.maintenance_mode ? 'bg-warning hover:bg-warning text-warning-foreground' : ''}
-              >
-                {selectedHost.maintenance_mode ? "Maintenance" : selectedHost.status || "Unknown"}
-              </Badge>
+              {(() => {
+                const isHostOnline = selectedHost.status === 'connected' || selectedHost.status === 'online';
+                return (
+                  <Badge 
+                    variant={isHostOnline ? "default" : "destructive"} 
+                    className={isHostOnline ? 'bg-success hover:bg-success' : selectedHost.maintenance_mode ? 'bg-warning hover:bg-warning text-warning-foreground' : ''}
+                  >
+                    {selectedHost.maintenance_mode ? "Maintenance" : isHostOnline ? "Online" : selectedHost.status || "Unknown"}
+                  </Badge>
+                );
+              })()}
             </div>
 
             {/* Quick Info */}
