@@ -162,9 +162,13 @@ export function DiscoveryScanLiveProgress({
         {DISCOVERY_PHASES.map((phase, index) => {
           const stats = getPhaseStats(phase.id);
           const hasActiveWork = (stats.active ?? 0) > 0;
-          const isCompleted = index < currentPhaseIndex && !hasActiveWork;
-          const isCurrent = (index === currentPhaseIndex && isRunning) || hasActiveWork;
-          const isPending = index > currentPhaseIndex && !hasActiveWork;
+          
+          // Special handling for sync phase - mark complete once we have SCP progress
+          const isSyncPhaseComplete = phase.id === 'sync' && scpCompleted > 0;
+          
+          const isCompleted = (index < currentPhaseIndex && !hasActiveWork) || isSyncPhaseComplete;
+          const isCurrent = !isCompleted && ((index === currentPhaseIndex && isRunning) || hasActiveWork);
+          const isPending = index > currentPhaseIndex && !hasActiveWork && !isCompleted;
 
           return (
             <div key={phase.id} className="flex-1 relative">
