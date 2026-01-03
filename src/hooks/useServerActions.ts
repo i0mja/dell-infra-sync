@@ -67,11 +67,40 @@ export function useServerActions() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
+      // Load global iDRAC settings to get fetch options
+      const { data: globalSettings } = await supabase
+        .from("idrac_settings")
+        .select("*")
+        .limit(1)
+        .single();
+
+      // Check for server-specific overrides
+      const { data: serverSettings } = await supabase
+        .from("servers")
+        .select("idrac_fetch_options")
+        .eq("id", server.id)
+        .single();
+
+      // Use server-specific if available, otherwise global
+      const fetchOptions = serverSettings?.idrac_fetch_options || (globalSettings ? {
+        firmware: globalSettings.fetch_firmware,
+        health: globalSettings.fetch_health,
+        bios: globalSettings.fetch_bios,
+        storage: globalSettings.fetch_storage,
+        nics: globalSettings.fetch_nics,
+        scp_backup: globalSettings.fetch_scp_backup,
+        scp_backup_max_age_days: globalSettings.scp_backup_max_age_days,
+        scp_backup_only_if_stale: globalSettings.scp_backup_only_if_stale,
+      } : undefined);
+
       const { data, error } = await supabase.functions.invoke("create-job", {
         body: {
           job_type: "discovery_scan",
           created_by: user.id,
           target_scope: { server_ids: [server.id] },
+          details: {
+            fetch_options: fetchOptions,
+          },
         },
       });
 
