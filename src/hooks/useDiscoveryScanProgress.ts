@@ -52,13 +52,19 @@ export interface DiscoveryScanProgress {
   currentServerIp?: string;
   scpProgress?: number;
   currentStep?: string;
+  
+  // Orphan detection flag
+  isEffectivelyComplete: boolean;
 }
 
 const defaultProgress: DiscoveryScanProgress = {
-  currentPhase: 'port_scan',
   ipsProcessed: 0,
   ipsTotal: 0,
-  progressPercent: 0,
+  currentIp: '',
+  currentStage: '',
+  currentStep: undefined,
+  currentServerIp: undefined,
+  scpProgress: undefined,
   stage1Passed: 0,
   stage1Filtered: 0,
   stage2Passed: 0,
@@ -70,13 +76,16 @@ const defaultProgress: DiscoveryScanProgress = {
   inAuthenticating: 0,
   inSyncing: 0,
   inScp: 0,
+  serversRefreshed: 0,
+  serversTotal: 0,
+  scpCompleted: 0,
+  serverResults: [],
+  progressPercent: 0,
+  currentPhase: 'port_scan',
   discovered: 0,
   authFailures: 0,
   scpBackups: 0,
-  scpCompleted: 0,
-  serverResults: [],
-  serversRefreshed: 0,
-  serversTotal: 0,
+  isEffectivelyComplete: false,
 };
 
 export function useDiscoveryScanProgress(jobId: string | undefined, isRunning: boolean) {
@@ -162,13 +171,20 @@ export function useDiscoveryScanProgress(jobId: string | undefined, isRunning: b
     const inSyncing = currentStage === 'sync' ? 1 : 0;
     const inScp = currentStage === 'scp' ? 1 : 0;
 
+    // Detect if job is effectively complete (all work done)
+    const isEffectivelyComplete = 
+      currentStage === 'complete' || 
+      (serversTotal > 0 && 
+       serversRefreshed >= serversTotal && 
+       scpCompleted >= serversTotal);
+
     return {
       currentIp: details.current_ip,
       currentStage,
       currentPhase: effectivePhase,
       ipsProcessed,
       ipsTotal,
-      progressPercent,
+      progressPercent: isEffectivelyComplete ? 100 : progressPercent,
       stage1Passed: effectiveStage1Passed,
       stage1Filtered: details.stage1_filtered ?? 0,
       stage2Passed: effectiveStage2Passed,
@@ -191,6 +207,7 @@ export function useDiscoveryScanProgress(jobId: string | undefined, isRunning: b
       currentServerIp: details.current_server_ip,
       scpProgress: details.scp_progress,
       currentStep: details.current_step,
+      isEffectivelyComplete,
     };
   }, []);
 
