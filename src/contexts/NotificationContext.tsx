@@ -452,7 +452,9 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
             if (typeof details !== 'object' || details === null) return false;
             // Explicitly marked silent
             if ((details as any).silent === true) return true;
-            // Triggered by scheduled/automatic sync
+            // Triggered by scheduled/automatic sync (accept both new and legacy values)
+            if ((details as any).triggered_by === 'scheduled') return true;
+            if ((details as any).triggered_by === 'scheduled_sync') return true;
             if ((details as any).triggered_by === 'scheduled') return true;
             return false;
           };
