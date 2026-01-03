@@ -16,12 +16,25 @@ interface DiscoveryScanServerListProps {
   serverResults: ServerResult[];
   isRunning: boolean;
   maxHeight?: string;
+  // Summary data from progress (when serverResults is empty)
+  serversRefreshed?: number;
+  serversTotal?: number;
+  scpCompleted?: number;
+  currentServerIp?: string;
+  currentStage?: string;
+  currentStep?: string;
 }
 
 export function DiscoveryScanServerList({
   serverResults,
   isRunning,
   maxHeight = "300px",
+  serversRefreshed = 0,
+  serversTotal = 0,
+  scpCompleted = 0,
+  currentServerIp,
+  currentStage,
+  currentStep,
 }: DiscoveryScanServerListProps) {
   if (serverResults.length === 0 && !isRunning) {
     return null;
@@ -97,11 +110,68 @@ export function DiscoveryScanServerList({
     ['port_check', 'detecting', 'authenticating', 'syncing', 'scp'].includes(r.status)
   ).length;
 
+  // When no detailed server results but we have progress data, show simplified view
   if (serverResults.length === 0) {
+    const hasProgressData = serversRefreshed > 0 || scpCompleted > 0 || currentServerIp;
+    
+    if (!hasProgressData) {
+      return (
+        <div className="text-center py-8 text-muted-foreground">
+          <Server className="h-8 w-8 mx-auto mb-2 opacity-50" />
+          <p>Waiting for server discovery...</p>
+        </div>
+      );
+    }
+
+    // Show simplified activity view with available summary data
+    const getStageLabel = (stage?: string) => {
+      switch (stage) {
+        case 'sync': return 'Syncing';
+        case 'scp': return 'Backing up';
+        default: return 'Processing';
+      }
+    };
+
     return (
-      <div className="text-center py-8 text-muted-foreground">
-        <Server className="h-8 w-8 mx-auto mb-2 opacity-50" />
-        <p>Waiting for server discovery...</p>
+      <div className="space-y-3">
+        {/* Summary bar from aggregate counts */}
+        <div className="flex items-center gap-4 text-sm">
+          <span className="text-muted-foreground">Server Status:</span>
+          {serversRefreshed > 0 && (
+            <Badge variant="secondary" className="gap-1">
+              <CheckCircle className="h-3 w-3" />
+              {serversRefreshed}{serversTotal > 0 ? `/${serversTotal}` : ''} synced
+            </Badge>
+          )}
+          {scpCompleted > 0 && (
+            <Badge variant="outline" className="gap-1">
+              <CheckCircle className="h-3 w-3" />
+              {scpCompleted}{serversTotal > 0 ? `/${serversTotal}` : ''} backed up
+            </Badge>
+          )}
+          {currentServerIp && (
+            <Badge variant="default" className="gap-1">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              1 in progress
+            </Badge>
+          )}
+        </div>
+
+        {/* Current server being processed */}
+        {currentServerIp && (
+          <div className="border rounded-lg">
+            <div className="flex items-center justify-between px-4 py-3 bg-primary/5">
+              <div className="flex items-center gap-3">
+                <Loader2 className="h-4 w-4 text-primary animate-spin" />
+                <span className="font-mono text-sm">{currentServerIp}</span>
+                {currentStep && (
+                  <span className="text-muted-foreground text-sm">{currentStep}</span>
+                )}
+              </div>
+              <Badge variant="default">{getStageLabel(currentStage)}</Badge>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
