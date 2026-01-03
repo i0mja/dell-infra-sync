@@ -273,11 +273,34 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
           return Math.round((details.vms_processed / details.vms_total) * 100);
         }
         
-        // Discovery scan: servers_scanned / total_ips
-        if ('total_ips' in details && 'servers_scanned' in details && 
-            typeof details.total_ips === 'number' && typeof details.servers_scanned === 'number' && 
-            details.total_ips > 0) {
-          return Math.round((details.servers_scanned / details.total_ips) * 100);
+        // Discovery scan: Use correct field names and weighted progress
+        // Port scan/detection/auth = 50%, Sync = 30%, SCP = 20%
+        if (job.job_type === 'discovery_scan' || 'ips_total' in details || 'servers_total' in details) {
+          const ipsTotal = (typeof details.ips_total === 'number' ? details.ips_total : 0) || 
+                          (typeof details.scanned_ips === 'number' ? details.scanned_ips : 0);
+          const ipsProcessed = typeof details.ips_processed === 'number' ? details.ips_processed : 0;
+          const serversTotal = typeof details.servers_total === 'number' ? details.servers_total : 0;
+          const serversRefreshed = typeof details.servers_refreshed === 'number' ? details.servers_refreshed : 0;
+          const scpCompleted = typeof details.scp_completed === 'number' ? details.scp_completed : 0;
+          const currentStage = details.current_stage;
+          
+          // Check if discovery phases are complete (moved to sync or scp)
+          const discoveryCompleted = (currentStage === 'sync' || currentStage === 'scp') && serversTotal > 0;
+          
+          if (discoveryCompleted) {
+            // Discovery is done (50%), calculate sync (30%) and scp (20%)
+            let progress = 50;
+            if (serversTotal > 0) {
+              const syncPercent = (serversRefreshed / serversTotal) * 30;
+              const scpPercent = (scpCompleted / serversTotal) * 20;
+              progress = 50 + syncPercent + scpPercent;
+            }
+            return Math.min(Math.round(progress), 100);
+          } else if (ipsTotal > 0) {
+            // Still in discovery phases (port scan, detection, auth)
+            const discoveryPercent = (ipsProcessed / ipsTotal) * 50;
+            return Math.min(Math.round(discoveryPercent), 100);
+          }
         }
         
         // Hosts sync: hosts_processed / hosts_total
