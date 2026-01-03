@@ -27,24 +27,24 @@ export function CollapsibleSection({
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center justify-between w-full py-2 text-sm font-medium hover:text-foreground transition-colors"
+        className="flex items-center justify-between w-full py-1.5 text-xs font-medium hover:text-foreground transition-colors"
       >
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           {isOpen ? (
-            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
           ) : (
-            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
           )}
-          <Icon className="h-4 w-4" />
+          <Icon className="h-3.5 w-3.5" />
           <span>{title}</span>
         </div>
         {count !== undefined && (
-          <Badge variant="secondary" className="text-xs px-1.5 py-0 h-5">
+          <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4">
             {count}
           </Badge>
         )}
       </button>
-      {isOpen && <div className="pl-6 pb-3">{children}</div>}
+      {isOpen && <div className="pl-5 pb-2 pt-1">{children}</div>}
     </div>
   );
 }

@@ -61,7 +61,7 @@ export function ServerNicsSummary({ nics, isLoading, onViewAll }: ServerNicsSumm
       icon={Network} 
       title="Network Interfaces" 
       count={nics.length}
-      defaultOpen={true}
+      defaultOpen={false}
     >
       <div className="space-y-1.5">
         {displayNics.map((nic) => (

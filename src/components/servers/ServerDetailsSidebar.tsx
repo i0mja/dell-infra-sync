@@ -4,22 +4,29 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   X,
   Server as ServerIcon,
   RefreshCw,
   Wrench,
+  Clock,
 } from "lucide-react";
 import type { Server } from "@/hooks/useServers";
 import { useServerDrives } from "@/hooks/useServerDrives";
 import { useServerNics } from "@/hooks/useServerNics";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { formatDistanceToNow } from "date-fns";
 import {
   ServerQuickStats,
   ServerNicsSummary,
   ServerStorageSummary,
   ServerSystemInfo,
-  ServerConnectivity,
   ServerActions,
 } from "./sidebar";
 
@@ -166,16 +173,22 @@ export function ServerDetailsSidebar({
         <div className={`h-1.5 ${getStatusBarColor(selectedServer.connection_status)}`} />
 
         {/* Header */}
-        <CardHeader className="pb-3 pt-3">
+        <CardHeader className="pb-2 pt-3">
           <div className="flex items-start justify-between gap-2">
             <div className="flex-1 min-w-0">
               <h3 className="text-base font-semibold truncate">
                 {selectedServer.hostname || selectedServer.ip_address}
               </h3>
-              <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2">
+              <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1.5 flex-wrap">
                 <span className="font-mono">{selectedServer.ip_address}</span>
-                <span>•</span>
-                <span className="truncate">{selectedServer.model || "Unknown Model"}</span>
+                <span className="text-muted-foreground/50">•</span>
+                <span className="truncate">{selectedServer.model || "Unknown"}</span>
+                {selectedServer.service_tag && (
+                  <>
+                    <span className="text-muted-foreground/50">•</span>
+                    <span className="font-mono">{selectedServer.service_tag}</span>
+                  </>
+                )}
               </p>
             </div>
             <Button variant="ghost" size="icon" className="h-7 w-7 -mr-1" onClick={onClose}>
@@ -185,9 +198,23 @@ export function ServerDetailsSidebar({
 
           {/* Status Badges */}
           <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-            <Badge className={statusBadgeColors[selectedServer.connection_status || "unknown"]}>
-              {selectedServer.connection_status || "Unknown"}
-            </Badge>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge className={statusBadgeColors[selectedServer.connection_status || "unknown"]}>
+                    {selectedServer.connection_status || "Unknown"}
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-xs">
+                  <div className="flex items-center gap-1.5">
+                    <Clock className="h-3 w-3" />
+                    Last seen: {selectedServer.last_seen 
+                      ? formatDistanceToNow(new Date(selectedServer.last_seen), { addSuffix: true })
+                      : "Never"}
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             {selectedServer.overall_health && (
               <Badge variant={getHealthBadgeVariant(selectedServer.overall_health)}>
                 {selectedServer.overall_health}
@@ -198,10 +225,13 @@ export function ServerDetailsSidebar({
                 {selectedServer.power_state}
               </Badge>
             )}
+            {selectedServer.credential_set_id ? (
+              <Badge variant="secondary" className="text-[10px]">Creds</Badge>
+            ) : (
+              <Badge variant="outline" className="text-[10px] text-muted-foreground">No Creds</Badge>
+            )}
             {selectedServer.vcenter_host_id && (
-              <Badge variant="secondary" className="text-[10px]">
-                vCenter
-              </Badge>
+              <Badge variant="secondary" className="text-[10px]">vCenter</Badge>
             )}
           </div>
         </CardHeader>
@@ -210,7 +240,7 @@ export function ServerDetailsSidebar({
 
         {/* Scrollable Content */}
         <ScrollArea className="flex-1">
-          <CardContent className="pt-4 pb-2 space-y-4">
+          <CardContent className="pt-3 pb-2 space-y-3">
             {/* Quick Stats Grid */}
             <ServerQuickStats 
               server={selectedServer} 
@@ -218,37 +248,22 @@ export function ServerDetailsSidebar({
               nics={nics || undefined} 
             />
 
-            <Separator />
-
-            {/* System Information */}
+            {/* System Information - collapsed by default */}
             <ServerSystemInfo server={selectedServer} />
 
-            <Separator />
-
-            {/* Network Interfaces with MACs */}
+            {/* Network Interfaces - collapsed by default */}
             <ServerNicsSummary 
               nics={nics || []} 
               isLoading={nicsLoading}
               onViewAll={onViewProperties}
             />
 
-            <Separator />
-
-            {/* Storage */}
+            {/* Storage - collapsed by default */}
             <ServerStorageSummary
               drives={drives || []}
               isLoading={drivesLoading}
               totalStorageTB={selectedServer.total_storage_tb}
               onViewAll={onViewProperties}
-            />
-
-            <Separator />
-
-            {/* Connectivity */}
-            <ServerConnectivity
-              server={selectedServer}
-              onAssignCredentials={onAssignCredentials}
-              onLinkVCenter={handleAutoLinkVCenter}
             />
           </CardContent>
         </ScrollArea>
