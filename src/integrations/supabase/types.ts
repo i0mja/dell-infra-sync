@@ -5129,6 +5129,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      append_job_console_log: {
+        Args: { p_job_id: string; p_log_entry: string }
+        Returns: undefined
+      }
       auto_complete_stale_replication_jobs: { Args: never; Returns: Json }
       check_auth_rate_limit: {
         Args: {
