@@ -295,6 +295,13 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
               const scpPercent = (scpCompleted / serversTotal) * 20;
               progress = 50 + syncPercent + scpPercent;
             }
+            
+            // WATERMARK: If in SCP phase, minimum progress is 80%
+            // Prevents progress from appearing to reset when SCP starts
+            if (currentStage === 'scp') {
+              progress = Math.max(progress, 80);
+            }
+            
             return Math.min(Math.round(progress), 100);
           } else if (ipsTotal > 0) {
             // Still in discovery phases (port scan, detection, auth)
@@ -416,7 +423,15 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         // Use discovery scan's current_step if available
         const step = (details as Record<string, unknown>).current_step;
         const stage = (details as Record<string, unknown>).current_stage;
-        if (typeof step === 'string' && step) {
+        const scpCompleted = (details as Record<string, unknown>).scp_completed;
+        const serversTotal = (details as Record<string, unknown>).servers_total;
+        
+        // Override status during SCP phase to show accurate progress
+        // Prevents showing "complete" while SCP backups are still running
+        if (stage === 'scp' && typeof scpCompleted === 'number' && typeof serversTotal === 'number') {
+          currentStatus = `Backing up configs (${scpCompleted}/${serversTotal})`;
+        } else if (typeof step === 'string' && step && step !== 'complete') {
+          // Show step, but not "complete" if we're still in SCP phase
           currentStatus = step;
         } else if (typeof stage === 'string') {
           const stageLabels: Record<string, string> = {

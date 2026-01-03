@@ -1293,6 +1293,8 @@ export type Database = {
           id: string
           last_sync_at: string | null
           next_sync_at: string | null
+          scp_backup_max_age_days: number | null
+          scp_backup_only_if_stale: boolean | null
           sync_interval_minutes: number
           updated_at: string
         }
@@ -1308,6 +1310,8 @@ export type Database = {
           id?: string
           last_sync_at?: string | null
           next_sync_at?: string | null
+          scp_backup_max_age_days?: number | null
+          scp_backup_only_if_stale?: boolean | null
           sync_interval_minutes?: number
           updated_at?: string
         }
@@ -1323,6 +1327,8 @@ export type Database = {
           id?: string
           last_sync_at?: string | null
           next_sync_at?: string | null
+          scp_backup_max_age_days?: number | null
+          scp_backup_only_if_stale?: boolean | null
           sync_interval_minutes?: number
           updated_at?: string
         }
