@@ -73,6 +73,7 @@ export default function Servers() {
   const [updateWizardOpen, setUpdateWizardOpen] = useState(false);
   const [networkSettingsDialogOpen, setNetworkSettingsDialogOpen] = useState(false);
   const [idracSettingsDialogOpen, setIdracSettingsDialogOpen] = useState(false);
+  const [isGlobalIdracSettings, setIsGlobalIdracSettings] = useState(false);
   const [bulkUpdateServerIds, setBulkUpdateServerIds] = useState<string[]>([]);
   const [preSelectedClusterForUpdate, setPreSelectedClusterForUpdate] = useState<string | undefined>();
   const [updateScanDialogOpen, setUpdateScanDialogOpen] = useState(false);
@@ -381,6 +382,7 @@ export default function Servers() {
         bulkRefreshing={bulkRefreshing}
         onIdracSettings={() => {
           setSelectedServer(null);
+          setIsGlobalIdracSettings(true);
           setIdracSettingsDialogOpen(true);
         }}
       />
@@ -712,8 +714,12 @@ export default function Servers() {
       {/* iDRAC Settings Dialog */}
       <IdracSettingsDialog
         open={idracSettingsDialogOpen}
-        onOpenChange={setIdracSettingsDialogOpen}
+        onOpenChange={(open) => {
+          setIdracSettingsDialogOpen(open);
+          if (!open) setIsGlobalIdracSettings(false);
+        }}
         server={selectedServer || undefined}
+        isGlobal={isGlobalIdracSettings}
         onSyncNow={() => {
           if (selectedServer) {
             handleRefreshInfo(selectedServer);

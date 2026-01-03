@@ -105,8 +105,7 @@ export function IdracSettingsDialog({
     saving,
     saveGlobalSettings,
     saveServerSettings,
-    getEffectiveFetchOptions,
-    getEffectiveSyncSettings,
+    refresh,
   } = useIdracSettings(server?.id);
 
   const [fetchOptions, setFetchOptions] = useState<IdracFetchOptions>({
@@ -124,9 +123,16 @@ export function IdracSettingsDialog({
   const [scpOnlyIfStale, setScpOnlyIfStale] = useState(true);
   const [useGlobalDefaults, setUseGlobalDefaults] = useState(true);
 
-  // Initialize form state when settings load
+  // Refresh settings when dialog opens
   useEffect(() => {
-    if (loading) return;
+    if (open) {
+      refresh();
+    }
+  }, [open, refresh]);
+
+  // Initialize form state when settings load or dialog opens
+  useEffect(() => {
+    if (!open || loading) return;
 
     if (isGlobal && globalSettings) {
       setFetchOptions({
@@ -147,21 +153,25 @@ export function IdracSettingsDialog({
                           serverSettings?.idrac_sync_enabled !== null;
       setUseGlobalDefaults(!hasOverrides);
 
-      if (hasOverrides && serverSettings) {
-        if (serverSettings.idrac_fetch_options) {
-          setFetchOptions(serverSettings.idrac_fetch_options);
-        }
+      if (hasOverrides && serverSettings?.idrac_fetch_options) {
+        setFetchOptions(serverSettings.idrac_fetch_options);
         setSyncEnabled(serverSettings.idrac_sync_enabled ?? false);
         setSyncInterval(String(serverSettings.idrac_sync_interval_minutes ?? 60));
-      } else {
-        // Use effective (global) settings
-        setFetchOptions(getEffectiveFetchOptions());
-        const effectiveSync = getEffectiveSyncSettings();
-        setSyncEnabled(effectiveSync.enabled);
-        setSyncInterval(String(effectiveSync.interval));
+      } else if (globalSettings) {
+        // Use global settings as defaults directly (avoid unstable function refs)
+        setFetchOptions({
+          firmware: globalSettings.fetch_firmware,
+          health: globalSettings.fetch_health,
+          bios: globalSettings.fetch_bios,
+          storage: globalSettings.fetch_storage,
+          nics: globalSettings.fetch_nics,
+          scp_backup: globalSettings.fetch_scp_backup,
+        });
+        setSyncEnabled(globalSettings.auto_sync_enabled);
+        setSyncInterval(String(globalSettings.sync_interval_minutes));
       }
     }
-  }, [loading, globalSettings, serverSettings, server, isGlobal, getEffectiveFetchOptions, getEffectiveSyncSettings]);
+  }, [open, loading, globalSettings, serverSettings, server, isGlobal]);
 
   const handleFetchOptionChange = (key: keyof IdracFetchOptions, checked: boolean) => {
     setFetchOptions((prev) => ({ ...prev, [key]: checked }));
