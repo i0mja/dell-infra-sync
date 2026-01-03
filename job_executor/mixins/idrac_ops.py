@@ -1632,7 +1632,7 @@ class IdracMixin:
             refreshed_count = 0
             failed_count = 0
             update_errors = []
-            servers_with_scp_queued = []  # Track servers with deferred SCP backup jobs
+            scp_completed = 0  # Track inline SCP backup results
             
             for index, server in enumerate(servers):
                 ip = server['ip_address']
@@ -1817,14 +1817,20 @@ class IdracMixin:
                                 'bios_version': info.get('bios_version'),
                                 'idrac_firmware': info.get('idrac_firmware'),
                                 'health_status': info.get('health_status'),
-                                'event_logs_fetched': info.get('event_log_count', 0)
+                            'event_logs_fetched': info.get('event_log_count', 0)
                             }
                         )
                         
-                        # Queue SCP backup as background job (deferred for speed)
-                        # This removes the slowest operation from the discovery critical path
-                        self._create_automatic_scp_backup(server['id'], job['id'])
-                        servers_with_scp_queued.append(server['id'])
+                        # Run SCP backup inline (no separate job queue) for immediate completion
+                        backup_name = f'Initial-{datetime.now().strftime("%Y%m%d-%H%M%S")}'
+                        scp_success = self._execute_inline_scp_export(
+                            server['id'], ip, username, password, backup_name, job['id']
+                        )
+                        if scp_success:
+                            scp_completed += 1
+                            self.log(f"  ✓ SCP backup created for {ip}", "INFO")
+                        else:
+                            self.log(f"  ⚠ SCP backup skipped for {ip}", "WARN")
                     else:
                         error_detail = {
                             'ip': ip,
@@ -1880,8 +1886,7 @@ class IdracMixin:
                 'summary': summary,
                 'synced': refreshed_count,
                 'failed': failed_count,
-                'scp_backups_queued': len(servers_with_scp_queued),  # SCP backups are now background jobs
-                'scp_deferred': True,  # Indicate SCP is handled via separate jobs for speed
+                'scp_completed': scp_completed,  # SCP backups run inline
             }
             if update_errors:
                 job_details['update_errors'] = update_errors

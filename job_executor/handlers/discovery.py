@@ -283,8 +283,9 @@ class DiscoveryHandler(BaseHandler):
                 self.executor.insert_discovered_server(server, job['id'])
             
             # Auto-trigger full refresh for newly discovered servers
+            # This now includes inline SCP backup (runs in same process, no queuing)
             if discovered:
-                self.log(f"Auto-triggering full refresh for {len(discovered)} discovered servers...")
+                self.log(f"Auto-triggering full refresh + SCP backup for {len(discovered)} discovered servers...")
                 try:
                     # Get server IDs of newly discovered servers
                     discovered_ips = [s['ip'] for s in discovered]
@@ -300,9 +301,9 @@ class DiscoveryHandler(BaseHandler):
                         server_ids = [s['id'] for s in server_records]
                         
                         if server_ids:
-                            # Call refresh_existing_servers to get full server info
+                            # Call refresh_existing_servers to get full server info + SCP backup
                             self.executor.refresh_existing_servers(job, server_ids)
-                            self.log(f"✓ Auto-refresh completed for {len(server_ids)} servers")
+                            self.log(f"✓ Auto-refresh + SCP backup completed for {len(server_ids)} servers")
                     else:
                         self.log(f"Failed to fetch discovered server IDs: {response.status_code}", "WARN")
                 except Exception as e:
