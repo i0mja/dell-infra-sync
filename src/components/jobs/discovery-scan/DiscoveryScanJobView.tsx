@@ -73,6 +73,8 @@ export function DiscoveryScanJobView({ job }: DiscoveryScanJobViewProps) {
             currentIp={progress.currentIp}
             currentStage={progress.currentStage}
             currentStep={progress.currentStep}
+            currentServerIp={progress.currentServerIp}
+            scpProgress={progress.scpProgress}
             stageStats={{
               stage1Passed: progress.stage1Passed,
               stage1Filtered: progress.stage1Filtered,

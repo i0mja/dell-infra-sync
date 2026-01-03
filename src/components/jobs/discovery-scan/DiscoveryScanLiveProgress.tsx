@@ -10,6 +10,8 @@ interface DiscoveryScanLiveProgressProps {
   currentIp?: string;
   currentStage?: string;
   currentStep?: string;
+  currentServerIp?: string;
+  scpProgress?: number;
   stageStats: {
     stage1Passed: number;
     stage1Filtered: number;
@@ -39,6 +41,8 @@ export function DiscoveryScanLiveProgress({
   currentIp,
   currentStage,
   currentStep,
+  currentServerIp,
+  scpProgress,
   stageStats,
   activeCounts,
   ipsProcessed,
@@ -94,8 +98,19 @@ export function DiscoveryScanLiveProgress({
   };
 
   const formatCurrentOperation = () => {
-    // Use currentStep if available (more descriptive)
+    // Use currentStep if available (more descriptive from backend)
     if (currentStep) return currentStep;
+    
+    // During SCP phase, show server IP and progress
+    if (currentStage === 'scp' && currentServerIp) {
+      const progressStr = scpProgress ? ` (${scpProgress}%)` : '';
+      return `Backing up config: ${currentServerIp}${progressStr}`;
+    }
+    
+    // During sync phase, show server IP
+    if (currentStage === 'sync' && currentServerIp) {
+      return `Syncing data: ${currentServerIp}`;
+    }
     
     if (!currentIp && !currentStage) return null;
     
