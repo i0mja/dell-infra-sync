@@ -21,6 +21,8 @@ export interface IdracSettings {
   fetch_scp_backup: boolean;
   auto_sync_enabled: boolean;
   sync_interval_minutes: number;
+  scp_backup_max_age_days: number;
+  scp_backup_only_if_stale: boolean;
   last_sync_at: string | null;
   next_sync_at: string | null;
   created_at: string;

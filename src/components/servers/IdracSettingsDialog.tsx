@@ -44,6 +44,14 @@ const SYNC_INTERVALS = [
   { value: "1440", label: "Every 24 hours" },
 ];
 
+const SCP_AGE_THRESHOLDS = [
+  { value: "7", label: "7 days" },
+  { value: "14", label: "14 days" },
+  { value: "30", label: "30 days" },
+  { value: "60", label: "60 days" },
+  { value: "90", label: "90 days" },
+];
+
 const FETCH_OPTIONS = [
   {
     key: "firmware" as const,
@@ -112,6 +120,8 @@ export function IdracSettingsDialog({
 
   const [syncEnabled, setSyncEnabled] = useState(false);
   const [syncInterval, setSyncInterval] = useState("60");
+  const [scpMaxAgeDays, setScpMaxAgeDays] = useState("30");
+  const [scpOnlyIfStale, setScpOnlyIfStale] = useState(true);
   const [useGlobalDefaults, setUseGlobalDefaults] = useState(true);
 
   // Initialize form state when settings load
@@ -129,6 +139,8 @@ export function IdracSettingsDialog({
       });
       setSyncEnabled(globalSettings.auto_sync_enabled);
       setSyncInterval(String(globalSettings.sync_interval_minutes));
+      setScpMaxAgeDays(String(globalSettings.scp_backup_max_age_days ?? 30));
+      setScpOnlyIfStale(globalSettings.scp_backup_only_if_stale ?? true);
     } else if (server) {
       // Check if server has overrides
       const hasOverrides = serverSettings?.idrac_fetch_options !== null || 
@@ -166,6 +178,8 @@ export function IdracSettingsDialog({
         fetch_scp_backup: fetchOptions.scp_backup,
         auto_sync_enabled: syncEnabled,
         sync_interval_minutes: parseInt(syncInterval),
+        scp_backup_max_age_days: parseInt(scpMaxAgeDays),
+        scp_backup_only_if_stale: scpOnlyIfStale,
       });
     } else if (server) {
       if (useGlobalDefaults) {
@@ -272,6 +286,42 @@ export function IdracSettingsDialog({
                         <p className="text-xs text-muted-foreground mt-1">
                           {option.description}
                         </p>
+                        {/* SCP backup age threshold - only show when scp_backup is selected */}
+                        {option.key === "scp_backup" && fetchOptions.scp_backup && (
+                          <div className="mt-3 ml-6 p-3 border rounded-md bg-muted/30 space-y-3">
+                            <div className="flex items-center gap-2">
+                              <Checkbox
+                                id="scp-only-if-stale"
+                                checked={scpOnlyIfStale}
+                                onCheckedChange={(checked) => setScpOnlyIfStale(checked === true)}
+                              />
+                              <Label htmlFor="scp-only-if-stale" className="text-xs cursor-pointer">
+                                Only backup if older than
+                              </Label>
+                              <Select 
+                                value={scpMaxAgeDays} 
+                                onValueChange={setScpMaxAgeDays}
+                                disabled={!scpOnlyIfStale}
+                              >
+                                <SelectTrigger className="w-24 h-7 text-xs">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {SCP_AGE_THRESHOLDS.map((threshold) => (
+                                    <SelectItem key={threshold.value} value={threshold.value}>
+                                      {threshold.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {scpOnlyIfStale 
+                                ? `SCP backups will only run if the last backup is older than ${scpMaxAgeDays} days`
+                                : "SCP backups will run on every sync (may be slow)"}
+                            </p>
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
