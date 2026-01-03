@@ -64,6 +64,7 @@ interface ServerDetailsSidebarProps {
   onAssignCredentials?: () => void;
   onCreateJob?: () => void;
   onNetworkSettings?: () => void;
+  onIdracSettings?: () => void;
   onLaunchConsole?: () => void;
 }
 
@@ -118,6 +119,7 @@ export function ServerDetailsSidebar({
   onAssignCredentials,
   onCreateJob,
   onNetworkSettings,
+  onIdracSettings,
   onLaunchConsole,
 }: ServerDetailsSidebarProps) {
   // Fetch drives and NICs for selected server
@@ -286,6 +288,7 @@ export function ServerDetailsSidebar({
             onVirtualMedia={onVirtualMedia}
             onScpBackup={onScpBackup}
             onNetworkSettings={onNetworkSettings}
+            onIdracSettings={onIdracSettings}
             onViewEventLog={onViewEventLog}
             onViewHealth={onViewHealth}
             onViewAudit={onViewAudit}

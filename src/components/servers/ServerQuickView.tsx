@@ -52,6 +52,7 @@ interface ServerQuickViewProps {
   onLinkVCenter: () => void;
   onAudit: () => void;
   onNetworkSettings?: () => void;
+  onIdracSettings?: () => void;
   refreshing?: boolean;
 }
 
@@ -70,6 +71,7 @@ export function ServerQuickView({
   onLinkVCenter,
   onAudit,
   onNetworkSettings,
+  onIdracSettings,
   refreshing = false,
 }: ServerQuickViewProps) {
   const [systemInfoOpen, setSystemInfoOpen] = useState(true);
@@ -289,6 +291,12 @@ export function ServerQuickView({
                 <DropdownMenuItem onClick={onNetworkSettings}>
                   <Network className="mr-2 h-4 w-4" />
                   Network Settings
+                </DropdownMenuItem>
+              )}
+              {onIdracSettings && (
+                <DropdownMenuItem onClick={onIdracSettings}>
+                  <Settings className="mr-2 h-4 w-4" />
+                  iDRAC Settings
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />

@@ -1280,6 +1280,54 @@ export type Database = {
           },
         ]
       }
+      idrac_settings: {
+        Row: {
+          auto_sync_enabled: boolean
+          created_at: string
+          fetch_bios: boolean
+          fetch_firmware: boolean
+          fetch_health: boolean
+          fetch_nics: boolean
+          fetch_scp_backup: boolean
+          fetch_storage: boolean
+          id: string
+          last_sync_at: string | null
+          next_sync_at: string | null
+          sync_interval_minutes: number
+          updated_at: string
+        }
+        Insert: {
+          auto_sync_enabled?: boolean
+          created_at?: string
+          fetch_bios?: boolean
+          fetch_firmware?: boolean
+          fetch_health?: boolean
+          fetch_nics?: boolean
+          fetch_scp_backup?: boolean
+          fetch_storage?: boolean
+          id?: string
+          last_sync_at?: string | null
+          next_sync_at?: string | null
+          sync_interval_minutes?: number
+          updated_at?: string
+        }
+        Update: {
+          auto_sync_enabled?: boolean
+          created_at?: string
+          fetch_bios?: boolean
+          fetch_firmware?: boolean
+          fetch_health?: boolean
+          fetch_nics?: boolean
+          fetch_scp_backup?: boolean
+          fetch_storage?: boolean
+          id?: string
+          last_sync_at?: string | null
+          next_sync_at?: string | null
+          sync_interval_minutes?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       iso_images: {
         Row: {
           checksum: string | null
@@ -3398,19 +3446,24 @@ export type Database = {
           discovery_job_id: string | null
           hostname: string | null
           id: string
+          idrac_fetch_options: Json | null
           idrac_firmware: string | null
           idrac_password_encrypted: string | null
+          idrac_sync_enabled: boolean | null
+          idrac_sync_interval_minutes: number | null
           idrac_username: string | null
           ip_address: string
           last_boot_config_check: string | null
           last_connection_test: string | null
           last_health_check: string | null
+          last_idrac_sync: string | null
           last_openmanage_sync: string | null
           last_seen: string | null
           manager_mac_address: string | null
           manufacturer: string | null
           memory_gb: number | null
           model: string | null
+          next_idrac_sync_at: string | null
           notes: string | null
           openmanage_device_id: string | null
           overall_health: string | null
@@ -3446,19 +3499,24 @@ export type Database = {
           discovery_job_id?: string | null
           hostname?: string | null
           id?: string
+          idrac_fetch_options?: Json | null
           idrac_firmware?: string | null
           idrac_password_encrypted?: string | null
+          idrac_sync_enabled?: boolean | null
+          idrac_sync_interval_minutes?: number | null
           idrac_username?: string | null
           ip_address: string
           last_boot_config_check?: string | null
           last_connection_test?: string | null
           last_health_check?: string | null
+          last_idrac_sync?: string | null
           last_openmanage_sync?: string | null
           last_seen?: string | null
           manager_mac_address?: string | null
           manufacturer?: string | null
           memory_gb?: number | null
           model?: string | null
+          next_idrac_sync_at?: string | null
           notes?: string | null
           openmanage_device_id?: string | null
           overall_health?: string | null
@@ -3494,19 +3552,24 @@ export type Database = {
           discovery_job_id?: string | null
           hostname?: string | null
           id?: string
+          idrac_fetch_options?: Json | null
           idrac_firmware?: string | null
           idrac_password_encrypted?: string | null
+          idrac_sync_enabled?: boolean | null
+          idrac_sync_interval_minutes?: number | null
           idrac_username?: string | null
           ip_address?: string
           last_boot_config_check?: string | null
           last_connection_test?: string | null
           last_health_check?: string | null
+          last_idrac_sync?: string | null
           last_openmanage_sync?: string | null
           last_seen?: string | null
           manager_mac_address?: string | null
           manufacturer?: string | null
           memory_gb?: number | null
           model?: string | null
+          next_idrac_sync_at?: string | null
           notes?: string | null
           openmanage_device_id?: string | null
           overall_health?: string | null
