@@ -432,46 +432,33 @@ class ReplicationHandler(BaseHandler):
             return False
     
     def _add_console_log(self, job_id: str, message: str, level: str = 'INFO') -> None:
-        """Add log entry to job's console_log array in details"""
+        """Add log entry to job's console_log array using atomic append (no overwrite)"""
         timestamp = datetime.now(timezone.utc).strftime('%H:%M:%S')
         log_entry = f"[{timestamp}] {level}: {message}"
         
         try:
-            # Fetch current job details
-            response = requests.get(
-                f"{DSM_URL}/rest/v1/jobs",
-                params={'id': f'eq.{job_id}', 'select': 'details'},
+            # Use atomic RPC function to append without overwriting other details
+            # This prevents race conditions where console log updates erase job progress
+            response = requests.post(
+                f"{DSM_URL}/rest/v1/rpc/append_job_console_log",
+                json={
+                    'p_job_id': job_id,
+                    'p_log_entry': log_entry
+                },
                 headers={
                     'apikey': SERVICE_ROLE_KEY,
-                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json'
                 },
                 verify=VERIFY_SSL,
                 timeout=5
             )
-            if response.ok:
-                jobs = response.json()
-                if jobs:
-                    details = jobs[0].get('details', {}) or {}
-                    console_log = details.get('console_log', [])
-                    console_log.append(log_entry)
-                    details['console_log'] = console_log
-                    
-                    # Update job with new console log
-                    requests.patch(
-                        f"{DSM_URL}/rest/v1/jobs",
-                        params={'id': f'eq.{job_id}'},
-                        json={'details': details},
-                        headers={
-                            'apikey': SERVICE_ROLE_KEY,
-                            'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
-                            'Content-Type': 'application/json',
-                            'Prefer': 'return=minimal'
-                        },
-                        verify=VERIFY_SSL,
-                        timeout=5
-                    )
-        except Exception:
-            pass  # Don't fail job for logging issues
+            if not response.ok:
+                # Log RPC failure but don't fail the job
+                self.executor.log(f"Console log RPC failed: {response.status_code}", "WARN")
+        except Exception as e:
+            # Don't fail job for logging issues, but log the error
+            self.executor.log(f"Console log append failed: {e}", "WARN")
         
         # Also log to executor output
         self.executor.log(message, level)

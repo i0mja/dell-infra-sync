@@ -1,6 +1,7 @@
 """Database operations mixin for Job Executor"""
 
 import json
+import time
 import requests
 from typing import List, Dict, Optional, Any
 from datetime import datetime, timezone
@@ -237,26 +238,59 @@ class DatabaseMixin:
                 self.log(f"Payload contains non-serializable data, sanitizing: {json_err}", "WARN")
                 payload = self._deep_sanitize_for_json(payload)
             
-            response = requests.patch(
-                url,
-                headers=headers,
-                params=params,
-                json=payload,
-                verify=VERIFY_SSL,
-                timeout=10
-            )
+            # Retry logic for race condition handling
+            max_retries = 3
+            last_error = None
             
-            if response.status_code in [200, 204]:
-                return True
-            else:
-                # Log detailed error information
-                try:
-                    error_body = response.json()
-                    error_detail = json.dumps(error_body, default=str)[:500]
-                except:
-                    error_detail = response.text[:500] if response.text else "No response body"
+            for attempt in range(max_retries):
+                response = requests.patch(
+                    url,
+                    headers=headers,
+                    params=params,
+                    json=payload,
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
                 
-                self.log(f"Job update failed: status={response.status_code}, body={error_detail}", "ERROR")
+                if response.status_code in [200, 204]:
+                    # Verify update took effect for terminal statuses
+                    if status in ['completed', 'failed', 'cancelled']:
+                        try:
+                            verify_resp = requests.get(
+                                url,
+                                headers=headers,
+                                params={**params, "select": "status"},
+                                verify=VERIFY_SSL,
+                                timeout=5
+                            )
+                            if verify_resp.ok:
+                                jobs = _safe_json_parse(verify_resp)
+                                if jobs and jobs[0].get('status') == status:
+                                    return True
+                                else:
+                                    self.log(f"Status verification failed (attempt {attempt+1}), retrying...", "WARN")
+                                    time.sleep(0.3)
+                                    continue
+                        except Exception as verify_err:
+                            self.log(f"Status verification error: {verify_err}", "WARN")
+                    return True
+                else:
+                    # Log detailed error information
+                    try:
+                        error_body = response.json()
+                        error_detail = json.dumps(error_body, default=str)[:500]
+                    except:
+                        error_detail = response.text[:500] if response.text else "No response body"
+                    
+                    last_error = f"status={response.status_code}, body={error_detail}"
+                    
+                    # Retry on server errors or conflicts
+                    if response.status_code in [409, 500, 502, 503, 504] and attempt < max_retries - 1:
+                        self.log(f"Job update retry {attempt+1}/{max_retries}: {last_error}", "WARN")
+                        time.sleep(0.5 * (attempt + 1))  # Exponential backoff
+                        continue
+                    
+                    self.log(f"Job update failed: {last_error}", "ERROR")
                 
                 # FALLBACK: Try minimal update with just status and essential fields
                 if status in ['paused', 'failed', 'cancelled']:
