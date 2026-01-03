@@ -65,13 +65,16 @@ export function DiscoveryScanJobView({ job }: DiscoveryScanJobViewProps) {
     try {
       const { error } = await supabase.functions.invoke('update-job', {
         body: {
-          jobId: job.id,
-          status: 'completed',
-          details: {
-            ...job.details,
-            force_completed: true,
-            force_completed_at: new Date().toISOString(),
-            force_completed_reason: 'Manually completed by operator - executor failed to finalize'
+          job: {
+            job_id: job.id,
+            status: 'completed',
+            completed_at: new Date().toISOString(),
+            details: {
+              ...job.details,
+              force_completed: true,
+              force_completed_at: new Date().toISOString(),
+              force_completed_reason: 'Manually completed by operator - executor failed to finalize'
+            }
           }
         }
       });
@@ -91,13 +94,16 @@ export function DiscoveryScanJobView({ job }: DiscoveryScanJobViewProps) {
     try {
       const { error } = await supabase.functions.invoke('update-job', {
         body: {
-          jobId: job.id,
-          status: 'cancelled',
-          details: {
-            ...job.details,
-            force_cancelled: true,
-            force_cancelled_at: new Date().toISOString(),
-            force_cancelled_reason: 'Manually cancelled by operator'
+          job: {
+            job_id: job.id,
+            status: 'cancelled',
+            completed_at: new Date().toISOString(),
+            details: {
+              ...job.details,
+              force_cancelled: true,
+              force_cancelled_at: new Date().toISOString(),
+              force_cancelled_reason: 'Manually cancelled by operator'
+            }
           }
         }
       });
