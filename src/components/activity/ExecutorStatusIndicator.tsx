@@ -55,13 +55,15 @@ export function ExecutorStatusIndicator() {
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Badge 
-            variant="outline" 
-            className={`gap-1.5 px-2 py-1 cursor-help ${config.className}`}
-          >
-            <span className={`h-2 w-2 rounded-full ${config.dotClass}`} />
-            <span className="text-xs font-medium">Job Executor: {config.label}</span>
-          </Badge>
+          <span className="inline-flex">
+            <Badge 
+              variant="outline" 
+              className={`gap-1.5 px-2 py-1 cursor-help ${config.className}`}
+            >
+              <span className={`h-2 w-2 rounded-full ${config.dotClass}`} />
+              <span className="text-xs font-medium">Job Executor: {config.label}</span>
+            </Badge>
+          </span>
         </TooltipTrigger>
         <TooltipContent side="bottom" className="max-w-xs">
           <div className="space-y-1.5 text-xs">
