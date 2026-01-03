@@ -53,6 +53,9 @@ export interface DiscoveryScanProgress {
   scpProgress?: number;
   currentStep?: string;
   
+  // Console log for activity timeline
+  consoleLog: string[];
+  
   // Orphan detection flag
   isEffectivelyComplete: boolean;
 }
@@ -85,6 +88,7 @@ const defaultProgress: DiscoveryScanProgress = {
   discovered: 0,
   authFailures: 0,
   scpBackups: 0,
+  consoleLog: [],
   isEffectivelyComplete: false,
 };
 
@@ -193,6 +197,14 @@ export function useDiscoveryScanProgress(jobId: string | undefined, isRunning: b
        serversRefreshed >= serversTotal && 
        (scpDisabled || scpCompleted >= serversTotal));
 
+    // Parse console log - can be array or string
+    const rawLog = details.console_log ?? details.log ?? [];
+    const consoleLog: string[] = Array.isArray(rawLog) 
+      ? rawLog 
+      : typeof rawLog === 'string' 
+        ? rawLog.split('\n').filter(Boolean)
+        : [];
+
     return {
       currentIp: details.current_ip,
       currentStage,
@@ -222,6 +234,7 @@ export function useDiscoveryScanProgress(jobId: string | undefined, isRunning: b
       currentServerIp: details.current_server_ip,
       scpProgress: details.scp_progress,
       currentStep: details.current_step,
+      consoleLog,
       isEffectivelyComplete,
     };
   }, []);
