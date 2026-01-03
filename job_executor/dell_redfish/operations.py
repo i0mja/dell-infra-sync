@@ -327,7 +327,120 @@ class DellOperations:
         
         return firmware_list
     
+    def get_network_inventory(
+        self,
+        ip: str,
+        username: str,
+        password: str,
+        server_id: str = None,
+        user_id: str = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get network adapter inventory using Dell Redfish pattern.
+        
+        Based on Dell's official GetNICInventoryREDFISH.py pattern.
+        
+        Endpoints:
+        - /redfish/v1/Chassis/System.Embedded.1/NetworkAdapters
+        - /redfish/v1/Chassis/System.Embedded.1/NetworkAdapters/{id}/NetworkDeviceFunctions
+        
+        Returns:
+            list: List of NICs with MAC addresses, speeds, and status
+        """
+        nics = []
+        
+        # Get all network adapters
+        adapters_response = self.adapter.make_request(
+            method='GET',
+            ip=ip,
+            endpoint='/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters',
+            username=username,
+            password=password,
+            operation_name='Get Network Adapters',
+            server_id=server_id,
+            user_id=user_id
+        )
+        
+        for adapter_ref in adapters_response.get('Members', []):
+            adapter_uri = adapter_ref.get('@odata.id', '')
+            if not adapter_uri:
+                continue
+                
+            try:
+                # Get adapter details
+                adapter = self.adapter.make_request(
+                    method='GET',
+                    ip=ip,
+                    endpoint=adapter_uri,
+                    username=username,
+                    password=password,
+                    operation_name='Get Network Adapter Details',
+                    server_id=server_id,
+                    user_id=user_id
+                )
+                
+                # Get device functions (has MAC addresses)
+                functions_uri = adapter.get('NetworkDeviceFunctions', {}).get('@odata.id')
+                if functions_uri:
+                    functions = self.adapter.make_request(
+                        method='GET',
+                        ip=ip,
+                        endpoint=functions_uri,
+                        username=username,
+                        password=password,
+                        operation_name='Get Network Device Functions',
+                        server_id=server_id,
+                        user_id=user_id
+                    )
+                    
+                    for func_ref in functions.get('Members', []):
+                        func_uri = func_ref.get('@odata.id', '')
+                        if func_uri:
+                            func = self.adapter.make_request(
+                                method='GET',
+                                ip=ip,
+                                endpoint=func_uri,
+                                username=username,
+                                password=password,
+                                operation_name='Get Network Function Details',
+                                server_id=server_id,
+                                user_id=user_id
+                            )
+                            
+                            ethernet = func.get('Ethernet', {})
+                            dell_oem = func.get('Oem', {}).get('Dell', {}).get('DellNIC', {})
+                            
+                            # Parse speed
+                            current_speed = dell_oem.get('LinkSpeed')
+                            if current_speed is not None:
+                                try:
+                                    current_speed = int(current_speed)
+                                except (ValueError, TypeError):
+                                    current_speed = None
+                            
+                            nics.append({
+                                'fqdd': func.get('Id'),
+                                'name': func.get('Name'),
+                                'mac_address': ethernet.get('MACAddress'),
+                                'permanent_mac_address': ethernet.get('PermanentMACAddress'),
+                                'manufacturer': adapter.get('Manufacturer'),
+                                'model': adapter.get('Model'),
+                                'serial_number': adapter.get('SerialNumber'),
+                                'part_number': adapter.get('PartNumber'),
+                                'link_status': dell_oem.get('LinkStatus'),
+                                'current_speed_mbps': current_speed,
+                                'health': func.get('Status', {}).get('Health'),
+                                'status': func.get('Status', {}).get('State'),
+                                'switch_connection_id': dell_oem.get('SwitchConnectionID'),
+                                'switch_port_description': dell_oem.get('SwitchPortConnectionID'),
+                            })
+            except Exception:
+                continue
+        
+        return nics
+    
     # Firmware Update Operations
+
     
     def update_firmware_simple(
         self,
