@@ -129,11 +129,32 @@ export default function Servers() {
     try {
       const serverIds = filteredServers.map((s) => s.id);
       
+      // Load global iDRAC settings to get fetch options
+      const { data: globalSettings } = await supabase
+        .from("idrac_settings")
+        .select("*")
+        .limit(1)
+        .single();
+
+      const fetchOptions = globalSettings ? {
+        firmware: globalSettings.fetch_firmware,
+        health: globalSettings.fetch_health,
+        bios: globalSettings.fetch_bios,
+        storage: globalSettings.fetch_storage,
+        nics: globalSettings.fetch_nics,
+        scp_backup: globalSettings.fetch_scp_backup,
+        scp_backup_max_age_days: globalSettings.scp_backup_max_age_days,
+        scp_backup_only_if_stale: globalSettings.scp_backup_only_if_stale,
+      } : undefined;
+
       const { data, error } = await supabase.functions.invoke("create-job", {
         body: {
           job_type: "discovery_scan",
           created_by: user.id,
           target_scope: { server_ids: serverIds },
+          details: {
+            fetch_options: fetchOptions,
+          },
         },
       });
 
@@ -294,11 +315,32 @@ export default function Servers() {
     if (!user) return;
     
     try {
+      // Load global iDRAC settings to get fetch options
+      const { data: globalSettings } = await supabase
+        .from("idrac_settings")
+        .select("*")
+        .limit(1)
+        .single();
+
+      const fetchOptions = globalSettings ? {
+        firmware: globalSettings.fetch_firmware,
+        health: globalSettings.fetch_health,
+        bios: globalSettings.fetch_bios,
+        storage: globalSettings.fetch_storage,
+        nics: globalSettings.fetch_nics,
+        scp_backup: globalSettings.fetch_scp_backup,
+        scp_backup_max_age_days: globalSettings.scp_backup_max_age_days,
+        scp_backup_only_if_stale: globalSettings.scp_backup_only_if_stale,
+      } : undefined;
+
       const { error } = await supabase.functions.invoke("create-job", {
         body: {
           job_type: "discovery_scan",
           created_by: user.id,
           target_scope: { server_ids: serverIds },
+          details: {
+            fetch_options: fetchOptions,
+          },
         },
       });
       
