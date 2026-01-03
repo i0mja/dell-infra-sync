@@ -409,9 +409,25 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         progressPercent = 5; // Minimum indicator for running jobs with no progress data
       }
 
-      // Priority: iDRAC queue > workflow step > task log
+      // Priority: iDRAC queue > discovery scan step > workflow step > task log
       if (idracCurrentStatus) {
         currentStatus = idracCurrentStatus;
+      } else if (job.job_type === 'discovery_scan' && details && typeof details === 'object') {
+        // Use discovery scan's current_step if available
+        const step = (details as Record<string, unknown>).current_step;
+        const stage = (details as Record<string, unknown>).current_stage;
+        if (typeof step === 'string' && step) {
+          currentStatus = step;
+        } else if (typeof stage === 'string') {
+          const stageLabels: Record<string, string> = {
+            'port_scan': 'Scanning ports...',
+            'detection': 'Detecting servers...',
+            'auth': 'Testing credentials...',
+            'sync': 'Syncing server data...',
+            'scp': 'Backing up configurations...',
+          };
+          currentStatus = stageLabels[stage] || 'Processing...';
+        }
       } else if (workflowCurrentStep) {
         currentStatus = workflowCurrentStep;
       }
