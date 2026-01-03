@@ -231,6 +231,7 @@ export function DiscoveryScanJobView({ job }: DiscoveryScanJobViewProps) {
             serversRefreshed={progress.serversRefreshed}
             serversTotal={progress.serversTotal}
             scpCompleted={progress.scpCompleted}
+            fetchOptions={job.details?.fetch_options}
           />
         )}
 
@@ -245,6 +246,7 @@ export function DiscoveryScanJobView({ job }: DiscoveryScanJobViewProps) {
             currentServerIp={progress.currentServerIp}
             currentStage={progress.currentStage}
             currentStep={progress.currentStep}
+            scpDisabled={job.details?.fetch_options?.scp_backup === false}
           />
         )}
 
