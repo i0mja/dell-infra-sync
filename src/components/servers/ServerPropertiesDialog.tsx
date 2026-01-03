@@ -2,8 +2,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Edit, Server as ServerIcon, Cpu, HardDrive, Network, Wifi, Clock } from "lucide-react";
+import { Edit, Server as ServerIcon, Cpu, HardDrive, Network, Wifi, Clock, Cable } from "lucide-react";
 import { format } from "date-fns";
+import { ServerNicsTable } from "./ServerNicsTable";
 
 interface Server {
   id: string;
@@ -102,7 +103,7 @@ export function ServerPropertiesDialog({
         </DialogHeader>
 
         <Tabs defaultValue="hardware" className="w-full">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="hardware">
               <Cpu className="h-4 w-4 mr-2" />
               Hardware
@@ -114,6 +115,10 @@ export function ServerPropertiesDialog({
             <TabsTrigger value="network">
               <Network className="h-4 w-4 mr-2" />
               Network
+            </TabsTrigger>
+            <TabsTrigger value="nics">
+              <Cable className="h-4 w-4 mr-2" />
+              NICs
             </TabsTrigger>
             <TabsTrigger value="capabilities">
               <Wifi className="h-4 w-4 mr-2" />
@@ -219,6 +224,10 @@ export function ServerPropertiesDialog({
                 <p className="text-sm text-red-600 dark:text-red-400 font-mono">{server.connection_error}</p>
               </div>
             )}
+          </TabsContent>
+
+          <TabsContent value="nics" className="space-y-4 mt-4">
+            <ServerNicsTable serverId={server.id} />
           </TabsContent>
 
           <TabsContent value="capabilities" className="space-y-4 mt-4">

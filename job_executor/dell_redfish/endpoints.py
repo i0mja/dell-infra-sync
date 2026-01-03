@@ -47,10 +47,23 @@ CANONICAL_REDFISH_ENDPOINTS = {
     "/redfish/v1/Systems/System.Embedded.1/Storage/{ControllerId}",
     "/redfish/v1/Systems/System.Embedded.1/Storage/{ControllerId}/Volumes",
     "/redfish/v1/Systems/System.Embedded.1/Storage/{ControllerId}/Volumes/{VolumeId}",
+    "/redfish/v1/Systems/System.Embedded.1/Storage/{ControllerId}/Drives/{DriveId}",
     "/redfish/v1/TaskService/Tasks/JID_123",
     "/redfish/v1/UpdateService/Actions/UpdateService.SimpleUpdate",
     "/redfish/v1/UpdateService/FirmwareInventory",
     "/redfish/v1/Dell/Systems/System.Embedded.1/DellSoftwareInstallationService/Actions/DellSoftwareInstallationService.InstallFromRepository",
     "/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DellLCService/Actions/DellLCService.GetRemoteServicesAPIStatus",
     "/redfish/v1/Systems/System.Embedded.1/Oem/Dell/DellSoftwareInstallationService/Actions/DellSoftwareInstallationService.GetRepoBasedUpdateList",
+    # Network Adapters - for MAC addresses, speeds, link status
+    "/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters",
+    "/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters/{AdapterId}",
+    "/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters/{AdapterId}/NetworkPorts",
+    "/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters/{AdapterId}/NetworkPorts/{PortId}",
+    "/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters/{AdapterId}/NetworkDeviceFunctions",
+    "/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters/{AdapterId}/NetworkDeviceFunctions/{FunctionId}",
+    # Ethernet Interfaces (alternative path for NIC info)
+    "/redfish/v1/Systems/System.Embedded.1/EthernetInterfaces",
+    "/redfish/v1/Systems/System.Embedded.1/EthernetInterfaces/{InterfaceId}",
+    # Switch connections via LLDP
+    "/redfish/v1/Systems/System.Embedded.1/NetworkPorts/Oem/Dell/DellSwitchConnections",
 }
