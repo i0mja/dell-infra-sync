@@ -330,6 +330,13 @@ class IdracMixin:
                     total_bytes = sum(d.get('capacity_bytes', 0) for d in drives)
                     base_info['total_storage_tb'] = round(total_bytes / (1024**4), 2) if total_bytes else None
                     self.log(f"  ✓ Discovered {len(drives)} drives ({base_info['total_storage_tb']} TB)", "INFO")
+                
+                # Fetch network adapters/NICs via Dell Redfish API
+                nics = self._fetch_network_adapters(ip, username, password, server_id, job_id)
+                if nics:
+                    base_info['nics'] = nics
+                    base_info['total_nics'] = len(nics)
+                    self.log(f"  ✓ Discovered {len(nics)} NIC ports", "INFO")
             
             return base_info
         except Exception as e:
@@ -1008,6 +1015,180 @@ class IdracMixin:
         except Exception as e:
             self.log(f"  Error syncing drives for server {server_id}: {e}", "WARN")
 
+    def _fetch_network_adapters(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None) -> List[Dict]:
+        """
+        Fetch NIC inventory using Dell Redfish Network Adapters API.
+        
+        Dell Redfish Pattern:
+        1. GET /redfish/v1/Chassis/System.Embedded.1/NetworkAdapters -> list adapters
+        2. For each adapter, GET NetworkDeviceFunctions collection
+        3. For each function, extract: MAC, PermanentMAC, LinkStatus, Speed, etc.
+        
+        This provides the MAC addresses network teams need for VLAN assignments.
+        """
+        nics = []
+        
+        try:
+            # Get network adapters collection
+            adapters_url = f"https://{ip}/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters"
+            adapters_response, adapters_time = self.throttler.request_with_safety(
+                method='GET',
+                url=adapters_url,
+                ip=ip,
+                logger=self.log,
+                auth=(username, password),
+                timeout=(2, 15)
+            )
+            
+            if not adapters_response or adapters_response.status_code != 200:
+                return nics
+            
+            adapters_data = adapters_response.json()
+            adapter_refs = adapters_data.get('Members', [])
+            
+            for adapter_ref in adapter_refs:
+                try:
+                    adapter_url = f"https://{ip}{adapter_ref['@odata.id']}"
+                    adapter_resp, _ = self.throttler.request_with_safety(
+                        method='GET',
+                        url=adapter_url,
+                        ip=ip,
+                        logger=self.log,
+                        auth=(username, password),
+                        timeout=(2, 15)
+                    )
+                    
+                    if not adapter_resp or adapter_resp.status_code != 200:
+                        continue
+                    
+                    adapter_data = adapter_resp.json()
+                    adapter_id = adapter_data.get('Id')
+                    manufacturer = adapter_data.get('Manufacturer')
+                    model = adapter_data.get('Model')
+                    serial = adapter_data.get('SerialNumber')
+                    part_number = adapter_data.get('PartNumber')
+                    
+                    # Get NetworkDeviceFunctions - this has MAC addresses
+                    functions_link = adapter_data.get('NetworkDeviceFunctions', {}).get('@odata.id')
+                    if functions_link:
+                        functions_url = f"https://{ip}{functions_link}"
+                        functions_resp, _ = self.throttler.request_with_safety(
+                            method='GET',
+                            url=functions_url,
+                            ip=ip,
+                            logger=self.log,
+                            auth=(username, password),
+                            timeout=(2, 15)
+                        )
+                        
+                        if not functions_resp or functions_resp.status_code != 200:
+                            continue
+                        
+                        functions_data = functions_resp.json()
+                        
+                        for func_ref in functions_data.get('Members', []):
+                            try:
+                                func_url = f"https://{ip}{func_ref['@odata.id']}"
+                                func_resp, _ = self.throttler.request_with_safety(
+                                    method='GET',
+                                    url=func_url,
+                                    ip=ip,
+                                    logger=self.log,
+                                    auth=(username, password),
+                                    timeout=(2, 15)
+                                )
+                                
+                                if not func_resp or func_resp.status_code != 200:
+                                    continue
+                                
+                                func_data = func_resp.json()
+                                
+                                # Extract ethernet info (contains MAC addresses)
+                                ethernet = func_data.get('Ethernet', {})
+                                
+                                # Get Dell OEM data for link status and speed
+                                dell_oem = func_data.get('Oem', {}).get('Dell', {}).get('DellNIC', {})
+                                
+                                # Parse speed - Dell returns it as string like "25000" or integer
+                                current_speed = dell_oem.get('LinkSpeed')
+                                if current_speed is not None:
+                                    try:
+                                        current_speed = int(current_speed)
+                                    except (ValueError, TypeError):
+                                        current_speed = None
+                                
+                                # Get switch connection info from LLDP if available
+                                switch_connection_id = dell_oem.get('SwitchConnectionID')
+                                switch_port_desc = dell_oem.get('SwitchPortConnectionID')
+                                
+                                nics.append({
+                                    'fqdd': func_data.get('Id'),  # e.g., "NIC.Integrated.1-1-1"
+                                    'name': func_data.get('Name'),
+                                    'mac_address': ethernet.get('MACAddress'),
+                                    'permanent_mac_address': ethernet.get('PermanentMACAddress'),
+                                    'manufacturer': manufacturer,
+                                    'model': model,
+                                    'serial_number': serial,
+                                    'part_number': part_number,
+                                    'link_status': dell_oem.get('LinkStatus'),
+                                    'current_speed_mbps': current_speed,
+                                    'health': func_data.get('Status', {}).get('Health'),
+                                    'status': func_data.get('Status', {}).get('State'),
+                                    'switch_connection_id': switch_connection_id,
+                                    'switch_port_description': switch_port_desc,
+                                })
+                            except Exception as e:
+                                self.log(f"  Error fetching NIC function {func_ref.get('@odata.id', 'unknown')}: {e}", "DEBUG")
+                                continue
+                except Exception as e:
+                    self.log(f"  Error fetching adapter {adapter_ref.get('@odata.id', 'unknown')}: {e}", "DEBUG")
+                    continue
+            
+            return nics
+            
+        except Exception as e:
+            self.log(f"  Could not fetch network adapters: {e}", "DEBUG")
+            return []
+    
+    def _sync_server_nics(self, server_id: str, nics: List[Dict]):
+        """Sync NIC inventory to server_nics table"""
+        try:
+            headers = {"apikey": SERVICE_ROLE_KEY, "Authorization": f"Bearer {SERVICE_ROLE_KEY}"}
+            
+            for nic in nics:
+                if not nic.get('fqdd'):
+                    continue  # Skip NICs without FQDD
+                
+                nic_data = {
+                    'server_id': server_id,
+                    'fqdd': nic.get('fqdd'),
+                    'name': nic.get('name'),
+                    'mac_address': nic.get('mac_address'),
+                    'permanent_mac_address': nic.get('permanent_mac_address'),
+                    'manufacturer': nic.get('manufacturer'),
+                    'model': nic.get('model'),
+                    'serial_number': nic.get('serial_number'),
+                    'part_number': nic.get('part_number'),
+                    'link_status': nic.get('link_status'),
+                    'current_speed_mbps': nic.get('current_speed_mbps'),
+                    'health': nic.get('health'),
+                    'status': nic.get('status'),
+                    'switch_connection_id': nic.get('switch_connection_id'),
+                    'switch_port_description': nic.get('switch_port_description'),
+                    'last_sync': datetime.utcnow().isoformat() + 'Z',
+                }
+                
+                # Upsert NIC (update if exists, insert if new)
+                upsert_url = f"{DSM_URL}/rest/v1/server_nics"
+                upsert_params = {
+                    "on_conflict": "server_id,fqdd",
+                    "resolution": "merge-duplicates"
+                }
+                requests.post(upsert_url, headers=headers, json=nic_data, params=upsert_params, verify=VERIFY_SSL)
+                
+        except Exception as e:
+            self.log(f"  Error syncing NICs for server {server_id}: {e}", "WARN")
+
     def _perform_inline_scp_export(self, server_id: str, ip: str, username: str, password: str, backup_name: str, job_id: str) -> bool:
         """Execute SCP export inline without creating a separate job (alias for _execute_inline_scp_export)"""
         return self._execute_inline_scp_export(server_id, ip, username, password, backup_name, job_id)
@@ -1391,6 +1572,10 @@ class IdracMixin:
                         # Sync drives to server_drives table
                         if info.get('drives'):
                             self._sync_server_drives(server['id'], info['drives'])
+                        
+                        # Sync NICs to server_nics table
+                        if info.get('nics'):
+                            self._sync_server_nics(server['id'], info['nics'])
                         
                         # Try auto-linking to vCenter if service_tag was updated
                         if info.get('service_tag'):
