@@ -82,6 +82,25 @@ const defaultProgress: DiscoveryScanProgress = {
 export function useDiscoveryScanProgress(jobId: string | undefined, isRunning: boolean) {
   const [progress, setProgress] = useState<DiscoveryScanProgress>(defaultProgress);
 
+  // Determine effective phase using watermark logic - phase only advances forward
+  const determineEffectivePhase = (
+    currentStage: string | undefined,
+    serversRefreshed: number,
+    scpCompleted: number
+  ): DiscoveryPhase => {
+    // If we've completed any SCP backups, we're in SCP phase (watermark)
+    if (scpCompleted > 0) return 'scp';
+    
+    // If current stage is scp (even if no completions yet), show scp
+    if (currentStage === 'scp') return 'scp';
+    
+    // If we've synced any servers, we're in sync phase  
+    if (serversRefreshed > 0 || currentStage === 'sync') return 'sync';
+    
+    // Still in discovery - use stage mapping
+    return mapStageToPhase(currentStage);
+  };
+
   const parseJobDetails = useCallback((details: any): DiscoveryScanProgress => {
     if (!details) return defaultProgress;
 
@@ -103,6 +122,9 @@ export function useDiscoveryScanProgress(jobId: string | undefined, isRunning: b
     const effectiveStage3Passed = stage3Passed > 0 ? stage3Passed : (discoveryCompleted ? serversTotal : 0);
     const effectiveStage2Passed = stage2Passed > 0 ? stage2Passed : (discoveryCompleted ? serversTotal : 0);
     const effectiveStage1Passed = stage1Passed > 0 ? stage1Passed : (discoveryCompleted ? serversTotal : 0);
+    
+    // Use watermark logic to determine phase - prevents bouncing
+    const effectivePhase = determineEffectivePhase(currentStage, serversRefreshed, scpCompleted);
     
     // Calculate progress percentage based on phase
     // Port scan/detection/auth = 50%, Sync = 30%, SCP = 20%
@@ -143,7 +165,7 @@ export function useDiscoveryScanProgress(jobId: string | undefined, isRunning: b
     return {
       currentIp: details.current_ip,
       currentStage,
-      currentPhase: mapStageToPhase(currentStage),
+      currentPhase: effectivePhase,
       ipsProcessed,
       ipsTotal,
       progressPercent,
