@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import * as VisuallyHidden from "@radix-ui/react-visually-hidden";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -88,6 +89,9 @@ export function BackupPreviewDialog({ open, onOpenChange, backupId }: BackupPrev
             <FileJson className="h-5 w-5" />
             Backup Preview
           </DialogTitle>
+          <VisuallyHidden.Root>
+            <DialogDescription>Preview the contents of this SCP backup file</DialogDescription>
+          </VisuallyHidden.Root>
         </DialogHeader>
 
         {loading ? (

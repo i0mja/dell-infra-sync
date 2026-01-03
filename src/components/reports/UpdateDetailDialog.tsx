@@ -1,4 +1,5 @@
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import * as VisuallyHidden from "@radix-ui/react-visually-hidden";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -58,6 +59,9 @@ export function UpdateDetailDialog({ open, onOpenChange, update }: UpdateDetailD
               {update.status === "completed" ? "Success" : update.status === "failed" ? "Failed" : update.status}
             </Badge>
           </DialogTitle>
+          <VisuallyHidden.Root>
+            <DialogDescription>Detailed information about this firmware update</DialogDescription>
+          </VisuallyHidden.Root>
         </DialogHeader>
 
         <Tabs defaultValue="overview" className="flex-1 flex flex-col min-h-0">
