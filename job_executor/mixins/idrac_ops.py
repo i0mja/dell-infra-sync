@@ -1702,8 +1702,20 @@ class IdracMixin:
             scp_max_age_days = fetch_options.get('scp_backup_max_age_days', 30)
             scp_only_if_stale = fetch_options.get('scp_backup_only_if_stale', True)
             
+            # Initialize console log for UI display
+            console_log = base_details.get('console_log', [])
+            
+            def log_console(message: str, level: str = 'INFO'):
+                """Add message to console log for UI display"""
+                nonlocal console_log
+                timestamp = datetime.utcnow().strftime('%H:%M:%S')
+                console_log.append(f'[{timestamp}] [{level}] {message}')
+                self.log(message, level)
+            
+            log_console(f'Starting data sync for {total_servers} server(s)', 'INFO')
+            
             if not should_backup_scp:
-                self.log(f"SCP backup disabled via fetch_options - will skip config backup phase")
+                log_console('SCP backup disabled - skipping config backup phase', 'INFO')
             
             for index, server in enumerate(servers):
                 ip = server['ip_address']
@@ -1711,6 +1723,8 @@ class IdracMixin:
                 
                 # Calculate base progress percentage for this server
                 base_progress = int((index / total_servers) * 100) if total_servers > 0 else 0
+                
+                log_console(f'Syncing: {ip} ({index + 1}/{total_servers})', 'INFO')
                 
                 # Update job with per-server progress (preserves discovery phase details)
                 self.update_job_status(
@@ -1724,6 +1738,7 @@ class IdracMixin:
                         'servers_refreshed': refreshed_count,
                         'servers_total': total_servers,
                         'scp_completed': scp_completed,
+                        'console_log': console_log,
                     }
                 )
                 
@@ -1838,7 +1853,7 @@ class IdracMixin:
                     update_response = requests.patch(update_url, headers=headers, json=update_data, verify=VERIFY_SSL)
                     
                     if update_response.status_code in [200, 204]:
-                        self.log(f"  ✓ Refreshed {ip}: {info.get('model')} - {info.get('hostname')}")
+                        log_console(f'✓ Synced: {ip} ({info.get("model", "Unknown")})', 'SUCCESS')
                         refreshed_count += 1
                         
                         # Insert health record to server_health table if health data exists
@@ -1915,6 +1930,8 @@ class IdracMixin:
                                 should_run_backup = self._should_backup_server(server['id'], scp_max_age_days)
                             
                             if should_run_backup:
+                                log_console(f'Backing up config: {ip}', 'INFO')
+                                
                                 # Update job to show SCP phase
                                 self.update_job_status(
                                     job['id'],
@@ -1927,6 +1944,7 @@ class IdracMixin:
                                         'servers_refreshed': refreshed_count,
                                         'servers_total': total_servers,
                                         'scp_completed': scp_completed,
+                                        'console_log': console_log,
                                     }
                                 )
                                 
@@ -1936,9 +1954,9 @@ class IdracMixin:
                                 )
                                 if scp_success:
                                     scp_completed += 1
-                                    self.log(f"  ✓ SCP backup created for {ip}", "INFO")
+                                    log_console(f'✓ Config backed up: {ip}', 'SUCCESS')
                                 else:
-                                    self.log(f"  ⚠ SCP backup failed for {ip}", "WARN")
+                                    log_console(f'⚠ Backup failed: {ip}', 'WARN')
                             else:
                                 self.log(f"  → Skipping SCP backup for {ip} - recent backup exists", "DEBUG")
                                 scp_completed += 1  # Count as complete since backup exists
@@ -1949,7 +1967,7 @@ class IdracMixin:
                             'body': update_response.text[:500]
                         }
                         update_errors.append(error_detail)
-                        self.log(f"  ✗ Failed to update DB for {ip}: {update_response.status_code} {update_response.text}", "ERROR")
+                        log_console(f'✗ DB update failed: {ip}', 'ERROR')
                         
                         # Mark task as failed
                         if task:
@@ -1974,7 +1992,7 @@ class IdracMixin:
                     update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server['id']}"
                     requests.patch(update_url, headers=headers, json=update_data, verify=VERIFY_SSL)
                     
-                    self.log(f"  ✗ Failed to connect to {ip} (tried {cred_source})", "WARN")
+                    log_console(f'✗ Connection failed: {ip}', 'ERROR')
                     
                     # Mark task as failed
                     if task:
@@ -1993,6 +2011,8 @@ class IdracMixin:
             if failed_count > 0:
                 summary += f", {failed_count} failed"
             
+            log_console(f'Discovery complete: {summary}', 'SUCCESS')
+            
             job_details = {
                 **base_details,  # Preserve discovery phase details
                 'summary': summary,
@@ -2002,6 +2022,7 @@ class IdracMixin:
                 'servers_refreshed': refreshed_count,
                 'servers_total': total_servers,
                 'current_stage': 'complete',
+                'console_log': console_log,
             }
             if update_errors:
                 job_details['update_errors'] = update_errors

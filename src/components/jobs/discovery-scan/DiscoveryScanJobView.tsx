@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -28,30 +28,28 @@ interface DiscoveryScanJobViewProps {
 }
 
 export function DiscoveryScanJobView({ job }: DiscoveryScanJobViewProps) {
-  const [consoleLogs, setConsoleLogs] = useState<string[]>([]);
   const [isForcing, setIsForcing] = useState(false);
   const isRunning = job.status === 'running' || job.status === 'pending';
   const isCompleted = job.status === 'completed' || job.status === 'failed';
   const isCancelled = job.status === 'cancelled';
 
-  // Get real-time progress updates
-  const progress = useDiscoveryScanProgress(job.id, isRunning);
+  // Get real-time progress updates (including console logs)
+  const progress = useDiscoveryScanProgress(job.id, isRunning || isCompleted || isCancelled);
 
   // Detect orphaned job: job is "running" but all work is complete
   const isOrphanedComplete = isRunning && progress.isEffectivelyComplete;
 
-  // Parse console logs from job details
-  useEffect(() => {
-    // Parse logs from job details if available
-    if (job.details?.log) {
-      const logLines = typeof job.details.log === 'string' 
-        ? job.details.log.split('\n').filter(Boolean)
-        : Array.isArray(job.details.log) 
-          ? job.details.log 
-          : [];
-      setConsoleLogs(logLines);
-    }
-  }, [job.details?.log]);
+  // Use console log from realtime progress, fallback to job details for completed jobs
+  const consoleLogs = progress.consoleLog.length > 0 
+    ? progress.consoleLog 
+    : (() => {
+        const rawLog = job.details?.console_log ?? job.details?.log ?? [];
+        return Array.isArray(rawLog) 
+          ? rawLog 
+          : typeof rawLog === 'string' 
+            ? rawLog.split('\n').filter(Boolean)
+            : [];
+      })();
 
   // Parse target scope info
   const ipRanges = job.target_scope?.ip_range 
