@@ -14,7 +14,6 @@ import { useServerDrives } from "@/hooks/useServerDrives";
 import { useServerNics } from "@/hooks/useServerNics";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { useConsoleLauncher } from "@/hooks/useConsoleLauncher";
 import {
   ServerQuickStats,
   ServerNicsSummary,
@@ -25,34 +24,40 @@ import {
 } from "./sidebar";
 
 interface GroupData {
+  id: string;
   name: string;
+  type?: 'manual' | 'vcenter';
   servers: Server[];
+  onlineCount: number;
+  linkedCount: number;
 }
 
 interface ServerDetailsSidebarProps {
   selectedServer: Server | null;
   selectedGroup: GroupData | null;
-  refreshing: boolean;
-  testing: boolean;
+  isRefreshing?: boolean;
+  isTesting?: boolean;
+  isLaunchingConsole?: boolean;
   onClose: () => void;
-  onEdit: (server: Server) => void;
-  onDelete: (server: Server) => void;
-  onTestConnection: (server: Server) => void;
-  onRefreshInfo: (server: Server) => void;
-  onPowerControl: (server: Server) => void;
-  onBiosConfig: (server: Server) => void;
-  onBootConfig: (server: Server) => void;
-  onVirtualMedia: (server: Server) => void;
-  onScpBackup: (server: Server) => void;
-  onViewEventLog: (server: Server) => void;
-  onViewHealth: (server: Server) => void;
-  onViewAudit: (server: Server) => void;
-  onViewProperties: (server: Server) => void;
-  onWorkflow: (server: Server) => void;
-  onLinkVCenter: (server: Server) => void;
-  onAssignCredentials: (server: Server) => void;
-  onCreateJob: (server: Server) => void;
-  onNetworkSettings: (server: Server) => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+  onTestConnection?: () => void;
+  onRefreshInfo?: () => void;
+  onPowerControl?: () => void;
+  onBiosConfig?: () => void;
+  onBootConfig?: () => void;
+  onVirtualMedia?: () => void;
+  onScpBackup?: () => void;
+  onViewEventLog?: () => void;
+  onViewHealth?: () => void;
+  onViewAudit?: () => void;
+  onViewProperties?: () => void;
+  onWorkflow?: () => void;
+  onLinkVCenter?: () => void;
+  onAssignCredentials?: () => void;
+  onCreateJob?: () => void;
+  onNetworkSettings?: () => void;
+  onLaunchConsole?: () => void;
 }
 
 // Status bar color based on connection status
@@ -84,8 +89,9 @@ function getHealthBadgeVariant(health: string | null): "default" | "secondary" |
 export function ServerDetailsSidebar({
   selectedServer,
   selectedGroup,
-  refreshing,
-  testing,
+  isRefreshing,
+  isTesting,
+  isLaunchingConsole,
   onClose,
   onEdit,
   onDelete,
@@ -105,17 +111,11 @@ export function ServerDetailsSidebar({
   onAssignCredentials,
   onCreateJob,
   onNetworkSettings,
+  onLaunchConsole,
 }: ServerDetailsSidebarProps) {
-  const { launching: launchingConsole, launchConsole } = useConsoleLauncher();
-
   // Fetch drives and NICs for selected server
   const { data: drives, isLoading: drivesLoading } = useServerDrives(selectedServer?.id || null);
   const { data: nics, isLoading: nicsLoading } = useServerNics(selectedServer?.id || null);
-
-  const handleLaunchConsole = async () => {
-    if (!selectedServer) return;
-    await launchConsole(selectedServer.id, selectedServer.hostname || selectedServer.ip_address);
-  };
 
   const handleAutoLinkVCenter = async () => {
     if (!selectedServer) return;
@@ -149,7 +149,7 @@ export function ServerDetailsSidebar({
       }
     }
     // No auto-match, open manual dialog
-    onLinkVCenter(selectedServer);
+    onLinkVCenter?.();
   };
 
   // Server Details View
@@ -229,7 +229,7 @@ export function ServerDetailsSidebar({
             <ServerNicsSummary 
               nics={nics || []} 
               isLoading={nicsLoading}
-              onViewAll={() => onViewProperties(selectedServer)}
+              onViewAll={onViewProperties}
             />
 
             <Separator />
@@ -239,7 +239,7 @@ export function ServerDetailsSidebar({
               drives={drives || []}
               isLoading={drivesLoading}
               totalStorageTB={selectedServer.total_storage_tb}
-              onViewAll={() => onViewProperties(selectedServer)}
+              onViewAll={onViewProperties}
             />
 
             <Separator />
@@ -247,7 +247,7 @@ export function ServerDetailsSidebar({
             {/* Connectivity */}
             <ServerConnectivity
               server={selectedServer}
-              onAssignCredentials={() => onAssignCredentials(selectedServer)}
+              onAssignCredentials={onAssignCredentials}
               onLinkVCenter={handleAutoLinkVCenter}
             />
           </CardContent>
@@ -259,28 +259,28 @@ export function ServerDetailsSidebar({
         <div className="p-4 flex-shrink-0">
           <ServerActions
             server={selectedServer}
-            refreshing={refreshing}
-            testing={testing}
-            launchingConsole={launchingConsole}
-            onTestConnection={() => onTestConnection(selectedServer)}
-            onRefreshInfo={() => onRefreshInfo(selectedServer)}
-            onPowerControl={() => onPowerControl(selectedServer)}
-            onLaunchConsole={handleLaunchConsole}
-            onBiosConfig={() => onBiosConfig(selectedServer)}
-            onBootConfig={() => onBootConfig(selectedServer)}
-            onVirtualMedia={() => onVirtualMedia(selectedServer)}
-            onScpBackup={() => onScpBackup(selectedServer)}
-            onNetworkSettings={() => onNetworkSettings(selectedServer)}
-            onViewEventLog={() => onViewEventLog(selectedServer)}
-            onViewHealth={() => onViewHealth(selectedServer)}
-            onViewAudit={() => onViewAudit(selectedServer)}
-            onAssignCredentials={() => onAssignCredentials(selectedServer)}
+            refreshing={isRefreshing}
+            testing={isTesting}
+            launchingConsole={isLaunchingConsole}
+            onTestConnection={onTestConnection}
+            onRefreshInfo={onRefreshInfo}
+            onPowerControl={onPowerControl}
+            onLaunchConsole={onLaunchConsole}
+            onBiosConfig={onBiosConfig}
+            onBootConfig={onBootConfig}
+            onVirtualMedia={onVirtualMedia}
+            onScpBackup={onScpBackup}
+            onNetworkSettings={onNetworkSettings}
+            onViewEventLog={onViewEventLog}
+            onViewHealth={onViewHealth}
+            onViewAudit={onViewAudit}
+            onAssignCredentials={onAssignCredentials}
             onLinkVCenter={handleAutoLinkVCenter}
-            onViewProperties={() => onViewProperties(selectedServer)}
-            onWorkflow={() => onWorkflow(selectedServer)}
-            onCreateJob={() => onCreateJob(selectedServer)}
-            onEdit={() => onEdit(selectedServer)}
-            onDelete={() => onDelete(selectedServer)}
+            onViewProperties={onViewProperties}
+            onWorkflow={onWorkflow}
+            onCreateJob={onCreateJob}
+            onEdit={onEdit}
+            onDelete={onDelete}
           />
         </div>
       </Card>
