@@ -72,6 +72,7 @@ export function DiscoveryScanJobView({ job }: DiscoveryScanJobViewProps) {
             progressPercent={progress.progressPercent}
             currentIp={progress.currentIp}
             currentStage={progress.currentStage}
+            currentStep={progress.currentStep}
             stageStats={{
               stage1Passed: progress.stage1Passed,
               stage1Filtered: progress.stage1Filtered,
@@ -84,9 +85,14 @@ export function DiscoveryScanJobView({ job }: DiscoveryScanJobViewProps) {
               inPortCheck: progress.inPortCheck,
               inDetecting: progress.inDetecting,
               inAuthenticating: progress.inAuthenticating,
+              inSyncing: progress.inSyncing,
+              inScp: progress.inScp,
             }}
             ipsProcessed={progress.ipsProcessed}
             ipsTotal={progress.ipsTotal}
+            serversRefreshed={progress.serversRefreshed}
+            serversTotal={progress.serversTotal}
+            scpCompleted={progress.scpCompleted}
           />
         )}
 

@@ -9,6 +9,7 @@ interface DiscoveryScanLiveProgressProps {
   progressPercent: number;
   currentIp?: string;
   currentStage?: string;
+  currentStep?: string;
   stageStats: {
     stage1Passed: number;
     stage1Filtered: number;
@@ -21,9 +22,14 @@ interface DiscoveryScanLiveProgressProps {
     inPortCheck: number;
     inDetecting: number;
     inAuthenticating: number;
+    inSyncing: number;
+    inScp: number;
   };
   ipsProcessed: number;
   ipsTotal: number;
+  serversRefreshed: number;
+  serversTotal: number;
+  scpCompleted: number;
 }
 
 export function DiscoveryScanLiveProgress({
@@ -32,10 +38,14 @@ export function DiscoveryScanLiveProgress({
   progressPercent,
   currentIp,
   currentStage,
+  currentStep,
   stageStats,
   activeCounts,
   ipsProcessed,
   ipsTotal,
+  serversRefreshed,
+  serversTotal,
+  scpCompleted,
 }: DiscoveryScanLiveProgressProps) {
   const getPhaseIndex = (phaseId: DiscoveryPhase) => {
     return DISCOVERY_PHASES.findIndex(p => p.id === phaseId);
@@ -68,9 +78,15 @@ export function DiscoveryScanLiveProgress({
         };
       case 'sync':
         return {
-          passed: stageStats.stage3Passed,
-          total: stageStats.stage3Passed,
-          active: 0,
+          passed: serversRefreshed,
+          total: serversTotal,
+          active: activeCounts.inSyncing,
+        };
+      case 'scp':
+        return {
+          passed: scpCompleted,
+          total: serversTotal,
+          active: activeCounts.inScp,
         };
       default:
         return { active: 0 };
@@ -78,14 +94,19 @@ export function DiscoveryScanLiveProgress({
   };
 
   const formatCurrentOperation = () => {
+    // Use currentStep if available (more descriptive)
+    if (currentStep) return currentStep;
+    
     if (!currentIp && !currentStage) return null;
     
     const stageLabels: Record<string, string> = {
       port_check: 'Checking port',
       detecting: 'Detecting iDRAC',
       authenticating: 'Authenticating',
+      sync: 'Syncing data',
       syncing: 'Syncing data',
       scp: 'Backing up config',
+      scp_backup: 'Backing up config',
     };
 
     const label = currentStage ? stageLabels[currentStage] || currentStage : 'Processing';
