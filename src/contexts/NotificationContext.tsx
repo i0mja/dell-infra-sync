@@ -185,8 +185,19 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setActiveJobs(data || []);
-      setUnreadCount((data || []).length);
+      
+      // Filter out scheduled/automatic replication syncs (only show manually triggered ones)
+      const filteredData = (data || []).filter(job => {
+        if (job.job_type === 'run_replication_sync') {
+          const details = job.details as Record<string, unknown> | null;
+          // Hide if triggered automatically (has triggered_by set)
+          if (details?.triggered_by) return false;
+        }
+        return true;
+      });
+      
+      setActiveJobs(filteredData);
+      setUnreadCount(filteredData.length);
     } catch (error) {
       console.error('Error fetching active jobs:', error);
     }
@@ -450,12 +461,13 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
             if (!job) return false;
             const details = job.details;
             if (typeof details !== 'object' || details === null) return false;
-            // Explicitly marked silent
+          // Explicitly marked silent
             if ((details as any).silent === true) return true;
             // Triggered by scheduled/automatic sync (accept both new and legacy values)
             if ((details as any).triggered_by === 'scheduled') return true;
             if ((details as any).triggered_by === 'scheduled_sync') return true;
-            if ((details as any).triggered_by === 'scheduled') return true;
+            // Scheduled replication syncs triggered by RPO monitoring or scheduled checks
+            if (job.job_type === 'run_replication_sync' && (details as any).triggered_by) return true;
             return false;
           };
           
