@@ -1332,8 +1332,8 @@ class IdracMixin:
             if log_fn:
                 log_fn(f"Saving {len(drive_records)} drives ({total_tb} TB)", "INFO")
             
-            # Use constraint name for on_conflict (PostgREST requirement)
-            upsert_url = f"{DSM_URL}/rest/v1/server_drives?on_conflict=server_drives_server_id_drive_identifier_key"
+            # Use column names for on_conflict (PostgREST requirement)
+            upsert_url = f"{DSM_URL}/rest/v1/server_drives?on_conflict=server_id,drive_identifier"
             try:
                 start_time = timing_module.time()
                 response = requests.post(
@@ -1751,8 +1751,8 @@ class IdracMixin:
             if log_fn:
                 log_fn(f"Saving {len(nic_records)} NICs", "INFO")
             
-            # Use constraint name for on_conflict (PostgREST requirement)
-            upsert_url = f"{DSM_URL}/rest/v1/server_nics?on_conflict=server_nics_server_id_fqdd_key"
+            # Use column names for on_conflict (PostgREST requirement)
+            upsert_url = f"{DSM_URL}/rest/v1/server_nics?on_conflict=server_id,fqdd"
             start_time = timing_module.time()
             response = requests.post(
                 upsert_url, 
