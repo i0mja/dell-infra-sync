@@ -1,7 +1,8 @@
 import { cn } from "@/lib/utils";
-import { Check, Loader2, Circle } from "lucide-react";
+import { Check, Loader2, Circle, Activity } from "lucide-react";
 import { DISCOVERY_PHASES, type DiscoveryPhase } from "@/lib/discovery-scan-messages";
 import { Progress } from "@/components/ui/progress";
+import type { RecentCommand } from "@/hooks/useIdracCommandsProgress";
 
 interface FetchOptions {
   scp_backup?: boolean;
@@ -43,6 +44,8 @@ interface DiscoveryScanLiveProgressProps {
   serversTotal: number;
   scpCompleted: number;
   fetchOptions?: FetchOptions;
+  recentCommands?: RecentCommand[];
+  activeApiServerIp?: string | null;
 }
 
 export function DiscoveryScanLiveProgress({
@@ -62,6 +65,8 @@ export function DiscoveryScanLiveProgress({
   serversTotal,
   scpCompleted,
   fetchOptions,
+  recentCommands,
+  activeApiServerIp,
 }: DiscoveryScanLiveProgressProps) {
   // Filter phases based on fetch_options - hide SCP if disabled
   const visiblePhases = DISCOVERY_PHASES.filter(phase => {
@@ -299,6 +304,45 @@ export function DiscoveryScanLiveProgress({
         <div className="flex items-center gap-2 p-3 bg-muted/50 rounded-lg border">
           <Loader2 className="h-4 w-4 text-primary animate-spin flex-shrink-0" />
           <span className="text-sm font-medium">{currentOperation}</span>
+        </div>
+      )}
+
+      {/* Real-time API Activity panel */}
+      {isRunning && recentCommands && recentCommands.length > 0 && (
+        <div className="space-y-2 p-3 bg-muted/30 rounded-lg border">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Activity className="h-3.5 w-3.5" />
+            <span className="font-medium">API Activity</span>
+            {activeApiServerIp && (
+              <span className="text-primary font-mono">{activeApiServerIp}</span>
+            )}
+          </div>
+          <div className="space-y-1 font-mono text-xs">
+            {recentCommands.slice(-5).map((cmd) => (
+              <div 
+                key={cmd.id} 
+                className={cn(
+                  "flex items-center gap-2 py-0.5",
+                  cmd.success ? "text-muted-foreground" : "text-destructive"
+                )}
+              >
+                <span className="text-muted-foreground/70 w-16">{cmd.time}</span>
+                <span className={cn(
+                  "w-20 truncate",
+                  cmd.success ? "text-foreground" : "text-destructive"
+                )}>
+                  {cmd.endpointLabel}
+                </span>
+                <span className={cn(
+                  "w-8 text-right",
+                  cmd.success ? "text-success" : "text-destructive"
+                )}>
+                  {cmd.success ? '✓' : '✗'}
+                </span>
+                <span className="text-muted-foreground/70 w-16 text-right">{cmd.duration}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
