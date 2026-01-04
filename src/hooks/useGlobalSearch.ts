@@ -130,11 +130,12 @@ export function useGlobalSearch() {
           .or(`name.ilike.${term},hostname.ilike.${term}`)
           .limit(MAX_RESULTS_PER_CATEGORY),
         
-        // Jobs (recent) - search by status since job_type is an enum
+        // Jobs (recent) - only search notes since job_type and status are enums
         supabase
           .from('jobs')
           .select('id, job_type, status, created_at, notes')
-          .or(`status.ilike.${term},notes.ilike.${term}`)
+          .not('notes', 'is', null)
+          .ilike('notes', term)
           .order('created_at', { ascending: false })
           .limit(MAX_RESULTS_PER_CATEGORY),
         
@@ -487,6 +488,7 @@ export function useGlobalSearch() {
       console.error('Search error:', err);
     }
 
+    console.log('[GlobalSearch] FINAL dbResults returning:', dbResults.length, dbResults.map(r => ({ id: r.id, category: r.category, title: r.title })));
     return dbResults;
   }, []);
 
@@ -515,6 +517,7 @@ export function useGlobalSearch() {
         ...settingsResults,
       ];
 
+      console.log('[GlobalSearch] Setting results:', allResults.length, allResults.map(r => r.title));
       setResults(allResults);
     } catch (err) {
       console.error('Search failed:', err);
