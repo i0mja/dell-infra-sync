@@ -17,6 +17,10 @@ export interface JobTypeSummary {
     runningCount: number;
     avgDurationMs: number;
   };
+  activeJobs: {
+    running: Job[];
+    pending: Job[];
+  };
 }
 
 const formatJobTypeLabel = (type: string): string => {
@@ -76,12 +80,16 @@ export function useJobTypeSummaries(jobs: Job[]): JobTypeSummary[] {
       // Find last failed job
       const lastFailed = sortedJobs.find(j => j.status === 'failed') || null;
       
+      // Get all running and pending jobs for bulk cancellation
+      const runningJobs = sortedJobs.filter(j => j.status === 'running');
+      const pendingJobs = sortedJobs.filter(j => j.status === 'pending');
+      
       // Calculate stats
       const successCount = sortedJobs.filter(j => j.status === 'completed').length;
       const failureCount = sortedJobs.filter(j => j.status === 'failed').length;
       const cancelledCount = sortedJobs.filter(j => j.status === 'cancelled').length;
-      const pendingCount = sortedJobs.filter(j => j.status === 'pending').length;
-      const runningCount = sortedJobs.filter(j => j.status === 'running').length;
+      const pendingCount = pendingJobs.length;
+      const runningCount = runningJobs.length;
       
       // Calculate average duration for completed jobs
       const completedJobs = sortedJobs.filter(j => 
@@ -113,6 +121,10 @@ export function useJobTypeSummaries(jobs: Job[]): JobTypeSummary[] {
           pendingCount,
           runningCount,
           avgDurationMs,
+        },
+        activeJobs: {
+          running: runningJobs,
+          pending: pendingJobs,
         },
       });
     }
