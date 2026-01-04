@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Loader2, Maximize2, X, CheckCircle2, XCircle } from "lucide-react";
+import { Loader2, Maximize2, X, CheckCircle2, XCircle, StopCircle } from "lucide-react";
 import { useJobProgress } from "@/hooks/useJobProgress";
 import { useEffect, useState } from "react";
 import { useMinimizedJobs } from "@/contexts/MinimizedJobsContext";
@@ -12,13 +12,15 @@ interface MinimizedJobMonitorProps {
   jobType: string;
   onMaximize: () => void;
   onClose: () => void;
+  onCancel?: () => void;
 }
 
 export const MinimizedJobMonitor = ({ 
   jobId, 
   jobType,
   onMaximize, 
-  onClose 
+  onClose,
+  onCancel
 }: MinimizedJobMonitorProps) => {
   const { data: progress } = useJobProgress(jobId, true);
   const { removeJob } = useMinimizedJobs();
@@ -90,6 +92,17 @@ export const MinimizedJobMonitor = ({
           <span className="text-sm font-medium">{getJobTypeLabel(jobType)}</span>
         </div>
         <div className="flex gap-1">
+          {jobStatus !== 'completed' && jobStatus !== 'failed' && jobStatus !== 'cancelled' && onCancel && (
+            <Button 
+              size="icon" 
+              variant="ghost" 
+              className="h-7 w-7 text-muted-foreground hover:text-destructive" 
+              onClick={onCancel}
+              title="Cancel job"
+            >
+              <StopCircle className="h-3.5 w-3.5" />
+            </Button>
+          )}
           <Button size="icon" variant="ghost" className="h-7 w-7" onClick={onMaximize}>
             <Maximize2 className="h-3.5 w-3.5" />
           </Button>

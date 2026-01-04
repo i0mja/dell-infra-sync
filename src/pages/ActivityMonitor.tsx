@@ -944,6 +944,7 @@ export default function ActivityMonitor() {
                 summaries={jobTypeSummaries}
                 onViewHistory={handleViewJobHistory}
                 onViewLatest={handleViewJobDetails}
+                onCancelJob={handleCancelJob}
                 canManage={canManage}
               />
             ) : (

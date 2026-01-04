@@ -6,11 +6,12 @@ import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CheckCircle, XCircle, PlayCircle, Clock, AlertCircle, ListChecks, Link2, ExternalLink, Calendar, Minimize2, Settings, RefreshCw } from "lucide-react";
+import { CheckCircle, XCircle, PlayCircle, Clock, AlertCircle, ListChecks, Link2, ExternalLink, Calendar, Minimize2, Settings, RefreshCw, StopCircle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { WorkflowExecutionViewer } from "./WorkflowExecutionViewer";
 import { useMinimizedJobs } from "@/contexts/MinimizedJobsContext";
 import { DiscoveryScanResults, VCenterSyncResults, CredentialTestResults, ScpResults, MultiServerResults, GenericResults, JobTimingCard, EsxiUpgradeResults, EsxiPreflightResults, JobProgressHeader, JobTasksTimeline, JobConsoleLog, StorageVMotionResults, ZfsDeploymentResults, ValidationPreflightResults, ZfsHealthCheckResults, ReplicationSyncResults, FailoverPreflightResults, SshKeyExchangeResults, SLAMonitoringResults, UpdateAvailabilityScanResults } from "./results";
+import { CancelJobDialog } from "./CancelJobDialog";
 import { PendingJobWarning } from "@/components/activity/PendingJobWarning";
 import { MaintenanceBlockerAlert } from "@/components/maintenance/MaintenanceBlockerAlert";
 import { BlockerResolutionWizard } from "@/components/maintenance/BlockerResolutionWizard";
@@ -57,6 +58,7 @@ export const JobDetailDialog = ({
   const [loading, setLoading] = useState(true);
   const [parentWindow, setParentWindow] = useState<ParentWindow | null>(null);
   const [showBlockerWizard, setShowBlockerWizard] = useState(false);
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [tasks, setTasks] = useState<{
     id: string;
     status: string;
@@ -375,12 +377,26 @@ export const JobDetailDialog = ({
                   Workflow execution details for job {job.id}
                 </DialogDescription>
               </div>
-              {(job.status === 'running' || job.status === 'pending') && <Button variant="ghost" size="icon" onClick={() => {
-            minimizeJob(job.id, job.job_type);
-            onOpenChange(false);
-          }} title="Minimize to floating monitor">
-                  <Minimize2 className="h-4 w-4" />
-                </Button>}
+              {(job.status === 'running' || job.status === 'pending') && (
+                <div className="flex items-center gap-1">
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => setShowCancelDialog(true)}
+                    className="text-destructive hover:text-destructive"
+                    title="Cancel job"
+                  >
+                    <StopCircle className="h-4 w-4 mr-1" />
+                    Cancel
+                  </Button>
+                  <Button variant="ghost" size="icon" onClick={() => {
+                    minimizeJob(job.id, job.job_type);
+                    onOpenChange(false);
+                  }} title="Minimize to floating monitor">
+                    <Minimize2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
             </div>
           </DialogHeader>
           <ParentWindowBanner />
@@ -390,27 +406,85 @@ export const JobDetailDialog = ({
           <DialogHeader>
             <div className="flex items-center justify-between">
               <DialogTitle>vCenter Sync</DialogTitle>
-              {(job.status === 'running' || job.status === 'pending') && <Button variant="ghost" size="icon" onClick={() => {
-            minimizeJob(job.id, job.job_type);
-            onOpenChange(false);
-          }} title="Minimize to floating monitor">
-                <Minimize2 className="h-4 w-4" />
-              </Button>}
+              {(job.status === 'running' || job.status === 'pending') && (
+                <div className="flex items-center gap-1">
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => setShowCancelDialog(true)}
+                    className="text-destructive hover:text-destructive"
+                    title="Cancel job"
+                  >
+                    <StopCircle className="h-4 w-4 mr-1" />
+                    Cancel
+                  </Button>
+                  <Button variant="ghost" size="icon" onClick={() => {
+                    minimizeJob(job.id, job.job_type);
+                    onOpenChange(false);
+                  }} title="Minimize to floating monitor">
+                    <Minimize2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
             </div>
           </DialogHeader>
           <ParentWindowBanner />
           <VCenterSyncJobView job={job} />
         </DialogContent> : isDiscoveryScanJob ? <DialogContent className="max-w-4xl max-h-[90vh]">
           <DialogHeader>
-            
+            <div className="flex items-center justify-between">
+              <DialogTitle>Discovery Scan</DialogTitle>
+              {(job.status === 'running' || job.status === 'pending') && (
+                <div className="flex items-center gap-1">
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => setShowCancelDialog(true)}
+                    className="text-destructive hover:text-destructive"
+                    title="Cancel job"
+                  >
+                    <StopCircle className="h-4 w-4 mr-1" />
+                    Cancel
+                  </Button>
+                  <Button variant="ghost" size="icon" onClick={() => {
+                    minimizeJob(job.id, job.job_type);
+                    onOpenChange(false);
+                  }} title="Minimize to floating monitor">
+                    <Minimize2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
+            </div>
           </DialogHeader>
           <ParentWindowBanner />
           <DiscoveryScanJobView job={job} />
         </DialogContent> : <DialogContent className="max-w-4xl max-h-[90vh]">
           <DialogHeader>
             <div className="flex items-center justify-between">
-              <DialogTitle>Job Details</DialogTitle>
-              {getStatusBadge(job.status)}
+              <div className="flex items-center gap-2">
+                <DialogTitle>Job Details</DialogTitle>
+                {getStatusBadge(job.status)}
+              </div>
+              {(job.status === 'running' || job.status === 'pending') && (
+                <div className="flex items-center gap-1">
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => setShowCancelDialog(true)}
+                    className="text-destructive hover:text-destructive"
+                    title="Cancel job"
+                  >
+                    <StopCircle className="h-4 w-4 mr-1" />
+                    Cancel
+                  </Button>
+                  <Button variant="ghost" size="icon" onClick={() => {
+                    minimizeJob(job.id, job.job_type);
+                    onOpenChange(false);
+                  }} title="Minimize to floating monitor">
+                    <Minimize2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
             </div>
           </DialogHeader>
 
@@ -597,5 +671,18 @@ export const JobDetailDialog = ({
         toast.error('Failed to save blocker resolutions');
       });
     }} />}
+
+      {/* Cancel Job Dialog */}
+      {job && <CancelJobDialog
+        open={showCancelDialog}
+        onOpenChange={setShowCancelDialog}
+        jobId={job.id}
+        jobType={job.job_type}
+        jobDetails={job.details}
+        onCancelled={() => {
+          setShowCancelDialog(false);
+          onOpenChange(false);
+        }}
+      />}
     </Dialog>;
 };
