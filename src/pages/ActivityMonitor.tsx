@@ -419,6 +419,56 @@ export default function ActivityMonitor() {
     }
   };
 
+  // Batch cancel handler for Summary view
+  const handleCancelJobs = async (jobIds: string[], cancelType: 'running' | 'pending' | 'all') => {
+    if (jobIds.length === 0) return;
+    
+    const typeLabel = cancelType === 'all' ? 'active' : cancelType;
+    
+    try {
+      // Cancel all jobs in parallel
+      const results = await Promise.allSettled(
+        jobIds.map(async (jobId) => {
+          const { data: currentJob } = await supabase
+            .from('jobs')
+            .select('details')
+            .eq('id', jobId)
+            .single();
+
+          return supabase.functions.invoke('update-job', {
+            body: {
+              job: {
+                id: jobId,
+                status: 'cancelled',
+                completed_at: new Date().toISOString(),
+                details: {
+                  ...(typeof currentJob?.details === 'object' && currentJob?.details !== null ? currentJob.details : {}),
+                  cancelled_at: new Date().toISOString(),
+                  cancellation_reason: `Bulk cancel: ${typeLabel} jobs`,
+                }
+              }
+            }
+          });
+        })
+      );
+      
+      const succeeded = results.filter(r => r.status === 'fulfilled').length;
+      const failed = results.filter(r => r.status === 'rejected').length;
+      
+      if (failed > 0) {
+        toast.warning(`Cancelled ${succeeded} job(s), ${failed} failed`);
+      } else {
+        toast.success(`Cancelled ${succeeded} ${typeLabel} job(s)`);
+      }
+      
+      refetchJobs();
+      refetchActiveJobs();
+    } catch (err) {
+      console.error('Error cancelling jobs:', err);
+      toast.error("Failed to cancel jobs");
+    }
+  };
+
   const handleRetryJob = async (job: Job) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -944,7 +994,7 @@ export default function ActivityMonitor() {
                 summaries={jobTypeSummaries}
                 onViewHistory={handleViewJobHistory}
                 onViewLatest={handleViewJobDetails}
-                onCancelJob={handleCancelJob}
+                onCancelJobs={handleCancelJobs}
                 canManage={canManage}
               />
             ) : (
