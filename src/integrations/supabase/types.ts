@@ -2908,6 +2908,7 @@ export type Database = {
           capacity_gb: number | null
           controller: string | null
           created_at: string | null
+          drive_identifier: string
           enclosure: string | null
           firmware_version: string | null
           health: string | null
@@ -2933,6 +2934,7 @@ export type Database = {
           capacity_gb?: number | null
           controller?: string | null
           created_at?: string | null
+          drive_identifier: string
           enclosure?: string | null
           firmware_version?: string | null
           health?: string | null
@@ -2958,6 +2960,7 @@ export type Database = {
           capacity_gb?: number | null
           controller?: string | null
           created_at?: string | null
+          drive_identifier?: string
           enclosure?: string | null
           firmware_version?: string | null
           health?: string | null
