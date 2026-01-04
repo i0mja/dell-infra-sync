@@ -29,6 +29,7 @@ export interface CategoryStats {
  */
 function getEndpointCategory(endpoint: string): string {
   const lower = endpoint.toLowerCase();
+  if (lower.includes('/server_drives') || lower.includes('/server_nics')) return 'DB Sync';
   if (lower.includes('/storage') || lower.includes('/drives') || lower.includes('/volumes') || lower.includes('/controllers')) return 'Storage';
   if (lower.includes('/networkadapters') || lower.includes('/networkports') || lower.includes('/networkdevicefunctions') || lower.includes('/ethernetinterfaces')) return 'NICs';
   if (lower.includes('/bios')) return 'BIOS';
@@ -46,31 +47,48 @@ function getEndpointCategory(endpoint: string): string {
 function getEndpointLabel(endpoint: string): string {
   // Common Redfish endpoint patterns
   const patterns: Array<{ pattern: RegExp; label: string }> = [
+    // DB sync operations
+    { pattern: /\/server_drives.*upsert/i, label: 'Save Drives' },
+    { pattern: /\/server_nics.*upsert/i, label: 'Save NICs' },
+    // Storage operations
+    { pattern: /\/Storage\/[^/]+\/Volumes/i, label: 'Volumes' },
     { pattern: /\/Volumes/i, label: 'Volumes' },
     { pattern: /\/Drives\/[^/]+/i, label: 'Drive Details' },
     { pattern: /\/Drives/i, label: 'Drives' },
     { pattern: /\/Controllers\/[^/]+/i, label: 'Controller' },
     { pattern: /\/Controllers/i, label: 'Controllers' },
-    { pattern: /\/Systems\/[^/]+\/Storage\/[^/]+/i, label: 'Storage Controller' },
-    { pattern: /\/Systems\/[^/]+\/Storage/i, label: 'Storage' },
+    { pattern: /\/Storage\/[^?]+\?\$expand/i, label: 'Storage Controller' },
+    { pattern: /\/Storage\/[^/]+/i, label: 'Storage Controller' },
+    { pattern: /\/Storage\?\$expand/i, label: 'Storage' },
+    { pattern: /\/Storage$/i, label: 'Storage' },
+    // System operations
     { pattern: /\/Systems\/[^/]+\/Bios/i, label: 'BIOS' },
+    { pattern: /\/Systems\/[^/]+$/i, label: 'System' },
+    // Network operations
+    { pattern: /\/NetworkDeviceFunctions\?\$expand/i, label: 'NIC Functions' },
+    { pattern: /\/NetworkDeviceFunctions\/[^/]+/i, label: 'NIC Function' },
     { pattern: /\/NetworkDeviceFunctions/i, label: 'NIC Functions' },
     { pattern: /\/NetworkPorts/i, label: 'NIC Ports' },
+    { pattern: /\/NetworkAdapters\?\$expand/i, label: 'NICs' },
     { pattern: /\/NetworkAdapters\/[^/]+/i, label: 'NIC Adapter' },
     { pattern: /\/NetworkAdapters/i, label: 'NICs' },
     { pattern: /\/EthernetInterfaces/i, label: 'Ethernet' },
+    // Other hardware
     { pattern: /\/Systems\/[^/]+\/Processors/i, label: 'CPUs' },
     { pattern: /\/Systems\/[^/]+\/Memory/i, label: 'Memory' },
-    { pattern: /\/Systems\/[^/]+$/i, label: 'System' },
     { pattern: /\/Chassis\/[^/]+\/Thermal/i, label: 'Thermal' },
     { pattern: /\/Chassis\/[^/]+\/Power/i, label: 'Power' },
     { pattern: /\/Chassis\/[^/]+$/i, label: 'Chassis' },
+    // iDRAC operations
     { pattern: /\/Managers\/[^/]+\/Attributes/i, label: 'iDRAC Config' },
     { pattern: /\/Managers\/[^/]+\/EthernetInterfaces/i, label: 'iDRAC Network' },
     { pattern: /\/Managers\/[^/]+$/i, label: 'iDRAC Info' },
     { pattern: /\/UpdateService/i, label: 'Firmware' },
     { pattern: /\/Dell\/Managers.*Export/i, label: 'SCP Export' },
     { pattern: /\/TaskService\/Tasks/i, label: 'Task Status' },
+    // Error cases
+    { pattern: /_fetch_storage_drives/i, label: 'Storage Error' },
+    { pattern: /_fetch_network_adapters/i, label: 'NICs Error' },
   ];
 
   for (const { pattern, label } of patterns) {
