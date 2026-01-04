@@ -223,18 +223,25 @@ export function useGlobalSearch() {
       }
 
       // Process Server Drives - find servers by serial number, WWN, model
+      console.log('[GlobalSearch] serverDrivesRes.data:', serverDrivesRes.data?.length, serverDrivesRes.data);
       if (serverDrivesRes.data && serverDrivesRes.data.length > 0) {
         const driveServerIds = serverDrivesRes.data
           .filter((drive): drive is { server_id: string; serial_number: string | null; wwn: string | null; model: string | null; name: string | null; slot: string | null; media_type: string | null } => 
             typeof drive.server_id === 'string' && !seenServerIds.has(drive.server_id))
           .map(drive => drive.server_id);
         
+        console.log('[GlobalSearch] driveServerIds:', driveServerIds);
+        
         if (driveServerIds.length > 0) {
           const uniqueDriveServerIds = [...new Set(driveServerIds)] as string[];
+          console.log('[GlobalSearch] uniqueDriveServerIds:', uniqueDriveServerIds);
+          
           const { data: driveServers, error: driveServerError } = await supabase
             .from('servers')
             .select('id, hostname, ip_address, service_tag, model')
             .in('id', uniqueDriveServerIds);
+          
+          console.log('[GlobalSearch] driveServers:', driveServers, 'error:', driveServerError);
           
           if (driveServerError) {
             console.error('Error fetching servers for drives:', driveServerError);
@@ -249,6 +256,7 @@ export function useGlobalSearch() {
                   seenServerIds.add(server.id);
                   const driveInfo = drive.serial_number || drive.wwn || drive.model || 'Unknown';
                   const slotInfo = drive.slot || drive.name?.split(':')[0] || '';
+                  console.log('[GlobalSearch] Adding server from drive:', server.hostname, 'driveInfo:', driveInfo);
                   dbResults.push({
                     id: server.id,
                     category: 'servers',
@@ -266,6 +274,8 @@ export function useGlobalSearch() {
           }
         }
       }
+      
+      console.log('[GlobalSearch] dbResults after drives:', dbResults.length, dbResults.filter(r => r.metadata?.matched_drive));
 
       // Process VMs - track IDs to avoid duplicates from custom attributes
       const seenVmIds = new Set<string>();
