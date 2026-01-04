@@ -1130,8 +1130,14 @@ class IdracMixin:
         except Exception as e:
             return None
     
-    def _sync_server_drives(self, server_id: str, drives: List[Dict]):
-        """Sync drive inventory to server_drives table using bulk upsert"""
+    def _sync_server_drives(self, server_id: str, drives: List[Dict], log_fn=None):
+        """Sync drive inventory to server_drives table using bulk upsert
+        
+        Args:
+            server_id: The server UUID
+            drives: List of drive dictionaries from iDRAC
+            log_fn: Optional callback for console logging (displays in UI)
+        """
         try:
             # Correct PostgREST upsert headers - Prefer header for resolution
             headers = {
@@ -1187,13 +1193,19 @@ class IdracMixin:
             
             if not drive_records:
                 self.log(f"  ⚠ No drives to sync for server {server_id}", "WARN")
-                return
+                return 0
             
-            # Log before attempting upsert for visibility
-            self.log(f"  Syncing {len(drive_records)} drives for server {server_id}", "DEBUG")
+            # Calculate total storage
+            total_gb = sum(d.get('capacity_gb') or 0 for d in drive_records)
+            total_tb = round(total_gb / 1024, 2) if total_gb else 0
             
-            # on_conflict in URL query string, resolution in Prefer header
-            upsert_url = f"{DSM_URL}/rest/v1/server_drives?on_conflict=server_id,drive_identifier"
+            # Log for visibility (both executor and UI console)
+            self.log(f"  → Saving {len(drive_records)} drives ({total_tb} TB)", "DEBUG")
+            if log_fn:
+                log_fn(f"Saving {len(drive_records)} drives ({total_tb} TB)", "INFO")
+            
+            # Use constraint name for on_conflict (PostgREST requirement)
+            upsert_url = f"{DSM_URL}/rest/v1/server_drives?on_conflict=server_drives_server_id_drive_identifier_key"
             try:
                 response = requests.post(
                     upsert_url, 
@@ -1204,18 +1216,31 @@ class IdracMixin:
                 )
                 
                 if response.status_code in [200, 201, 204]:
-                    self.log(f"  ✓ Synced {len(drive_records)} drives in single request", "DEBUG")
+                    self.log(f"  ✓ Synced {len(drive_records)} drives", "DEBUG")
+                    if log_fn:
+                        log_fn(f"✓ Saved {len(drive_records)} drives", "SUCCESS")
+                    return len(drive_records)
                 else:
                     # Log full error for debugging
-                    self.log(f"  ⚠ Bulk drive sync failed: HTTP {response.status_code}", "WARN")
-                    self.log(f"  Response: {response.text[:500]}", "DEBUG")
+                    error_text = response.text[:300] if response.text else 'Unknown error'
+                    self.log(f"  ⚠ Drive sync failed: HTTP {response.status_code} - {error_text}", "WARN")
+                    if log_fn:
+                        log_fn(f"⚠ Drive sync error: HTTP {response.status_code}", "WARN")
+                    return 0
             except requests.exceptions.Timeout:
                 self.log(f"  ⚠ Drive sync timeout for server {server_id}", "WARN")
+                if log_fn:
+                    log_fn("⚠ Drive sync timeout", "WARN")
+                return 0
             except requests.exceptions.RequestException as e:
-                self.log(f"  ⚠ Drive sync request failed for server {server_id}: {e}", "WARN")
+                self.log(f"  ⚠ Drive sync request failed: {e}", "WARN")
+                if log_fn:
+                    log_fn(f"⚠ Drive sync failed: {e}", "WARN")
+                return 0
                 
         except Exception as e:
             self.log(f"  Error syncing drives for server {server_id}: {e}", "WARN")
+            return 0
 
     def _fetch_network_adapters(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None) -> List[Dict]:
         """
@@ -1403,8 +1428,14 @@ class IdracMixin:
         except Exception as e:
             return None
     
-    def _sync_server_nics(self, server_id: str, nics: List[Dict]):
-        """Sync NIC inventory to server_nics table using bulk upsert"""
+    def _sync_server_nics(self, server_id: str, nics: List[Dict], log_fn=None):
+        """Sync NIC inventory to server_nics table using bulk upsert
+        
+        Args:
+            server_id: The server UUID
+            nics: List of NIC dictionaries from iDRAC
+            log_fn: Optional callback for console logging (displays in UI)
+        """
         try:
             # Correct PostgREST upsert headers - Prefer header for resolution
             headers = {
@@ -1440,10 +1471,15 @@ class IdracMixin:
                 })
             
             if not nic_records:
-                return
+                return 0
             
-            # on_conflict in URL query string, resolution in Prefer header
-            upsert_url = f"{DSM_URL}/rest/v1/server_nics?on_conflict=server_id,fqdd"
+            # Log for visibility (both executor and UI console)
+            self.log(f"  → Saving {len(nic_records)} NICs", "DEBUG")
+            if log_fn:
+                log_fn(f"Saving {len(nic_records)} NICs", "INFO")
+            
+            # Use constraint name for on_conflict (PostgREST requirement)
+            upsert_url = f"{DSM_URL}/rest/v1/server_nics?on_conflict=server_nics_server_id_fqdd_key"
             response = requests.post(
                 upsert_url, 
                 headers=headers, 
@@ -1453,12 +1489,20 @@ class IdracMixin:
             )
             
             if response.status_code in [200, 201, 204]:
-                self.log(f"  ✓ Synced {len(nic_records)} NICs in single request", "DEBUG")
+                self.log(f"  ✓ Synced {len(nic_records)} NICs", "DEBUG")
+                if log_fn:
+                    log_fn(f"✓ Saved {len(nic_records)} NICs", "SUCCESS")
+                return len(nic_records)
             else:
-                self.log(f"  Warning: Bulk NIC sync returned {response.status_code}: {response.text[:200]}", "WARN")
+                error_text = response.text[:200] if response.text else 'Unknown error'
+                self.log(f"  ⚠ NIC sync failed: HTTP {response.status_code} - {error_text}", "WARN")
+                if log_fn:
+                    log_fn(f"⚠ NIC sync error: HTTP {response.status_code}", "WARN")
+                return 0
                 
         except Exception as e:
             self.log(f"  Error syncing NICs for server {server_id}: {e}", "WARN")
+            return 0
 
     def _should_backup_server(self, server_id: str, max_age_days: int) -> bool:
         """Check if server needs a backup based on age threshold"""
@@ -1886,13 +1930,17 @@ class IdracMixin:
                         except Exception as health_err:
                             self.log(f"  Warning: Failed to save health record: {health_err}", "WARN")
                     
-                    # Sync drives to server_drives table
+                    # Sync drives to server_drives table with console logging
+                    drives_synced = 0
                     if info.get('drives'):
-                        self._sync_server_drives(server_id, info['drives'])
+                        log_local(f'→ Reading storage: found {len(info["drives"])} drive(s)', 'INFO')
+                        drives_synced = self._sync_server_drives(server_id, info['drives'], log_fn=log_local) or 0
                     
-                    # Sync NICs to server_nics table
+                    # Sync NICs to server_nics table with console logging
+                    nics_synced = 0
                     if info.get('nics'):
-                        self._sync_server_nics(server_id, info['nics'])
+                        log_local(f'→ Reading NICs: found {len(info["nics"])} adapter(s)', 'INFO')
+                        nics_synced = self._sync_server_nics(server_id, info['nics'], log_fn=log_local) or 0
                     
                     # Try auto-linking to vCenter if service_tag was updated
                     if info.get('service_tag'):
