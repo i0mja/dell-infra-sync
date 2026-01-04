@@ -37,6 +37,7 @@ export function useGlobalSearch() {
       // Run parallel queries for each category
       const [
         serversRes,
+        serverNicsRes,
         vmsRes,
         vmCustomAttrsRes,
         hostsRes,
@@ -57,6 +58,13 @@ export function useGlobalSearch() {
           .select('id, hostname, ip_address, service_tag, model')
           .or(`hostname.ilike.${term},ip_address.ilike.${term},service_tag.ilike.${term}`)
           .limit(MAX_RESULTS_PER_CATEGORY),
+        
+        // Server NICs (search by MAC address)
+        supabase
+          .from('server_nics')
+          .select('server_id, mac_address, permanent_mac_address, fqdd')
+          .or(`mac_address.ilike.${term},permanent_mac_address.ilike.${term}`)
+          .limit(MAX_RESULTS_PER_CATEGORY * 3),
         
         // VMs
         supabase
@@ -151,9 +159,11 @@ export function useGlobalSearch() {
           .limit(MAX_RESULTS_PER_CATEGORY),
       ]);
 
-      // Process servers
+      // Process servers - track IDs to avoid duplicates from NIC search
+      const seenServerIds = new Set<string>();
       if (serversRes.data) {
         serversRes.data.forEach(s => {
+          seenServerIds.add(s.id);
           dbResults.push({
             id: s.id,
             category: 'servers',
@@ -163,6 +173,45 @@ export function useGlobalSearch() {
             metadata: { service_tag: s.service_tag },
           });
         });
+      }
+
+      // Process Server NICs - find servers by MAC address
+      if (serverNicsRes.data && serverNicsRes.data.length > 0) {
+        const nicServerIds = serverNicsRes.data
+          .filter((nic): nic is { server_id: string; mac_address: string | null; permanent_mac_address: string | null; fqdd: string } => 
+            typeof nic.server_id === 'string' && !seenServerIds.has(nic.server_id))
+          .map(nic => nic.server_id);
+        
+        if (nicServerIds.length > 0) {
+          const uniqueServerIds = [...new Set(nicServerIds)] as string[];
+          const { data: nicServers } = await supabase
+            .from('servers')
+            .select('id, hostname, ip_address, service_tag, model')
+            .in('id', uniqueServerIds);
+          
+          if (nicServers) {
+            const serverMap = new Map(nicServers.map(s => [s.id, s]));
+            serverNicsRes.data.forEach(nic => {
+              if (nic.server_id && !seenServerIds.has(nic.server_id)) {
+                const server = serverMap.get(nic.server_id);
+                if (server) {
+                  seenServerIds.add(server.id);
+                  dbResults.push({
+                    id: server.id,
+                    category: 'servers',
+                    title: server.hostname || server.ip_address,
+                    subtitle: `MAC: ${nic.mac_address || nic.permanent_mac_address} • ${nic.fqdd}`,
+                    path: `/servers?selected=${server.id}`,
+                    metadata: { 
+                      service_tag: server.service_tag,
+                      matched_mac: nic.mac_address || nic.permanent_mac_address
+                    },
+                  });
+                }
+              }
+            });
+          }
+        }
       }
 
       // Process VMs - track IDs to avoid duplicates from custom attributes
