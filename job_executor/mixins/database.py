@@ -255,25 +255,36 @@ class DatabaseMixin:
                 if response.status_code in [200, 204]:
                     # Verify update took effect for terminal statuses
                     if status in ['completed', 'failed', 'cancelled']:
-                        try:
-                            verify_resp = requests.get(
-                                url,
-                                headers=headers,
-                                params={**params, "select": "status"},
-                                verify=VERIFY_SSL,
-                                timeout=5
-                            )
-                            if verify_resp.ok:
-                                jobs = _safe_json_parse(verify_resp)
-                                if jobs and jobs[0].get('status') == status:
-                                    return True
-                                else:
-                                    self.log(f"Status verification failed (attempt {attempt+1}), retrying...", "WARN")
-                                    time.sleep(0.3)
-                                    continue
-                        except Exception as verify_err:
-                            self.log(f"Status verification error: {verify_err}", "WARN")
-                    return True
+                        verified = False
+                        for verify_attempt in range(3):
+                            try:
+                                verify_resp = requests.get(
+                                    url,
+                                    headers=headers,
+                                    params={**params, "select": "status"},
+                                    verify=VERIFY_SSL,
+                                    timeout=5
+                                )
+                                if verify_resp.ok:
+                                    jobs = _safe_json_parse(verify_resp)
+                                    if jobs and jobs[0].get('status') == status:
+                                        verified = True
+                                        break
+                                    else:
+                                        self.log(f"Status verification failed (attempt {verify_attempt+1}/3), retrying...", "WARN")
+                                        time.sleep(0.3)
+                            except Exception as verify_err:
+                                self.log(f"Status verification error: {verify_err}", "WARN")
+                        
+                        if verified:
+                            return True
+                        else:
+                            # Verification failed after retries - fall through to fallback
+                            self.log(f"Status verification failed after 3 attempts, attempting fallback...", "WARN")
+                            last_error = "Verification failed - status update not persisted"
+                            # Fall through to fallback logic below
+                    else:
+                        return True  # Non-terminal status, no verification needed
                 else:
                     # Log detailed error information
                     try:
@@ -293,11 +304,21 @@ class DatabaseMixin:
                     self.log(f"Job update failed: {last_error}", "ERROR")
                 
                 # FALLBACK: Try minimal update with just status and essential fields
-                if status in ['paused', 'failed', 'cancelled']:
+                if status in ['paused', 'failed', 'cancelled', 'completed']:
                     self.log("Attempting fallback minimal update...", "INFO")
                     minimal_payload = {"status": status}
                     
-                    if status == 'paused':
+                    if status == 'completed':
+                        # Include essential completion details
+                        minimal_payload["completed_at"] = completed_at or datetime.now().isoformat()
+                        minimal_payload["details"] = {
+                            "progress_percent": 100,
+                            "current_step": "Complete (fallback update)",
+                            "fallback_update": True,
+                            "vms_synced": details.get("vms_synced", 0) if details else 0,
+                            "total_vms": details.get("total_vms", 0) if details else 0
+                        }
+                    elif status == 'paused':
                         # Include only essential pause fields plus blockers if small enough
                         minimal_payload["details"] = {
                             "pause_reason": details.get("pause_reason", "Paused - check workflow steps") if details else "Paused",
