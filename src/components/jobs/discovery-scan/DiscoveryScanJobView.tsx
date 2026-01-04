@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -29,9 +29,49 @@ interface DiscoveryScanJobViewProps {
 
 export function DiscoveryScanJobView({ job }: DiscoveryScanJobViewProps) {
   const [isForcing, setIsForcing] = useState(false);
-  const isRunning = job.status === 'running' || job.status === 'pending';
-  const isCompleted = job.status === 'completed' || job.status === 'failed';
-  const isCancelled = job.status === 'cancelled';
+  const [localJobStatus, setLocalJobStatus] = useState(job.status);
+  const [localCompletedAt, setLocalCompletedAt] = useState(job.completed_at);
+
+  // Subscribe to real-time job status changes
+  useEffect(() => {
+    const channel = supabase
+      .channel(`job-status-${job.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'jobs',
+          filter: `id=eq.${job.id}`,
+        },
+        (payload) => {
+          const newStatus = payload.new?.status;
+          const newCompletedAt = payload.new?.completed_at;
+          if (newStatus && newStatus !== localJobStatus) {
+            setLocalJobStatus(newStatus);
+          }
+          if (newCompletedAt) {
+            setLocalCompletedAt(newCompletedAt);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [job.id, localJobStatus]);
+
+  // Sync local state when prop changes (e.g., dialog reopened)
+  useEffect(() => {
+    setLocalJobStatus(job.status);
+    setLocalCompletedAt(job.completed_at);
+  }, [job.status, job.completed_at]);
+
+  // Use local status for UI decisions (real-time updates)
+  const isRunning = localJobStatus === 'running' || localJobStatus === 'pending';
+  const isCompleted = localJobStatus === 'completed' || localJobStatus === 'failed';
+  const isCancelled = localJobStatus === 'cancelled';
 
   // Get real-time progress updates (including console logs)
   const progress = useDiscoveryScanProgress(job.id, isRunning || isCompleted || isCancelled);
@@ -121,10 +161,10 @@ export function DiscoveryScanJobView({ job }: DiscoveryScanJobViewProps) {
       <div className="space-y-6 pr-4">
         {/* Header with status and timing */}
         <DiscoveryScanHeader
-          status={job.status}
+          status={localJobStatus}
           createdAt={job.created_at}
           startedAt={job.started_at}
-          completedAt={job.completed_at}
+          completedAt={localCompletedAt}
           ipRanges={ipRanges}
           ipCount={ipCount}
         />
