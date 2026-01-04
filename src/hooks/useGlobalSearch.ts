@@ -130,11 +130,11 @@ export function useGlobalSearch() {
           .or(`name.ilike.${term},hostname.ilike.${term}`)
           .limit(MAX_RESULTS_PER_CATEGORY),
         
-        // Jobs (recent)
+        // Jobs (recent) - search by status since job_type is an enum
         supabase
           .from('jobs')
-          .select('id, job_type, status, created_at')
-          .ilike('job_type', term)
+          .select('id, job_type, status, created_at, notes')
+          .or(`status.ilike.${term},notes.ilike.${term}`)
           .order('created_at', { ascending: false })
           .limit(MAX_RESULTS_PER_CATEGORY),
         
@@ -231,12 +231,16 @@ export function useGlobalSearch() {
         
         if (driveServerIds.length > 0) {
           const uniqueDriveServerIds = [...new Set(driveServerIds)] as string[];
-          const { data: driveServers } = await supabase
+          const { data: driveServers, error: driveServerError } = await supabase
             .from('servers')
             .select('id, hostname, ip_address, service_tag, model')
             .in('id', uniqueDriveServerIds);
           
-          if (driveServers) {
+          if (driveServerError) {
+            console.error('Error fetching servers for drives:', driveServerError);
+          }
+          
+          if (driveServers && driveServers.length > 0) {
             const serverMap = new Map(driveServers.map(s => [s.id, s]));
             serverDrivesRes.data.forEach(drive => {
               if (drive.server_id && !seenServerIds.has(drive.server_id)) {
