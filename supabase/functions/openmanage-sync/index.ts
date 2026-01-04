@@ -123,104 +123,106 @@ Deno.serve(async (req) => {
 
     console.log(`Starting OpenManage sync for ${devices.length} devices`);
 
-    let newCount = 0;
-    let updatedCount = 0;
-    let autoLinkedCount = 0;
     const errors: string[] = [];
+    const now = new Date().toISOString();
 
-    // Process each device
-    for (const device of devices) {
-      try {
-        if (!device.service_tag || !device.ip_address) {
-          errors.push(`Device missing required fields: ${JSON.stringify(device)}`);
-          continue;
-        }
+    // OPTIMIZED: Build all server records for bulk upsert
+    const validDevices = devices.filter(device => {
+      if (!device.service_tag || !device.ip_address) {
+        errors.push(`Device missing required fields: ${JSON.stringify(device)}`);
+        return false;
+      }
+      return true;
+    });
 
-        // Check if server already exists
-        const { data: existingServer } = await supabase
-          .from('servers')
-          .select('id, vcenter_host_id')
-          .eq('service_tag', device.service_tag)
-          .maybeSingle();
+    const serverRecords = validDevices.map(device => ({
+      ip_address: device.ip_address,
+      hostname: device.hostname || null,
+      model: device.model || null,
+      service_tag: device.service_tag,
+      idrac_firmware: device.idrac_firmware || null,
+      bios_version: device.bios_version || null,
+      cpu_count: device.cpu_count || null,
+      memory_gb: device.memory_gb || null,
+      openmanage_device_id: device.device_id,
+      last_openmanage_sync: now,
+      last_seen: now,
+    }));
 
-        const serverData = {
-          ip_address: device.ip_address,
-          hostname: device.hostname || null,
-          model: device.model || null,
-          service_tag: device.service_tag,
-          idrac_firmware: device.idrac_firmware || null,
-          bios_version: device.bios_version || null,
-          cpu_count: device.cpu_count || null,
-          memory_gb: device.memory_gb || null,
-          openmanage_device_id: device.device_id,
-          last_openmanage_sync: new Date().toISOString(),
-          last_seen: new Date().toISOString(),
-        };
+    // Get existing servers to determine new vs updated counts
+    const serviceTags = validDevices.map(d => d.service_tag);
+    const { data: existingServers } = await supabase
+      .from('servers')
+      .select('id, service_tag, vcenter_host_id')
+      .in('service_tag', serviceTags);
 
-        let serverId: string;
+    const existingServiceTags = new Set((existingServers || []).map(s => s.service_tag));
+    const newCount = validDevices.filter(d => !existingServiceTags.has(d.service_tag)).length;
+    const updatedCount = validDevices.filter(d => existingServiceTags.has(d.service_tag)).length;
 
-        if (existingServer) {
-          // Update existing server
-          const { error: updateError } = await supabase
-            .from('servers')
-            .update(serverData)
-            .eq('id', existingServer.id);
+    // OPTIMIZED: Single bulk upsert instead of per-device calls
+    const { data: upsertedServers, error: upsertError } = await supabase
+      .from('servers')
+      .upsert(serverRecords, { 
+        onConflict: 'service_tag',
+        ignoreDuplicates: false 
+      })
+      .select('id, service_tag');
 
-          if (updateError) throw updateError;
-          
-          serverId = existingServer.id;
-          updatedCount++;
-          console.log(`Updated server: ${device.service_tag}`);
-        } else {
-          // Insert new server
-          const { data: insertData, error: insertError } = await supabase
-            .from('servers')
-            .insert(serverData)
-            .select('id')
-            .single();
+    if (upsertError) {
+      console.error('Bulk upsert failed:', upsertError);
+      errors.push(`Bulk upsert failed: ${upsertError.message}`);
+    } else {
+      console.log(`Bulk upserted ${upsertedServers?.length || 0} servers`);
+    }
 
-          if (insertError) throw insertError;
-          
-          serverId = insertData.id;
-          newCount++;
-          console.log(`Created new server: ${device.service_tag}`);
-        }
+    // OPTIMIZED: Batch vCenter auto-linking
+    let autoLinkedCount = 0;
+    
+    // Get all vCenter hosts that could be linked (have matching serial and no current server_id)
+    const { data: vcenterHosts } = await supabase
+      .from('vcenter_hosts')
+      .select('id, serial_number, server_id')
+      .in('serial_number', serviceTags)
+      .is('server_id', null);
 
-        // Try to auto-link with vCenter host based on serial number
-        const { data: vcenterHost } = await supabase
-          .from('vcenter_hosts')
-          .select('id, server_id')
-          .eq('serial_number', device.service_tag)
-          .maybeSingle();
+    if (vcenterHosts && vcenterHosts.length > 0 && upsertedServers) {
+      // Create mapping of service_tag -> server_id
+      const serverIdByTag = new Map(
+        upsertedServers.map(s => [s.service_tag, s.id])
+      );
 
-        if (vcenterHost && !vcenterHost.server_id) {
-          // Link server to vCenter host
-          const { error: linkError1 } = await supabase
-            .from('servers')
-            .update({ vcenter_host_id: vcenterHost.id })
-            .eq('id', serverId);
+      // Link each vCenter host to its corresponding server
+      for (const vcHost of vcenterHosts) {
+        const serverId = serverIdByTag.get(vcHost.serial_number);
+        if (serverId) {
+          try {
+            // Update both tables atomically
+            const { error: linkError1 } = await supabase
+              .from('servers')
+              .update({ vcenter_host_id: vcHost.id })
+              .eq('id', serverId);
 
-          const { error: linkError2 } = await supabase
-            .from('vcenter_hosts')
-            .update({ server_id: serverId })
-            .eq('id', vcenterHost.id);
+            const { error: linkError2 } = await supabase
+              .from('vcenter_hosts')
+              .update({ server_id: serverId })
+              .eq('id', vcHost.id);
 
-          if (!linkError1 && !linkError2) {
-            autoLinkedCount++;
-            console.log(`Auto-linked server ${device.service_tag} with vCenter host`);
+            if (!linkError1 && !linkError2) {
+              autoLinkedCount++;
+              console.log(`Auto-linked server ${vcHost.serial_number} with vCenter host`);
+            }
+          } catch (linkErr) {
+            console.error(`Failed to link ${vcHost.serial_number}:`, linkErr);
           }
         }
-
-      } catch (error: any) {
-        console.error(`Error processing device ${device.service_tag}:`, error);
-        errors.push(`${device.service_tag}: ${error.message}`);
       }
     }
 
     // Update last_sync timestamp in openmanage_settings
     await supabase
       .from('openmanage_settings')
-      .update({ last_sync: new Date().toISOString() })
+      .update({ last_sync: now })
       .limit(1);
 
     // Log audit trail
@@ -235,6 +237,7 @@ Deno.serve(async (req) => {
         errors: errors.length,
         manual: body.manual || false,
         scheduled: body.scheduled || false,
+        optimization: 'bulk_upsert',
       }
     });
 
@@ -248,7 +251,7 @@ Deno.serve(async (req) => {
         errors: errors.length,
       },
       errors,
-      timestamp: new Date().toISOString(),
+      timestamp: now,
     };
 
     console.log('OpenManage sync completed:', response.summary);
@@ -265,7 +268,8 @@ Deno.serve(async (req) => {
         new_count: newCount,
         updated_count: updatedCount,
         auto_linked_count: autoLinkedCount,
-        errors_count: errors.length
+        errors_count: errors.length,
+        optimization: 'bulk_upsert'
       },
       source: 'edge_function'
     });
