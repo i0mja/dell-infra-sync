@@ -1671,8 +1671,255 @@ class IdracMixin:
                 "auth_failed": False
             }
 
+    def sync_one_server(self, server: Dict, fetch_options: Dict, job_id: str) -> Dict:
+        """
+        Sync a single server's data from iDRAC. Pure worker function - no job progress updates.
+        
+        This method is designed to be called from a thread pool. It performs:
+        - Credential resolution
+        - Redfish API query for comprehensive info
+        - Database update for server record
+        - Health record insertion
+        - Drive/NIC sync
+        - vCenter auto-linking
+        
+        Returns a result dict (no side effects on job state):
+            {
+                'server_id': str,
+                'ip': str,
+                'success': bool,
+                'model': str | None,
+                'hostname': str | None,
+                'service_tag': str | None,
+                'error': str | None,
+                'error_type': 'credentials' | 'unreachable' | 'auth_failed' | 'lockout_risk' | 'db_error' | None,
+                'logs': List[str],  # Local log messages for this server
+                'needs_backup': bool,  # True if SCP backup should be queued
+                'cred_source': str | None,
+            }
+        """
+        ip = server['ip_address']
+        server_id = server['id']
+        logs = []  # Thread-local log accumulator
+        
+        def log_local(message: str, level: str = 'INFO'):
+            """Add message to local logs (thread-safe, no shared state)"""
+            timestamp = datetime.utcnow().strftime('%H:%M:%S')
+            logs.append(f'[{timestamp}] [{level}] {message}')
+            self.log(message, level)
+        
+        headers = {
+            "apikey": SERVICE_ROLE_KEY,
+            "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation"
+        }
+        
+        # Default result structure
+        result = {
+            'server_id': server_id,
+            'ip': ip,
+            'success': False,
+            'model': None,
+            'hostname': None,
+            'service_tag': None,
+            'error': None,
+            'error_type': None,
+            'logs': logs,
+            'needs_backup': False,
+            'cred_source': None,
+        }
+        
+        try:
+            log_local(f'Syncing: {ip}', 'INFO')
+            
+            # Resolve credentials using priority order
+            username, password, cred_source, used_cred_set_id = self.resolve_credentials_for_server(server)
+            result['cred_source'] = cred_source
+            
+            # Handle credential resolution failures
+            if cred_source == 'decrypt_failed':
+                error_msg = 'Encryption key not configured; cannot decrypt credentials'
+                update_data = {
+                    'connection_status': 'offline',
+                    'connection_error': error_msg,
+                    'credential_test_status': 'invalid',
+                    'credential_last_tested': datetime.utcnow().isoformat() + 'Z'
+                }
+                update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server_id}"
+                requests.patch(update_url, headers=headers, json=update_data, verify=VERIFY_SSL)
+                
+                log_local(f'✗ Cannot decrypt credentials for {ip}', 'ERROR')
+                result['error'] = error_msg
+                result['error_type'] = 'credentials'
+                return result
+            
+            if not username or not password:
+                log_local(f'✗ No credentials available for {ip}', 'WARN')
+                result['error'] = 'No credentials available'
+                result['error_type'] = 'credentials'
+                return result
+            
+            # Query iDRAC for comprehensive info
+            info = self.get_comprehensive_server_info(ip, username, password, server_id=server_id, job_id=job_id)
+            
+            if info:
+                # Define allowed server columns for update
+                allowed_fields = {
+                    "manufacturer", "model", "product_name", "service_tag", "hostname",
+                    "bios_version", "cpu_count", "memory_gb", "idrac_firmware",
+                    "manager_mac_address", "redfish_version", "supported_endpoints",
+                    "cpu_model", "cpu_cores_per_socket", "cpu_speed",
+                    "boot_mode", "boot_order", "secure_boot", "virtualization_enabled",
+                    "total_drives", "total_storage_tb", "power_state"
+                }
+                
+                # Build filtered update payload (exclude None values and credentials)
+                update_data = {k: v for k, v in info.items() if k in allowed_fields and v is not None}
+                
+                # Add status fields
+                update_data.update({
+                    'connection_status': 'online',
+                    'connection_error': None,
+                    'last_seen': datetime.utcnow().isoformat() + 'Z',
+                    'credential_test_status': 'valid',
+                    'credential_last_tested': datetime.utcnow().isoformat() + 'Z',
+                })
+                
+                # Add health fields from health_status if available
+                if info.get('health_status'):
+                    health_status = info['health_status']
+                    all_healthy = all([
+                        health_status.get('storage_healthy', True) != False,
+                        health_status.get('thermal_healthy', True) != False,
+                        health_status.get('power_healthy', True) != False
+                    ])
+                    update_data['overall_health'] = 'OK' if all_healthy else 'Warning'
+                    update_data['last_health_check'] = datetime.utcnow().isoformat() + 'Z'
+                
+                # Promote credential_set_id if we used discovered_by or ip_range and server doesn't have one
+                if not server.get('credential_set_id') and used_cred_set_id and cred_source in ['discovered_by_credential_set_id', 'ip_range']:
+                    update_data['credential_set_id'] = used_cred_set_id
+                    self.log(f"  → Promoting credential_set_id {used_cred_set_id} from {cred_source}", "INFO")
+                
+                # Mirror model to product_name if missing
+                if 'product_name' not in update_data and info.get('model'):
+                    update_data['product_name'] = info['model']
+                
+                self.log(f"  Updating {ip} with fields: {list(update_data.keys())}", "DEBUG")
+                
+                update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server_id}"
+                update_response = requests.patch(update_url, headers=headers, json=update_data, verify=VERIFY_SSL)
+                
+                if update_response.status_code in [200, 204]:
+                    log_local(f'✓ Synced: {ip} ({info.get("model", "Unknown")})', 'SUCCESS')
+                    
+                    result['success'] = True
+                    result['model'] = info.get('model')
+                    result['hostname'] = info.get('hostname')
+                    result['service_tag'] = info.get('service_tag')
+                    result['needs_backup'] = True  # Backup should be queued (orchestrator will decide)
+                    
+                    # Insert health record to server_health table if health data exists
+                    if info.get('health_status'):
+                        health_status = info['health_status']
+                        health_record = {
+                            'server_id': server_id,
+                            'timestamp': datetime.utcnow().isoformat() + 'Z',
+                            'overall_health': update_data.get('overall_health', 'Unknown'),
+                            'power_state': health_status.get('power_state') or info.get('power_state'),
+                            'storage_health': 'OK' if health_status.get('storage_healthy') else ('Warning' if health_status.get('storage_healthy') == False else None),
+                            'fan_health': health_status.get('fan_health'),
+                            'psu_health': 'OK' if health_status.get('power_healthy') else ('Warning' if health_status.get('power_healthy') == False else None),
+                            'temperature_celsius': health_status.get('temperature_celsius'),
+                            'sensors': {}
+                        }
+                        
+                        try:
+                            health_url = f"{DSM_URL}/rest/v1/server_health"
+                            health_response = requests.post(
+                                health_url,
+                                headers=headers,
+                                json=health_record,
+                                verify=VERIFY_SSL
+                            )
+                            if health_response.status_code in [200, 201]:
+                                self.log(f"  ✓ Health record saved to server_health table", "DEBUG")
+                            else:
+                                self.log(f"  Warning: Could not save health record: {health_response.status_code}", "WARN")
+                        except Exception as health_err:
+                            self.log(f"  Warning: Failed to save health record: {health_err}", "WARN")
+                    
+                    # Sync drives to server_drives table
+                    if info.get('drives'):
+                        self._sync_server_drives(server_id, info['drives'])
+                    
+                    # Sync NICs to server_nics table
+                    if info.get('nics'):
+                        self._sync_server_nics(server_id, info['nics'])
+                    
+                    # Try auto-linking to vCenter if service_tag was updated
+                    if info.get('service_tag'):
+                        self.auto_link_vcenter(server_id, info.get('service_tag'))
+                    
+                    # Create audit trail entry for server discovery
+                    self._create_server_audit_entry(
+                        server_id=server_id,
+                        job_id=job_id,
+                        action='server_discovery',
+                        summary=f"Server discovered: {info.get('model', 'Unknown')} ({info.get('service_tag', 'N/A')})",
+                        details={
+                            'bios_version': info.get('bios_version'),
+                            'idrac_firmware': info.get('idrac_firmware'),
+                            'health_status': info.get('health_status'),
+                            'event_logs_fetched': info.get('event_log_count', 0)
+                        }
+                    )
+                else:
+                    error_msg = f'DB update failed: HTTP {update_response.status_code}'
+                    log_local(f'✗ DB update failed: {ip}', 'ERROR')
+                    result['error'] = error_msg
+                    result['error_type'] = 'db_error'
+            else:
+                # Failed to query iDRAC - determine specific error cause
+                conn_result = self.test_idrac_connectivity(ip)
+                
+                if not conn_result['reachable']:
+                    error_msg = f'Host unreachable: {conn_result["message"]}'
+                    cred_status = 'unknown'
+                elif self.throttler.is_circuit_open(ip):
+                    error_msg = 'Authentication temporarily paused - possible account lockout risk after multiple failures'
+                    cred_status = 'lockout_risk'
+                else:
+                    error_msg = f'Authentication failed using {cred_source} credentials - verify username/password'
+                    cred_status = 'invalid'
+                
+                update_data = {
+                    'connection_status': 'offline',
+                    'connection_error': error_msg,
+                    'last_connection_test': datetime.utcnow().isoformat() + 'Z',
+                    'credential_test_status': cred_status,
+                }
+                
+                update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server_id}"
+                requests.patch(update_url, headers=headers, json=update_data, verify=VERIFY_SSL)
+                
+                log_local(f'✗ {error_msg}: {ip}', 'ERROR')
+                result['error'] = error_msg
+                result['error_type'] = 'auth_failed' if cred_status == 'invalid' else ('lockout_risk' if cred_status == 'lockout_risk' else 'unreachable')
+                
+        except Exception as e:
+            error_msg = f'Exception during sync: {str(e)}'
+            log_local(f'✗ {error_msg}: {ip}', 'ERROR')
+            result['error'] = error_msg
+            result['error_type'] = 'exception'
+        
+        return result
+
     def refresh_existing_servers(self, job: Dict, server_ids: List[str]):
-        """Refresh information for existing servers by querying iDRAC"""
+        """Refresh information for existing servers by querying iDRAC using parallel sync"""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
         self.log(f"Refreshing {len(server_ids)} existing server(s)")
         
         try:
@@ -1732,317 +1979,136 @@ class IdracMixin:
                 console_log.append(f'[{timestamp}] [{level}] {message}')
                 self.log(message, level)
             
-            log_console(f'Starting data sync for {total_servers} server(s)', 'INFO')
+            log_console(f'Starting data sync for {total_servers} server(s) (concurrency: 4)', 'INFO')
             
             if not should_backup_scp:
-                log_console('SCP backup disabled - skipping config backup phase', 'INFO')
+                log_console('SCP backup disabled - will not queue backup jobs', 'INFO')
             
-            for index, server in enumerate(servers):
-                ip = server['ip_address']
+            # Mark all tasks as running initially
+            for server in servers:
                 task = task_by_server.get(server['id'])
-                
-                # Calculate base progress percentage for this server
-                base_progress = int((index / total_servers) * 100) if total_servers > 0 else 0
-                
-                log_console(f'Syncing: {ip} ({index + 1}/{total_servers})', 'INFO')
-                
-                # Update job with per-server progress (preserves discovery phase details)
-                self.update_job_status(
-                    job['id'],
-                    'running',
-                    details={
-                        **base_details,  # Preserve all discovery phase details
-                        'current_stage': 'sync',
-                        'current_step': f'Syncing server {index + 1}/{total_servers}',
-                        'current_server_ip': ip,
-                        'servers_refreshed': refreshed_count,
-                        'servers_total': total_servers,
-                        'scp_completed': scp_completed,
-                        'console_log': console_log,
-                    }
-                )
-                
-                # Update task to running
                 if task:
                     self.update_task_status(
                         task['id'],
                         'running',
-                        log=f"Querying iDRAC at {ip}...",
-                        progress=base_progress,
+                        log=f"Querying iDRAC at {server['ip_address']}...",
+                        progress=0,
                         started_at=datetime.now().isoformat()
                     )
+            
+            # Update job to show sync starting
+            self.update_job_status(
+                job['id'],
+                'running',
+                details={
+                    **base_details,
+                    'current_stage': 'sync',
+                    'current_step': f'Starting parallel sync of {total_servers} server(s)',
+                    'servers_refreshed': 0,
+                    'servers_total': total_servers,
+                    'console_log': console_log,
+                }
+            )
+            
+            # Dispatch to thread pool - workers return results, don't update progress
+            # Concurrency default 4 matches throttler limit
+            max_workers = min(4, total_servers) if total_servers > 0 else 1
+            results = []
+            backup_queue = []  # Servers that need SCP backup queued
+            
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                # Submit all servers to pool
+                future_to_server = {
+                    pool.submit(self.sync_one_server, srv, fetch_options, job['id']): srv
+                    for srv in servers
+                }
                 
-                self.log(f"Refreshing server {ip}...")
-                
-                # Resolve credentials using priority order
-                username, password, cred_source, used_cred_set_id = self.resolve_credentials_for_server(server)
-                
-                # Handle credential resolution failures
-                if cred_source == 'decrypt_failed':
-                    # Update server with decryption error
-                    update_data = {
-                        'connection_status': 'offline',
-                        'connection_error': 'Encryption key not configured; cannot decrypt credentials',
-                        'credential_test_status': 'invalid',
-                        'credential_last_tested': datetime.utcnow().isoformat() + 'Z'
-                    }
-                    update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server['id']}"
-                    requests.patch(update_url, headers=headers, json=update_data, verify=VERIFY_SSL)
-                    self.log(f"  ✗ Cannot decrypt credentials for {ip}", "ERROR")
+                # Process results as they complete (main thread only - progress updates here)
+                for future in as_completed(future_to_server):
+                    try:
+                        result = future.result()
+                    except Exception as e:
+                        # Should not happen - sync_one_server catches exceptions
+                        server = future_to_server[future]
+                        result = {
+                            'server_id': server['id'],
+                            'ip': server['ip_address'],
+                            'success': False,
+                            'error': str(e),
+                            'error_type': 'exception',
+                            'logs': [f'[{datetime.utcnow().strftime("%H:%M:%S")}] [ERROR] Exception: {e}'],
+                            'needs_backup': False,
+                            'cred_source': None,
+                        }
                     
-                    # Mark task as failed
-                    if task:
-                        self.update_task_status(
-                            task['id'],
-                            'failed',
-                            log=f"✗ Cannot decrypt credentials for {ip}",
-                            progress=100,
-                            completed_at=datetime.now().isoformat()
-                        )
+                    results.append(result)
                     
-                    failed_count += 1
-                    continue
-                
-                if not username or not password:
-                    self.log(f"  ✗ No credentials available for {ip}", "WARN")
+                    # Aggregate logs to shared console_log (main thread)
+                    console_log.extend(result.get('logs', []))
                     
-                    # Mark task as failed
-                    if task:
-                        self.update_task_status(
-                            task['id'],
-                            'failed',
-                            log=f"✗ No credentials available for {ip}",
-                            progress=100,
-                            completed_at=datetime.now().isoformat()
-                        )
-                    
-                    failed_count += 1
-                    continue
-                
-                # Query iDRAC for comprehensive info
-                info = self.get_comprehensive_server_info(ip, username, password, server_id=server['id'], job_id=job['id'])
-                
-                if info:
-                    # Define allowed server columns for update
-                    allowed_fields = {
-                        "manufacturer", "model", "product_name", "service_tag", "hostname",
-                        "bios_version", "cpu_count", "memory_gb", "idrac_firmware",
-                        "manager_mac_address", "redfish_version", "supported_endpoints",
-                        "cpu_model", "cpu_cores_per_socket", "cpu_speed",
-                        "boot_mode", "boot_order", "secure_boot", "virtualization_enabled",
-                        "total_drives", "total_storage_tb", "power_state"
-                    }
-                    
-                    # Build filtered update payload (exclude None values and credentials)
-                    update_data = {k: v for k, v in info.items() if k in allowed_fields and v is not None}
-                    
-                    # Add status fields
-                    update_data.update({
-                        'connection_status': 'online',
-                        'connection_error': None,
-                        'last_seen': datetime.utcnow().isoformat() + 'Z',
-                        'credential_test_status': 'valid',
-                        'credential_last_tested': datetime.utcnow().isoformat() + 'Z',
-                    })
-                    
-                    # Add health fields from health_status if available
-                    if info.get('health_status'):
-                        health_status = info['health_status']
-                        
-                        # Calculate overall_health
-                        all_healthy = all([
-                            health_status.get('storage_healthy', True) != False,
-                            health_status.get('thermal_healthy', True) != False,
-                            health_status.get('power_healthy', True) != False
-                        ])
-                        update_data['overall_health'] = 'OK' if all_healthy else 'Warning'
-                        update_data['last_health_check'] = datetime.utcnow().isoformat() + 'Z'
-                    
-                    # Promote credential_set_id if we used discovered_by or ip_range and server doesn't have one
-                    if not server.get('credential_set_id') and used_cred_set_id and cred_source in ['discovered_by_credential_set_id', 'ip_range']:
-                        update_data['credential_set_id'] = used_cred_set_id
-                        self.log(f"  → Promoting credential_set_id {used_cred_set_id} from {cred_source}", "INFO")
-                    
-                    # Mirror model to product_name if missing
-                    if 'product_name' not in update_data and info.get('model'):
-                        update_data['product_name'] = info['model']
-                    
-                    self.log(f"  Updating {ip} with fields: {list(update_data.keys())}", "DEBUG")
-                    
-                    update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server['id']}"
-                    update_response = requests.patch(update_url, headers=headers, json=update_data, verify=VERIFY_SSL)
-                    
-                    if update_response.status_code in [200, 204]:
-                        log_console(f'✓ Synced: {ip} ({info.get("model", "Unknown")})', 'SUCCESS')
+                    # Update counters
+                    if result['success']:
                         refreshed_count += 1
-                        
-                        # Insert health record to server_health table if health data exists
-                        if info.get('health_status'):
-                            health_status = info['health_status']
-                            health_record = {
-                                'server_id': server['id'],
-                                'timestamp': datetime.utcnow().isoformat() + 'Z',
-                                'overall_health': update_data.get('overall_health', 'Unknown'),
-                                'power_state': health_status.get('power_state') or info.get('power_state'),
-                                'storage_health': 'OK' if health_status.get('storage_healthy') else ('Warning' if health_status.get('storage_healthy') == False else None),
-                                'fan_health': health_status.get('fan_health'),
-                                'psu_health': 'OK' if health_status.get('power_healthy') else ('Warning' if health_status.get('power_healthy') == False else None),
-                                'temperature_celsius': health_status.get('temperature_celsius'),
-                                'sensors': {}
-                            }
-                            
-                            try:
-                                health_url = f"{DSM_URL}/rest/v1/server_health"
-                                health_response = requests.post(
-                                    health_url,
-                                    headers=headers,
-                                    json=health_record,
-                                    verify=VERIFY_SSL
-                                )
-                                if health_response.status_code in [200, 201]:
-                                    self.log(f"  ✓ Health record saved to server_health table", "DEBUG")
-                                else:
-                                    self.log(f"  Warning: Could not save health record: {health_response.status_code}", "WARN")
-                            except Exception as health_err:
-                                self.log(f"  Warning: Failed to save health record: {health_err}", "WARN")
-                        
-                        # Sync drives to server_drives table
-                        if info.get('drives'):
-                            self._sync_server_drives(server['id'], info['drives'])
-                        
-                        # Sync NICs to server_nics table
-                        if info.get('nics'):
-                            self._sync_server_nics(server['id'], info['nics'])
-                        
-                        # Try auto-linking to vCenter if service_tag was updated
-                        if info.get('service_tag'):
-                            self.auto_link_vcenter(server['id'], info.get('service_tag'))
-                        
-                        # Mark task as completed
-                        if task:
-                            self.update_task_status(
-                                task['id'],
-                                'completed',
-                                log=f"✓ Refreshed {ip}: {info.get('model')} - {info.get('hostname')}",
-                                progress=100,
-                                completed_at=datetime.now().isoformat()
-                            )
-                        
-                        # Create audit trail entry for server discovery
-                        self._create_server_audit_entry(
-                            server_id=server['id'],
-                            job_id=job['id'],
-                            action='server_discovery',
-                            summary=f"Server discovered: {info.get('model', 'Unknown')} ({info.get('service_tag', 'N/A')})",
-                            details={
-                                'bios_version': info.get('bios_version'),
-                                'idrac_firmware': info.get('idrac_firmware'),
-                                'health_status': info.get('health_status'),
-                            'event_logs_fetched': info.get('event_log_count', 0)
-                            }
-                        )
-                        
-                        # Run SCP backup inline only if enabled in fetch_options
-                        if should_backup_scp:
-                            # Check if backup should be skipped due to staleness check
+                        # Check if backup should be queued
+                        if should_backup_scp and result.get('needs_backup'):
+                            # Check staleness before queuing
                             should_run_backup = True
                             if scp_only_if_stale:
-                                should_run_backup = self._should_backup_server(server['id'], scp_max_age_days)
+                                should_run_backup = self._should_backup_server(result['server_id'], scp_max_age_days)
                             
                             if should_run_backup:
-                                log_console(f'Backing up config: {ip}', 'INFO')
-                                
-                                # Update job to show SCP phase
-                                self.update_job_status(
-                                    job['id'],
-                                    'running',
-                                    details={
-                                        **base_details,
-                                        'current_stage': 'scp',
-                                        'current_step': f'Backing up config {refreshed_count}/{total_servers}',
-                                        'current_server_ip': ip,
-                                        'servers_refreshed': refreshed_count,
-                                        'servers_total': total_servers,
-                                        'scp_completed': scp_completed,
-                                        'console_log': console_log,
-                                    }
-                                )
-                                
-                                backup_name = f'Initial-{datetime.now().strftime("%Y%m%d-%H%M%S")}'
-                                scp_success = self._execute_inline_scp_export(
-                                    server['id'], ip, username, password, backup_name, job['id']
-                                )
-                                if scp_success:
-                                    scp_completed += 1
-                                    log_console(f'✓ Config backed up: {ip}', 'SUCCESS')
-                                else:
-                                    log_console(f'⚠ Backup failed: {ip}', 'WARN')
-                            else:
-                                self.log(f"  → Skipping SCP backup for {ip} - recent backup exists", "DEBUG")
-                                scp_completed += 1  # Count as complete since backup exists
+                                backup_queue.append(result)
                     else:
-                        error_detail = {
-                            'ip': ip,
-                            'status': update_response.status_code,
-                            'body': update_response.text[:500]
-                        }
-                        update_errors.append(error_detail)
-                        log_console(f'✗ DB update failed: {ip}', 'ERROR')
-                        
-                        # Mark task as failed
-                        if task:
-                            self.update_task_status(
-                                task['id'],
-                                'failed',
-                                log=f"✗ Failed to update DB for {ip}",
-                                progress=100,
-                                completed_at=datetime.now().isoformat()
-                            )
-                        
                         failed_count += 1
-                else:
-                    # Update as offline - failed to query iDRAC with specific error cause
-                    # Check connectivity to determine specific error message
-                    conn_result = self.test_idrac_connectivity(ip)
                     
-                    if not conn_result['reachable']:
-                        error_msg = f'Host unreachable: {conn_result["message"]}'
-                        cred_status = 'unknown'  # Can't test credentials if host is down
-                    elif self.throttler.is_circuit_open(ip):
-                        error_msg = 'Authentication temporarily paused - possible account lockout risk after multiple failures'
-                        cred_status = 'lockout_risk'
-                    else:
-                        error_msg = f'Authentication failed using {cred_source} credentials - verify username/password'
-                        cred_status = 'invalid'
-                    
-                    update_data = {
-                        'connection_status': 'offline',
-                        'connection_error': error_msg,
-                        'last_connection_test': datetime.utcnow().isoformat() + 'Z',
-                        'credential_test_status': cred_status,
-                    }
-                    
-                    update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server['id']}"
-                    requests.patch(update_url, headers=headers, json=update_data, verify=VERIFY_SSL)
-                    
-                    log_console(f'✗ {error_msg}: {ip}', 'ERROR')
-                    
-                    # Mark task as failed
+                    # Update task status (main thread)
+                    task = task_by_server.get(result['server_id'])
                     if task:
+                        last_log = result.get('logs', [''])[-1] if result.get('logs') else ''
                         self.update_task_status(
                             task['id'],
-                            'failed',
-                            log=f"✗ {error_msg}",
+                            'completed' if result['success'] else 'failed',
+                            log=last_log,
                             progress=100,
                             completed_at=datetime.now().isoformat()
                         )
                     
-                    failed_count += 1
+                    # Update job progress (main thread) - show completed count
+                    completed_count = refreshed_count + failed_count
+                    self.update_job_status(
+                        job['id'],
+                        'running',
+                        details={
+                            **base_details,
+                            'current_stage': 'sync',
+                            'current_step': f'Synced {completed_count}/{total_servers} server(s)',
+                            'servers_refreshed': refreshed_count,
+                            'servers_failed': failed_count,
+                            'servers_total': total_servers,
+                            'console_log': console_log,
+                        }
+                    )
+            
+            # After all syncs complete, queue backup jobs for servers that need it
+            backups_queued = 0
+            if backup_queue:
+                log_console(f'Queuing {len(backup_queue)} config backup job(s)', 'INFO')
+                for result in backup_queue:
+                    try:
+                        self._create_automatic_scp_backup_job(result['server_id'], job['id'])
+                        backups_queued += 1
+                    except Exception as backup_err:
+                        self.log(f"  Failed to queue backup for {result['ip']}: {backup_err}", "WARN")
+                
+                if backups_queued > 0:
+                    log_console(f'✓ Queued {backups_queued} backup job(s) - will run separately', 'SUCCESS')
             
             # Complete the job
             summary = f"Synced {refreshed_count} server(s)"
             if failed_count > 0:
                 summary += f", {failed_count} failed"
+            if backups_queued > 0:
+                summary += f", {backups_queued} backup(s) queued"
             
             log_console(f'Discovery complete: {summary}', 'SUCCESS')
             
@@ -2051,14 +2117,12 @@ class IdracMixin:
                 'summary': summary,
                 'synced': refreshed_count,
                 'failed': failed_count,
-                'scp_completed': scp_completed,  # SCP backups run inline
+                'backups_queued': backups_queued,  # SCP backups queued as separate jobs
                 'servers_refreshed': refreshed_count,
                 'servers_total': total_servers,
                 'current_stage': 'complete',
                 'console_log': console_log,
             }
-            if update_errors:
-                job_details['update_errors'] = update_errors
             
             # Note: Do not set completed status here when called from discovery
             # Discovery handler will handle final completion
