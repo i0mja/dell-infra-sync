@@ -5383,6 +5383,7 @@ export type Database = {
         | "openmanage_api"
         | "ldap_api"
         | "ssh_command"
+        | "idrac_api_fallback"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -5610,6 +5611,7 @@ export const Constants = {
         "openmanage_api",
         "ldap_api",
         "ssh_command",
+        "idrac_api_fallback",
       ],
     },
   },
