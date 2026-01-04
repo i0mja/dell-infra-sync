@@ -35,6 +35,7 @@ interface DiscoveryScanLiveProgressProps {
     inAuthenticating: number;
     inSyncing: number;
     inScp: number;
+    activeServerIps?: string[];
   };
   ipsProcessed: number;
   ipsTotal: number;
@@ -117,18 +118,30 @@ export function DiscoveryScanLiveProgress({
   };
 
   const formatCurrentOperation = () => {
-    // Use currentStep if available (more descriptive from backend)
+    // Use currentStep if available (more descriptive from backend - includes active server IPs)
     if (currentStep) return currentStep;
+    
+    // During sync phase, show active servers from activeCounts
+    if (currentStage === 'sync') {
+      const activeIps = activeCounts.activeServerIps ?? [];
+      if (activeIps.length > 0) {
+        if (activeIps.length <= 3) {
+          return `Syncing: ${activeIps.join(', ')}`;
+        }
+        return `Syncing: ${activeIps.slice(0, 2).join(', ')} +${activeIps.length - 2} more`;
+      }
+      if (activeCounts.inSyncing > 0) {
+        return `Syncing ${activeCounts.inSyncing} server(s)...`;
+      }
+      if (currentServerIp) {
+        return `Syncing data: ${currentServerIp}`;
+      }
+    }
     
     // During SCP phase, show server IP and progress
     if (currentStage === 'scp' && currentServerIp) {
       const progressStr = scpProgress ? ` (${scpProgress}%)` : '';
       return `Backing up config: ${currentServerIp}${progressStr}`;
-    }
-    
-    // During sync phase, show server IP
-    if (currentStage === 'sync' && currentServerIp) {
-      return `Syncing data: ${currentServerIp}`;
     }
     
     if (!currentIp && !currentStage) return null;

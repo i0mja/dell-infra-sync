@@ -2006,6 +2006,7 @@ class IdracMixin:
                     'current_step': f'Starting parallel sync of {total_servers} server(s)',
                     'servers_refreshed': 0,
                     'servers_total': total_servers,
+                    'in_syncing': min(4, total_servers),
                     'console_log': console_log,
                 }
             )
@@ -2016,10 +2017,27 @@ class IdracMixin:
             results = []
             backup_queue = []  # Servers that need SCP backup queued
             
+            # Thread-safe tracking of active servers (for progress display)
+            import threading
+            active_servers_lock = threading.Lock()
+            active_servers = {}  # server_id -> {'ip': str, 'started': str}
+            
+            def tracked_sync(srv):
+                """Wrapper to track active servers during sync"""
+                server_id = srv['id']
+                ip = srv['ip_address']
+                with active_servers_lock:
+                    active_servers[server_id] = {'ip': ip, 'started': datetime.utcnow().isoformat()}
+                try:
+                    return self.sync_one_server(srv, fetch_options, job['id'])
+                finally:
+                    with active_servers_lock:
+                        active_servers.pop(server_id, None)
+            
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                # Submit all servers to pool
+                # Submit all servers to pool with tracking wrapper
                 future_to_server = {
-                    pool.submit(self.sync_one_server, srv, fetch_options, job['id']): srv
+                    pool.submit(tracked_sync, srv): srv
                     for srv in servers
                 }
                 
@@ -2073,15 +2091,35 @@ class IdracMixin:
                             completed_at=datetime.now().isoformat()
                         )
                     
-                    # Update job progress (main thread) - show completed count
+                    # Update job progress (main thread) - show completed count and active servers
                     completed_count = refreshed_count + failed_count
+                    remaining = total_servers - completed_count
+                    
+                    # Get snapshot of currently active servers for progress display
+                    with active_servers_lock:
+                        current_active = list(active_servers.values())
+                    active_ips = [s['ip'] for s in current_active]
+                    in_syncing = len(active_ips)
+                    
+                    # Build human-readable current step
+                    if in_syncing > 0:
+                        if in_syncing <= 3:
+                            current_step = f'Syncing: {", ".join(active_ips)}'
+                        else:
+                            current_step = f'Syncing: {", ".join(active_ips[:2])} +{in_syncing - 2} more'
+                    else:
+                        current_step = f'Synced {completed_count}/{total_servers} server(s)'
+                    
                     self.update_job_status(
                         job['id'],
                         'running',
                         details={
                             **base_details,
                             'current_stage': 'sync',
-                            'current_step': f'Synced {completed_count}/{total_servers} server(s)',
+                            'current_step': current_step,
+                            'current_server_ip': active_ips[0] if active_ips else None,
+                            'active_server_ips': active_ips,
+                            'in_syncing': in_syncing,
                             'servers_refreshed': refreshed_count,
                             'servers_failed': failed_count,
                             'servers_total': total_servers,

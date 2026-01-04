@@ -223,6 +223,7 @@ export function DiscoveryScanJobView({ job }: DiscoveryScanJobViewProps) {
               inAuthenticating: progress.inAuthenticating,
               inSyncing: progress.inSyncing,
               inScp: progress.inScp,
+              activeServerIps: progress.activeServerIps,
             }}
             ipsProcessed={progress.ipsProcessed}
             ipsTotal={progress.ipsTotal}
