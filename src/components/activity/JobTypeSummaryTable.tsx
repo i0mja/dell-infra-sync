@@ -276,7 +276,7 @@ export function JobTypeSummaryTable({
                             </DropdownMenuItem>
                           </>
                         )}
-                        {(summary.stats.runningCount > 0 || summary.stats.pendingCount > 0) && canManage && onCancelJobs && (
+                        {canManage && onCancelJobs && (
                           <>
                             <DropdownMenuSeparator />
                             <DropdownMenuSub>
@@ -288,55 +288,63 @@ export function JobTypeSummaryTable({
                                 Cancel Jobs
                               </DropdownMenuSubTrigger>
                               <DropdownMenuSubContent>
-                                {summary.stats.runningCount > 0 && (
-                                  <DropdownMenuItem 
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      onCancelJobs(
-                                        summary.activeJobs.running.map(j => j.id), 
-                                        'running'
-                                      );
-                                    }}
-                                    className="text-destructive focus:text-destructive"
-                                  >
-                                    <Loader2 className="mr-2 h-4 w-4" />
-                                    Cancel Running ({summary.stats.runningCount})
+                                {summary.stats.runningCount === 0 && summary.stats.pendingCount === 0 ? (
+                                  <DropdownMenuItem disabled className="text-muted-foreground">
+                                    No active jobs to cancel
                                   </DropdownMenuItem>
-                                )}
-                                {summary.stats.pendingCount > 0 && (
-                                  <DropdownMenuItem 
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      onCancelJobs(
-                                        summary.activeJobs.pending.map(j => j.id), 
-                                        'pending'
-                                      );
-                                    }}
-                                    className="text-destructive focus:text-destructive"
-                                  >
-                                    <Clock className="mr-2 h-4 w-4" />
-                                    Cancel Pending ({summary.stats.pendingCount})
-                                  </DropdownMenuItem>
-                                )}
-                                {summary.stats.runningCount > 0 && summary.stats.pendingCount > 0 && (
+                                ) : (
                                   <>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem 
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        onCancelJobs(
-                                          [
-                                            ...summary.activeJobs.running.map(j => j.id),
-                                            ...summary.activeJobs.pending.map(j => j.id),
-                                          ], 
-                                          'all'
-                                        );
-                                      }}
-                                      className="text-destructive focus:text-destructive font-medium"
-                                    >
-                                      <XCircle className="mr-2 h-4 w-4" />
-                                      Cancel All Active ({summary.stats.runningCount + summary.stats.pendingCount})
-                                    </DropdownMenuItem>
+                                    {summary.stats.runningCount > 0 && (
+                                      <DropdownMenuItem 
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          onCancelJobs(
+                                            summary.activeJobs.running.map(j => j.id), 
+                                            'running'
+                                          );
+                                        }}
+                                        className="text-destructive focus:text-destructive"
+                                      >
+                                        <Loader2 className="mr-2 h-4 w-4" />
+                                        Cancel Running ({summary.stats.runningCount})
+                                      </DropdownMenuItem>
+                                    )}
+                                    {summary.stats.pendingCount > 0 && (
+                                      <DropdownMenuItem 
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          onCancelJobs(
+                                            summary.activeJobs.pending.map(j => j.id), 
+                                            'pending'
+                                          );
+                                        }}
+                                        className="text-destructive focus:text-destructive"
+                                      >
+                                        <Clock className="mr-2 h-4 w-4" />
+                                        Cancel Pending ({summary.stats.pendingCount})
+                                      </DropdownMenuItem>
+                                    )}
+                                    {summary.stats.runningCount > 0 && summary.stats.pendingCount > 0 && (
+                                      <>
+                                        <DropdownMenuSeparator />
+                                        <DropdownMenuItem 
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            onCancelJobs(
+                                              [
+                                                ...summary.activeJobs.running.map(j => j.id),
+                                                ...summary.activeJobs.pending.map(j => j.id),
+                                              ], 
+                                              'all'
+                                            );
+                                          }}
+                                          className="text-destructive focus:text-destructive font-medium"
+                                        >
+                                          <XCircle className="mr-2 h-4 w-4" />
+                                          Cancel All Active ({summary.stats.runningCount + summary.stats.pendingCount})
+                                        </DropdownMenuItem>
+                                      </>
+                                    )}
                                   </>
                                 )}
                               </DropdownMenuSubContent>
