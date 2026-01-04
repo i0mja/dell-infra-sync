@@ -984,8 +984,9 @@ class IdracMixin:
                             timeout=(2, 30)
                         )
                         
-                        # Log controller fetch
+                        # Log controller fetch - mark as fallback_attempt if it failed (expected for some controllers)
                         controller_id = controller_item['@odata.id'].split('/')[-1]
+                        expand_succeeded = ctrl_resp is not None and ctrl_resp.status_code == 200
                         self.log_idrac_command(
                             server_id=server_id,
                             job_id=job_id,
@@ -998,8 +999,9 @@ class IdracMixin:
                             status_code=ctrl_resp.status_code if ctrl_resp else None,
                             response_time_ms=ctrl_time,
                             response_body=None,
-                            success=ctrl_resp is not None and ctrl_resp.status_code == 200,
-                            operation_type='idrac_api'
+                            success=expand_succeeded,
+                            # Use 'idrac_api_fallback' for expected $expand failures so they don't show as errors
+                            operation_type='idrac_api' if expand_succeeded else 'idrac_api_fallback'
                         )
                         
                         if not ctrl_resp or ctrl_resp.status_code != 200:
@@ -1060,7 +1062,8 @@ class IdracMixin:
                             timeout=(2, 20)
                         )
                         
-                        # Log volumes fetch
+                        # Log volumes fetch - mark as fallback_attempt if it failed
+                        vol_succeeded = vol_resp is not None and vol_resp.status_code == 200
                         self.log_idrac_command(
                             server_id=server_id,
                             job_id=job_id,
@@ -1073,8 +1076,8 @@ class IdracMixin:
                             status_code=vol_resp.status_code if vol_resp else None,
                             response_time_ms=vol_time,
                             response_body=None,
-                            success=vol_resp is not None and vol_resp.status_code == 200,
-                            operation_type='idrac_api'
+                            success=vol_succeeded,
+                            operation_type='idrac_api' if vol_succeeded else 'idrac_api_fallback'
                         )
                         
                         if vol_resp and vol_resp.status_code == 200:
@@ -1417,7 +1420,8 @@ class IdracMixin:
                 timeout=(2, 30)
             )
             
-            # Log the network adapters API call
+            # Log the network adapters API call - mark as fallback_attempt if it failed
+            adapters_succeeded = adapters_response is not None and adapters_response.status_code == 200
             self.log_idrac_command(
                 server_id=server_id,
                 job_id=job_id,
@@ -1430,9 +1434,9 @@ class IdracMixin:
                 status_code=adapters_response.status_code if adapters_response else None,
                 response_time_ms=adapters_time,
                 response_body=None,
-                success=adapters_response is not None and adapters_response.status_code == 200,
+                success=adapters_succeeded,
                 error_message=adapters_response.text[:200] if adapters_response and adapters_response.status_code != 200 else None,
-                operation_type='idrac_api'
+                operation_type='idrac_api' if adapters_succeeded else 'idrac_api_fallback'
             )
             
             # Fallback to non-expanded if $expand not supported
@@ -1532,7 +1536,8 @@ class IdracMixin:
                             timeout=(2, 30)
                         )
                         
-                        # Log functions fetch
+                        # Log functions fetch - mark as fallback_attempt if it failed
+                        funcs_succeeded = functions_resp is not None and functions_resp.status_code == 200
                         self.log_idrac_command(
                             server_id=server_id,
                             job_id=job_id,
@@ -1545,8 +1550,8 @@ class IdracMixin:
                             status_code=functions_resp.status_code if functions_resp else None,
                             response_time_ms=functions_time,
                             response_body=None,
-                            success=functions_resp is not None and functions_resp.status_code == 200,
-                            operation_type='idrac_api'
+                            success=funcs_succeeded,
+                            operation_type='idrac_api' if funcs_succeeded else 'idrac_api_fallback'
                         )
                         
                         # Fallback without $expand
