@@ -23,11 +23,24 @@ const MESSAGE_PATTERNS: Array<{ pattern: RegExp; message: string | ((match: RegE
   { pattern: /⊗ (\d+) IPs filtered \(port closed\)/i, message: (m) => `${m[1]} IPs skipped (no response)` },
   { pattern: /⊗ (\d+) IPs filtered \(not iDRAC\)/i, message: (m) => `${m[1]} IPs skipped (not Dell iDRAC)` },
   
-  // Server refresh
+  // Server refresh / sync
   { pattern: /Auto-triggering full refresh/i, message: 'Starting server data sync...' },
   { pattern: /✓ Auto-refresh completed/i, message: 'Server data synchronized' },
   { pattern: /Refreshing (\d+) servers with full info/i, message: (m) => `Syncing data from ${m[1]} servers` },
   { pattern: /Server (\d+)\/(\d+): (.+?) \((.+?)\)/i, message: (m) => `Server ${m[1]}/${m[2]}: ${m[3]}` },
+  
+  // Sync step visibility - storage
+  { pattern: /→ Reading storage: found (\d+) drive\(s\)/i, message: (m) => `Found ${m[1]} storage drives` },
+  { pattern: /Saving (\d+) drives \(([^)]+)\)/i, message: (m) => `Saving ${m[1]} drives (${m[2]})` },
+  { pattern: /✓ Saved (\d+) drives/i, message: (m) => `Saved ${m[1]} drives to database` },
+  { pattern: /⚠ Drive sync error/i, message: 'Error saving drive data' },
+  { pattern: /⚠ Drive sync timeout/i, message: 'Drive save timed out' },
+  
+  // Sync step visibility - NICs
+  { pattern: /→ Reading NICs: found (\d+) adapter\(s\)/i, message: (m) => `Found ${m[1]} network adapters` },
+  { pattern: /Saving (\d+) NICs/i, message: (m) => `Saving ${m[1]} NICs` },
+  { pattern: /✓ Saved (\d+) NICs/i, message: (m) => `Saved ${m[1]} NICs to database` },
+  { pattern: /⚠ NIC sync error/i, message: 'Error saving NIC data' },
   
   // SCP backup
   { pattern: /Starting SCP export for (.+)/i, message: (m) => `Backing up ${m[1]} configuration` },
