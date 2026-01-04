@@ -263,7 +263,7 @@ export function useGlobalSearch() {
                     category: 'servers',
                     title: server.hostname || server.ip_address,
                     subtitle: `Drive: ${driveInfo}${slotInfo ? ` • ${slotInfo}` : ''}${drive.media_type ? ` • ${drive.media_type}` : ''}`,
-                    path: `/servers?selected=${server.id}`,
+              path: `/servers?server=${server.id}`,
                     metadata: { 
                       service_tag: server.service_tag,
                       matched_drive: { serial: drive.serial_number, wwn: drive.wwn, model: drive.model }
