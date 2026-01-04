@@ -2918,15 +2918,22 @@ export type Database = {
           manufacturer: string | null
           media_type: string | null
           model: string | null
+          naa: string | null
           name: string | null
           part_number: string | null
           predicted_failure: boolean | null
           protocol: string | null
+          raid_level: string | null
           rotation_speed_rpm: number | null
           serial_number: string | null
           server_id: string
           slot: string | null
+          span_depth: number | null
+          span_length: number | null
           status: string | null
+          volume_id: string | null
+          volume_name: string | null
+          wwn: string | null
         }
         Insert: {
           capable_speed_gbps?: number | null
@@ -2944,15 +2951,22 @@ export type Database = {
           manufacturer?: string | null
           media_type?: string | null
           model?: string | null
+          naa?: string | null
           name?: string | null
           part_number?: string | null
           predicted_failure?: boolean | null
           protocol?: string | null
+          raid_level?: string | null
           rotation_speed_rpm?: number | null
           serial_number?: string | null
           server_id: string
           slot?: string | null
+          span_depth?: number | null
+          span_length?: number | null
           status?: string | null
+          volume_id?: string | null
+          volume_name?: string | null
+          wwn?: string | null
         }
         Update: {
           capable_speed_gbps?: number | null
@@ -2970,15 +2984,22 @@ export type Database = {
           manufacturer?: string | null
           media_type?: string | null
           model?: string | null
+          naa?: string | null
           name?: string | null
           part_number?: string | null
           predicted_failure?: boolean | null
           protocol?: string | null
+          raid_level?: string | null
           rotation_speed_rpm?: number | null
           serial_number?: string | null
           server_id?: string
           slot?: string | null
+          span_depth?: number | null
+          span_length?: number | null
           status?: string | null
+          volume_id?: string | null
+          volume_name?: string | null
+          wwn?: string | null
         }
         Relationships: [
           {
