@@ -128,6 +128,10 @@ function formatCommand(cmd: any): RecentCommand {
   
   const durationMs = cmd.response_time_ms ?? 0;
   const duration = durationMs > 0 ? `${durationMs}ms` : '—';
+  
+  // Treat 'idrac_api_fallback' operations as successful (expected $expand failures that trigger fallback)
+  const isFallbackAttempt = cmd.operation_type === 'idrac_api_fallback';
+  const effectiveSuccess = isFallbackAttempt ? true : cmd.success;
 
   return {
     id: cmd.id,
@@ -139,7 +143,7 @@ function formatCommand(cmd: any): RecentCommand {
     duration,
     durationMs,
     statusCode: cmd.status_code,
-    success: cmd.success,
+    success: effectiveSuccess,
     serverIp: extractServerIp(cmd.full_url),
   };
 }
@@ -193,7 +197,7 @@ export function useIdracCommandsProgress(jobId: string | null, enabled: boolean 
     const fetchRecent = async () => {
       const { data, error } = await supabase
         .from('idrac_commands')
-        .select('id, timestamp, endpoint, full_url, status_code, response_time_ms, success')
+        .select('id, timestamp, endpoint, full_url, status_code, response_time_ms, success, operation_type')
         .eq('job_id', jobId)
         .order('timestamp', { ascending: false })
         .limit(50);
