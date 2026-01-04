@@ -1189,20 +1189,30 @@ class IdracMixin:
                 self.log(f"  ⚠ No drives to sync for server {server_id}", "WARN")
                 return
             
+            # Log before attempting upsert for visibility
+            self.log(f"  Syncing {len(drive_records)} drives for server {server_id}", "DEBUG")
+            
             # on_conflict in URL query string, resolution in Prefer header
             upsert_url = f"{DSM_URL}/rest/v1/server_drives?on_conflict=server_id,drive_identifier"
-            response = requests.post(
-                upsert_url, 
-                headers=headers, 
-                json=drive_records, 
-                verify=VERIFY_SSL,
-                timeout=30
-            )
-            
-            if response.status_code in [200, 201, 204]:
-                self.log(f"  ✓ Synced {len(drive_records)} drives in single request", "DEBUG")
-            else:
-                self.log(f"  Warning: Bulk drive sync returned {response.status_code}: {response.text[:200]}", "WARN")
+            try:
+                response = requests.post(
+                    upsert_url, 
+                    headers=headers, 
+                    json=drive_records, 
+                    verify=VERIFY_SSL,
+                    timeout=30
+                )
+                
+                if response.status_code in [200, 201, 204]:
+                    self.log(f"  ✓ Synced {len(drive_records)} drives in single request", "DEBUG")
+                else:
+                    # Log full error for debugging
+                    self.log(f"  ⚠ Bulk drive sync failed: HTTP {response.status_code}", "WARN")
+                    self.log(f"  Response: {response.text[:500]}", "DEBUG")
+            except requests.exceptions.Timeout:
+                self.log(f"  ⚠ Drive sync timeout for server {server_id}", "WARN")
+            except requests.exceptions.RequestException as e:
+                self.log(f"  ⚠ Drive sync request failed for server {server_id}: {e}", "WARN")
                 
         except Exception as e:
             self.log(f"  Error syncing drives for server {server_id}: {e}", "WARN")
