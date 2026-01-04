@@ -893,6 +893,7 @@ class IdracMixin:
         Fetch drive inventory using Dell Redfish Storage API with $expand optimization.
         
         OPTIMIZED: Uses $expand to reduce N+1 queries to 1-2 calls per controller.
+        All API calls are logged to idrac_commands for visibility.
         
         Dell Redfish Pattern:
         1. GET /redfish/v1/Systems/System.Embedded.1/Storage?$expand=Members → controllers with data
@@ -915,6 +916,24 @@ class IdracMixin:
                 timeout=(2, 30)  # Longer timeout for expanded data
             )
             
+            # Log the storage controllers API call
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job_id,
+                task_id=None,
+                command_type='GET',
+                endpoint='/redfish/v1/Systems/System.Embedded.1/Storage?$expand=Members',
+                full_url=storage_url,
+                request_headers=None,
+                request_body=None,
+                status_code=storage_response.status_code if storage_response else None,
+                response_time_ms=storage_time,
+                response_body=None,  # Don't log large response bodies
+                success=storage_response is not None and storage_response.status_code == 200,
+                error_message=storage_response.text[:200] if storage_response and storage_response.status_code != 200 else None,
+                operation_type='idrac_api'
+            )
+            
             # Fallback to non-expanded if $expand not supported
             if not storage_response or storage_response.status_code != 200:
                 storage_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Storage"
@@ -925,6 +944,23 @@ class IdracMixin:
                     logger=self.log,
                     auth=(username, password),
                     timeout=(2, 15)
+                )
+                
+                # Log fallback call
+                self.log_idrac_command(
+                    server_id=server_id,
+                    job_id=job_id,
+                    task_id=None,
+                    command_type='GET',
+                    endpoint='/redfish/v1/Systems/System.Embedded.1/Storage',
+                    full_url=storage_url,
+                    request_headers=None,
+                    request_body=None,
+                    status_code=storage_response.status_code if storage_response else None,
+                    response_time_ms=storage_time,
+                    response_body=None,
+                    success=storage_response is not None and storage_response.status_code == 200,
+                    operation_type='idrac_api'
                 )
             
             if not storage_response or storage_response.status_code != 200:
@@ -939,7 +975,7 @@ class IdracMixin:
                     if '@odata.id' in controller_item and 'Id' not in controller_item:
                         # Need to fetch controller with $expand=Drives,Volumes
                         controller_url = f"https://{ip}{controller_item['@odata.id']}?$expand=Drives,Volumes"
-                        ctrl_resp, _ = self.throttler.request_with_safety(
+                        ctrl_resp, ctrl_time = self.throttler.request_with_safety(
                             method='GET',
                             url=controller_url,
                             ip=ip,
@@ -948,10 +984,28 @@ class IdracMixin:
                             timeout=(2, 30)
                         )
                         
+                        # Log controller fetch
+                        controller_id = controller_item['@odata.id'].split('/')[-1]
+                        self.log_idrac_command(
+                            server_id=server_id,
+                            job_id=job_id,
+                            task_id=None,
+                            command_type='GET',
+                            endpoint=f'/Storage/{controller_id}?$expand',
+                            full_url=controller_url,
+                            request_headers=None,
+                            request_body=None,
+                            status_code=ctrl_resp.status_code if ctrl_resp else None,
+                            response_time_ms=ctrl_time,
+                            response_body=None,
+                            success=ctrl_resp is not None and ctrl_resp.status_code == 200,
+                            operation_type='idrac_api'
+                        )
+                        
                         if not ctrl_resp or ctrl_resp.status_code != 200:
                             # Fallback without $expand
                             controller_url = f"https://{ip}{controller_item['@odata.id']}"
-                            ctrl_resp, _ = self.throttler.request_with_safety(
+                            ctrl_resp, ctrl_time = self.throttler.request_with_safety(
                                 method='GET',
                                 url=controller_url,
                                 ip=ip,
@@ -959,6 +1013,24 @@ class IdracMixin:
                                 auth=(username, password),
                                 timeout=(2, 15)
                             )
+                            
+                            # Log fallback
+                            self.log_idrac_command(
+                                server_id=server_id,
+                                job_id=job_id,
+                                task_id=None,
+                                command_type='GET',
+                                endpoint=f'/Storage/{controller_id}',
+                                full_url=controller_url,
+                                request_headers=None,
+                                request_body=None,
+                                status_code=ctrl_resp.status_code if ctrl_resp else None,
+                                response_time_ms=ctrl_time,
+                                response_body=None,
+                                success=ctrl_resp is not None and ctrl_resp.status_code == 200,
+                                operation_type='idrac_api'
+                            )
+                            
                             if not ctrl_resp or ctrl_resp.status_code != 200:
                                 continue
                         
@@ -979,7 +1051,7 @@ class IdracMixin:
                     elif isinstance(volumes, dict) and '@odata.id' in volumes:
                         # Need to fetch volumes separately with $expand
                         volumes_url = f"https://{ip}{volumes['@odata.id']}?$expand=Members"
-                        vol_resp, _ = self.throttler.request_with_safety(
+                        vol_resp, vol_time = self.throttler.request_with_safety(
                             method='GET',
                             url=volumes_url,
                             ip=ip,
@@ -987,6 +1059,24 @@ class IdracMixin:
                             auth=(username, password),
                             timeout=(2, 20)
                         )
+                        
+                        # Log volumes fetch
+                        self.log_idrac_command(
+                            server_id=server_id,
+                            job_id=job_id,
+                            task_id=None,
+                            command_type='GET',
+                            endpoint=f'/Storage/{controller_name}/Volumes?$expand',
+                            full_url=volumes_url,
+                            request_headers=None,
+                            request_body=None,
+                            status_code=vol_resp.status_code if vol_resp else None,
+                            response_time_ms=vol_time,
+                            response_body=None,
+                            success=vol_resp is not None and vol_resp.status_code == 200,
+                            operation_type='idrac_api'
+                        )
+                        
                         if vol_resp and vol_resp.status_code == 200:
                             vol_collection = vol_resp.json()
                             for vol in vol_collection.get('Members', []):
@@ -1004,7 +1094,7 @@ class IdracMixin:
                             elif '@odata.id' in drive_item:
                                 # Need to fetch individual drive
                                 drive_url = f"https://{ip}{drive_item['@odata.id']}"
-                                drive_resp, _ = self.throttler.request_with_safety(
+                                drive_resp, drive_time = self.throttler.request_with_safety(
                                     method='GET',
                                     url=drive_url,
                                     ip=ip,
@@ -1012,6 +1102,25 @@ class IdracMixin:
                                     auth=(username, password),
                                     timeout=(2, 15)
                                 )
+                                
+                                # Log individual drive fetch
+                                drive_id = drive_item['@odata.id'].split('/')[-1]
+                                self.log_idrac_command(
+                                    server_id=server_id,
+                                    job_id=job_id,
+                                    task_id=None,
+                                    command_type='GET',
+                                    endpoint=f'/Drives/{drive_id}',
+                                    full_url=drive_url,
+                                    request_headers=None,
+                                    request_body=None,
+                                    status_code=drive_resp.status_code if drive_resp else None,
+                                    response_time_ms=drive_time,
+                                    response_body=None,
+                                    success=drive_resp is not None and drive_resp.status_code == 200,
+                                    operation_type='idrac_api'
+                                )
+                                
                                 if not drive_resp or drive_resp.status_code != 200:
                                     continue
                                 drive_data = drive_resp.json()
@@ -1034,6 +1143,23 @@ class IdracMixin:
             
         except Exception as e:
             self.log(f"  Could not fetch storage drives: {e}", "DEBUG")
+            # Log the exception
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job_id,
+                task_id=None,
+                command_type='ERROR',
+                endpoint='_fetch_storage_drives',
+                full_url=f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Storage",
+                request_headers=None,
+                request_body=None,
+                status_code=None,
+                response_time_ms=0,
+                response_body=None,
+                success=False,
+                error_message=str(e)[:200],
+                operation_type='idrac_api'
+            )
             return []
     
     def _map_volume_to_drives(self, vol_data: Dict, volumes_info: Dict, controller_name: str):
@@ -1130,14 +1256,16 @@ class IdracMixin:
         except Exception as e:
             return None
     
-    def _sync_server_drives(self, server_id: str, drives: List[Dict], log_fn=None):
+    def _sync_server_drives(self, server_id: str, drives: List[Dict], log_fn=None, job_id: str = None):
         """Sync drive inventory to server_drives table using bulk upsert
         
         Args:
             server_id: The server UUID
             drives: List of drive dictionaries from iDRAC
             log_fn: Optional callback for console logging (displays in UI)
+            job_id: Optional job ID for logging visibility
         """
+        import time as timing_module
         try:
             # Correct PostgREST upsert headers - Prefer header for resolution
             headers = {
@@ -1207,12 +1335,32 @@ class IdracMixin:
             # Use constraint name for on_conflict (PostgREST requirement)
             upsert_url = f"{DSM_URL}/rest/v1/server_drives?on_conflict=server_drives_server_id_drive_identifier_key"
             try:
+                start_time = timing_module.time()
                 response = requests.post(
                     upsert_url, 
                     headers=headers, 
                     json=drive_records, 
                     verify=VERIFY_SSL,
                     timeout=30
+                )
+                response_time_ms = int((timing_module.time() - start_time) * 1000)
+                
+                # Log database sync operation for visibility
+                self.log_idrac_command(
+                    server_id=server_id,
+                    job_id=job_id,
+                    task_id=None,
+                    command_type='DB_SYNC',
+                    endpoint='/server_drives (upsert)',
+                    full_url=upsert_url,
+                    request_headers=None,
+                    request_body={'drive_count': len(drive_records), 'total_tb': total_tb},
+                    status_code=response.status_code,
+                    response_time_ms=response_time_ms,
+                    response_body=None,
+                    success=response.status_code in [200, 201, 204],
+                    error_message=response.text[:200] if response.status_code not in [200, 201, 204] else None,
+                    operation_type='idrac_api'
                 )
                 
                 if response.status_code in [200, 201, 204]:
@@ -1245,6 +1393,7 @@ class IdracMixin:
     def _fetch_network_adapters(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None) -> List[Dict]:
         """
         Fetch NIC inventory using Dell Redfish Network Adapters API with $expand optimization.
+        All API calls are logged to idrac_commands for visibility.
         
         OPTIMIZED: Uses $expand to reduce N+1 queries.
         
@@ -1259,7 +1408,7 @@ class IdracMixin:
         try:
             # OPTIMIZED: Get network adapters with $expand
             adapters_url = f"https://{ip}/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters?$expand=Members"
-            adapters_response, _ = self.throttler.request_with_safety(
+            adapters_response, adapters_time = self.throttler.request_with_safety(
                 method='GET',
                 url=adapters_url,
                 ip=ip,
@@ -1268,16 +1417,51 @@ class IdracMixin:
                 timeout=(2, 30)
             )
             
+            # Log the network adapters API call
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job_id,
+                task_id=None,
+                command_type='GET',
+                endpoint='/NetworkAdapters?$expand=Members',
+                full_url=adapters_url,
+                request_headers=None,
+                request_body=None,
+                status_code=adapters_response.status_code if adapters_response else None,
+                response_time_ms=adapters_time,
+                response_body=None,
+                success=adapters_response is not None and adapters_response.status_code == 200,
+                error_message=adapters_response.text[:200] if adapters_response and adapters_response.status_code != 200 else None,
+                operation_type='idrac_api'
+            )
+            
             # Fallback to non-expanded if $expand not supported
             if not adapters_response or adapters_response.status_code != 200:
                 adapters_url = f"https://{ip}/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters"
-                adapters_response, _ = self.throttler.request_with_safety(
+                adapters_response, adapters_time = self.throttler.request_with_safety(
                     method='GET',
                     url=adapters_url,
                     ip=ip,
                     logger=self.log,
                     auth=(username, password),
                     timeout=(2, 15)
+                )
+                
+                # Log fallback call
+                self.log_idrac_command(
+                    server_id=server_id,
+                    job_id=job_id,
+                    task_id=None,
+                    command_type='GET',
+                    endpoint='/NetworkAdapters',
+                    full_url=adapters_url,
+                    request_headers=None,
+                    request_body=None,
+                    status_code=adapters_response.status_code if adapters_response else None,
+                    response_time_ms=adapters_time,
+                    response_body=None,
+                    success=adapters_response is not None and adapters_response.status_code == 200,
+                    operation_type='idrac_api'
                 )
             
             if not adapters_response or adapters_response.status_code != 200:
@@ -1294,13 +1478,31 @@ class IdracMixin:
                     elif '@odata.id' in adapter_item:
                         # Need to fetch adapter
                         adapter_url = f"https://{ip}{adapter_item['@odata.id']}"
-                        adapter_resp, _ = self.throttler.request_with_safety(
+                        adapter_resp, adapter_time = self.throttler.request_with_safety(
                             method='GET',
                             url=adapter_url,
                             ip=ip,
                             logger=self.log,
                             auth=(username, password),
                             timeout=(2, 15)
+                        )
+                        
+                        # Log adapter fetch
+                        adapter_id = adapter_item['@odata.id'].split('/')[-1]
+                        self.log_idrac_command(
+                            server_id=server_id,
+                            job_id=job_id,
+                            task_id=None,
+                            command_type='GET',
+                            endpoint=f'/NetworkAdapters/{adapter_id}',
+                            full_url=adapter_url,
+                            request_headers=None,
+                            request_body=None,
+                            status_code=adapter_resp.status_code if adapter_resp else None,
+                            response_time_ms=adapter_time,
+                            response_body=None,
+                            success=adapter_resp is not None and adapter_resp.status_code == 200,
+                            operation_type='idrac_api'
                         )
                         
                         if not adapter_resp or adapter_resp.status_code != 200:
@@ -1321,7 +1523,7 @@ class IdracMixin:
                     if functions_link:
                         # OPTIMIZED: Request with $expand=Members
                         functions_url = f"https://{ip}{functions_link}?$expand=Members"
-                        functions_resp, _ = self.throttler.request_with_safety(
+                        functions_resp, functions_time = self.throttler.request_with_safety(
                             method='GET',
                             url=functions_url,
                             ip=ip,
@@ -1330,16 +1532,50 @@ class IdracMixin:
                             timeout=(2, 30)
                         )
                         
+                        # Log functions fetch
+                        self.log_idrac_command(
+                            server_id=server_id,
+                            job_id=job_id,
+                            task_id=None,
+                            command_type='GET',
+                            endpoint=f'/NetworkAdapters/{adapter_id}/NetworkDeviceFunctions?$expand',
+                            full_url=functions_url,
+                            request_headers=None,
+                            request_body=None,
+                            status_code=functions_resp.status_code if functions_resp else None,
+                            response_time_ms=functions_time,
+                            response_body=None,
+                            success=functions_resp is not None and functions_resp.status_code == 200,
+                            operation_type='idrac_api'
+                        )
+                        
                         # Fallback without $expand
                         if not functions_resp or functions_resp.status_code != 200:
                             functions_url = f"https://{ip}{functions_link}"
-                            functions_resp, _ = self.throttler.request_with_safety(
+                            functions_resp, functions_time = self.throttler.request_with_safety(
                                 method='GET',
                                 url=functions_url,
                                 ip=ip,
                                 logger=self.log,
                                 auth=(username, password),
                                 timeout=(2, 15)
+                            )
+                            
+                            # Log fallback
+                            self.log_idrac_command(
+                                server_id=server_id,
+                                job_id=job_id,
+                                task_id=None,
+                                command_type='GET',
+                                endpoint=f'/NetworkAdapters/{adapter_id}/NetworkDeviceFunctions',
+                                full_url=functions_url,
+                                request_headers=None,
+                                request_body=None,
+                                status_code=functions_resp.status_code if functions_resp else None,
+                                response_time_ms=functions_time,
+                                response_body=None,
+                                success=functions_resp is not None and functions_resp.status_code == 200,
+                                operation_type='idrac_api'
                             )
                         
                         if not functions_resp or functions_resp.status_code != 200:
@@ -1355,13 +1591,31 @@ class IdracMixin:
                                 elif '@odata.id' in func_item:
                                     # Need to fetch individual function
                                     func_url = f"https://{ip}{func_item['@odata.id']}"
-                                    func_resp, _ = self.throttler.request_with_safety(
+                                    func_resp, func_time = self.throttler.request_with_safety(
                                         method='GET',
                                         url=func_url,
                                         ip=ip,
                                         logger=self.log,
                                         auth=(username, password),
                                         timeout=(2, 15)
+                                    )
+                                    
+                                    # Log function fetch
+                                    func_id = func_item['@odata.id'].split('/')[-1]
+                                    self.log_idrac_command(
+                                        server_id=server_id,
+                                        job_id=job_id,
+                                        task_id=None,
+                                        command_type='GET',
+                                        endpoint=f'/NetworkDeviceFunctions/{func_id}',
+                                        full_url=func_url,
+                                        request_headers=None,
+                                        request_body=None,
+                                        status_code=func_resp.status_code if func_resp else None,
+                                        response_time_ms=func_time,
+                                        response_body=None,
+                                        success=func_resp is not None and func_resp.status_code == 200,
+                                        operation_type='idrac_api'
                                     )
                                     
                                     if not func_resp or func_resp.status_code != 200:
@@ -1386,6 +1640,23 @@ class IdracMixin:
             
         except Exception as e:
             self.log(f"  Could not fetch network adapters: {e}", "DEBUG")
+            # Log the exception
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job_id,
+                task_id=None,
+                command_type='ERROR',
+                endpoint='_fetch_network_adapters',
+                full_url=f"https://{ip}/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters",
+                request_headers=None,
+                request_body=None,
+                status_code=None,
+                response_time_ms=0,
+                response_body=None,
+                success=False,
+                error_message=str(e)[:200],
+                operation_type='idrac_api'
+            )
             return []
     
     def _extract_nic_info(self, func_data: Dict, manufacturer: str, model: str, serial: str, part_number: str) -> Optional[Dict]:
@@ -1428,14 +1699,16 @@ class IdracMixin:
         except Exception as e:
             return None
     
-    def _sync_server_nics(self, server_id: str, nics: List[Dict], log_fn=None):
+    def _sync_server_nics(self, server_id: str, nics: List[Dict], log_fn=None, job_id: str = None):
         """Sync NIC inventory to server_nics table using bulk upsert
         
         Args:
             server_id: The server UUID
             nics: List of NIC dictionaries from iDRAC
             log_fn: Optional callback for console logging (displays in UI)
+            job_id: Optional job ID for logging visibility
         """
+        import time as timing_module
         try:
             # Correct PostgREST upsert headers - Prefer header for resolution
             headers = {
@@ -1480,12 +1753,32 @@ class IdracMixin:
             
             # Use constraint name for on_conflict (PostgREST requirement)
             upsert_url = f"{DSM_URL}/rest/v1/server_nics?on_conflict=server_nics_server_id_fqdd_key"
+            start_time = timing_module.time()
             response = requests.post(
                 upsert_url, 
                 headers=headers, 
                 json=nic_records, 
                 verify=VERIFY_SSL,
                 timeout=30
+            )
+            response_time_ms = int((timing_module.time() - start_time) * 1000)
+            
+            # Log database sync operation for visibility
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job_id,
+                task_id=None,
+                command_type='DB_SYNC',
+                endpoint='/server_nics (upsert)',
+                full_url=upsert_url,
+                request_headers=None,
+                request_body={'nic_count': len(nic_records)},
+                status_code=response.status_code,
+                response_time_ms=response_time_ms,
+                response_body=None,
+                success=response.status_code in [200, 201, 204],
+                error_message=response.text[:200] if response.status_code not in [200, 201, 204] else None,
+                operation_type='idrac_api'
             )
             
             if response.status_code in [200, 201, 204]:
@@ -1934,13 +2227,13 @@ class IdracMixin:
                     drives_synced = 0
                     if info.get('drives'):
                         log_local(f'→ Reading storage: found {len(info["drives"])} drive(s)', 'INFO')
-                        drives_synced = self._sync_server_drives(server_id, info['drives'], log_fn=log_local) or 0
+                        drives_synced = self._sync_server_drives(server_id, info['drives'], log_fn=log_local, job_id=job_id) or 0
                     
                     # Sync NICs to server_nics table with console logging
                     nics_synced = 0
                     if info.get('nics'):
                         log_local(f'→ Reading NICs: found {len(info["nics"])} adapter(s)', 'INFO')
-                        nics_synced = self._sync_server_nics(server_id, info['nics'], log_fn=log_local) or 0
+                        nics_synced = self._sync_server_nics(server_id, info['nics'], log_fn=log_local, job_id=job_id) or 0
                     
                     # Try auto-linking to vCenter if service_tag was updated
                     if info.get('service_tag'):
