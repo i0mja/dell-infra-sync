@@ -1131,15 +1131,17 @@ class IdracMixin:
             return None
     
     def _sync_server_drives(self, server_id: str, drives: List[Dict]):
-        """Sync drive inventory to server_drives table"""
+        """Sync drive inventory to server_drives table using bulk upsert"""
         try:
             headers = {"apikey": SERVICE_ROLE_KEY, "Authorization": f"Bearer {SERVICE_ROLE_KEY}"}
             
+            # Build list of drive records for bulk upsert
+            drive_records = []
             for drive in drives:
                 if not drive.get('serial_number'):
                     continue  # Skip drives without serial numbers
                 
-                drive_data = {
+                drive_records.append({
                     'server_id': server_id,
                     'name': drive.get('name'),
                     'manufacturer': drive.get('manufacturer'),
@@ -1166,15 +1168,23 @@ class IdracMixin:
                     'raid_level': drive.get('raid_level'),
                     'wwn': drive.get('wwn'),
                     'last_sync': datetime.utcnow().isoformat() + 'Z',
-                }
-                
-                # Upsert drive (update if exists, insert if new)
-                upsert_url = f"{DSM_URL}/rest/v1/server_drives"
-                upsert_params = {
-                    "on_conflict": "server_id,serial_number",
-                    "resolution": "merge-duplicates"
-                }
-                requests.post(upsert_url, headers=headers, json=drive_data, params=upsert_params, verify=VERIFY_SSL)
+                })
+            
+            if not drive_records:
+                return
+            
+            # Single bulk upsert request instead of per-drive calls
+            upsert_url = f"{DSM_URL}/rest/v1/server_drives"
+            upsert_params = {
+                "on_conflict": "server_id,serial_number",
+                "resolution": "merge-duplicates"
+            }
+            response = requests.post(upsert_url, headers=headers, json=drive_records, params=upsert_params, verify=VERIFY_SSL)
+            
+            if response.status_code in [200, 201]:
+                self.log(f"  ✓ Synced {len(drive_records)} drives in single request", "DEBUG")
+            else:
+                self.log(f"  Warning: Bulk drive sync returned {response.status_code}", "WARN")
                 
         except Exception as e:
             self.log(f"  Error syncing drives for server {server_id}: {e}", "WARN")
@@ -1366,15 +1376,17 @@ class IdracMixin:
             return None
     
     def _sync_server_nics(self, server_id: str, nics: List[Dict]):
-        """Sync NIC inventory to server_nics table"""
+        """Sync NIC inventory to server_nics table using bulk upsert"""
         try:
             headers = {"apikey": SERVICE_ROLE_KEY, "Authorization": f"Bearer {SERVICE_ROLE_KEY}"}
             
+            # Build list of NIC records for bulk upsert
+            nic_records = []
             for nic in nics:
                 if not nic.get('fqdd'):
                     continue  # Skip NICs without FQDD
                 
-                nic_data = {
+                nic_records.append({
                     'server_id': server_id,
                     'fqdd': nic.get('fqdd'),
                     'name': nic.get('name'),
@@ -1391,15 +1403,23 @@ class IdracMixin:
                     'switch_connection_id': nic.get('switch_connection_id'),
                     'switch_port_description': nic.get('switch_port_description'),
                     'last_sync': datetime.utcnow().isoformat() + 'Z',
-                }
-                
-                # Upsert NIC (update if exists, insert if new)
-                upsert_url = f"{DSM_URL}/rest/v1/server_nics"
-                upsert_params = {
-                    "on_conflict": "server_id,fqdd",
-                    "resolution": "merge-duplicates"
-                }
-                requests.post(upsert_url, headers=headers, json=nic_data, params=upsert_params, verify=VERIFY_SSL)
+                })
+            
+            if not nic_records:
+                return
+            
+            # Single bulk upsert request instead of per-NIC calls
+            upsert_url = f"{DSM_URL}/rest/v1/server_nics"
+            upsert_params = {
+                "on_conflict": "server_id,fqdd",
+                "resolution": "merge-duplicates"
+            }
+            response = requests.post(upsert_url, headers=headers, json=nic_records, params=upsert_params, verify=VERIFY_SSL)
+            
+            if response.status_code in [200, 201]:
+                self.log(f"  ✓ Synced {len(nic_records)} NICs in single request", "DEBUG")
+            else:
+                self.log(f"  Warning: Bulk NIC sync returned {response.status_code}", "WARN")
                 
         except Exception as e:
             self.log(f"  Error syncing NICs for server {server_id}: {e}", "WARN")
@@ -1981,25 +2001,38 @@ class IdracMixin:
                         
                         failed_count += 1
                 else:
-                    # Update as offline - failed to query iDRAC
+                    # Update as offline - failed to query iDRAC with specific error cause
+                    # Check connectivity to determine specific error message
+                    conn_result = self.test_idrac_connectivity(ip)
+                    
+                    if not conn_result['reachable']:
+                        error_msg = f'Host unreachable: {conn_result["message"]}'
+                        cred_status = 'unknown'  # Can't test credentials if host is down
+                    elif self.throttler.is_circuit_open(ip):
+                        error_msg = 'Authentication temporarily paused - possible account lockout risk after multiple failures'
+                        cred_status = 'lockout_risk'
+                    else:
+                        error_msg = f'Authentication failed using {cred_source} credentials - verify username/password'
+                        cred_status = 'invalid'
+                    
                     update_data = {
                         'connection_status': 'offline',
-                        'connection_error': f'Failed to query iDRAC using {cred_source} credentials - check network or credentials',
+                        'connection_error': error_msg,
                         'last_connection_test': datetime.utcnow().isoformat() + 'Z',
-                        'credential_test_status': 'invalid',
+                        'credential_test_status': cred_status,
                     }
                     
                     update_url = f"{DSM_URL}/rest/v1/servers?id=eq.{server['id']}"
                     requests.patch(update_url, headers=headers, json=update_data, verify=VERIFY_SSL)
                     
-                    log_console(f'✗ Connection failed: {ip}', 'ERROR')
+                    log_console(f'✗ {error_msg}: {ip}', 'ERROR')
                     
                     # Mark task as failed
                     if task:
                         self.update_task_status(
                             task['id'],
                             'failed',
-                            log=f"✗ Failed to connect to {ip}",
+                            log=f"✗ {error_msg}",
                             progress=100,
                             completed_at=datetime.now().isoformat()
                         )

@@ -282,6 +282,12 @@ class DiscoveryHandler(BaseHandler):
             for server in discovered:
                 self.executor.insert_discovered_server(server, job['id'])
             
+            # Insert auth-failed servers for visibility (users can add credentials later)
+            if auth_failures:
+                self.log(f"Inserting {len(auth_failures)} auth-failed servers for visibility...")
+                for failure in auth_failures:
+                    self.executor.insert_auth_failed_server(failure['ip'], job['id'])
+            
             # Auto-trigger full refresh for newly discovered servers
             # This now includes inline SCP backup (runs in same process, no queuing)
             if discovered:
