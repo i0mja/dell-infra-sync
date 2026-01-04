@@ -78,7 +78,7 @@ export function DiscoveryScanJobView({ job }: DiscoveryScanJobViewProps) {
   const progress = useDiscoveryScanProgress(job.id, isRunning || isCompleted || isCancelled);
 
   // Get real-time iDRAC API call visibility
-  const { recentCommands, activeServerIp: activeApiServerIp } = useIdracCommandsProgress(job.id, isRunning);
+  const { recentCommands, categoryStats, activeServerIp: activeApiServerIp, totalCommands: totalApiCalls } = useIdracCommandsProgress(job.id, isRunning);
 
   // Detect orphaned job: job is "running" but all work is complete
   const isOrphanedComplete = isRunning && progress.isEffectivelyComplete;
@@ -276,6 +276,8 @@ export function DiscoveryScanJobView({ job }: DiscoveryScanJobViewProps) {
             scpCompleted={progress.scpCompleted}
             fetchOptions={job.details?.fetch_options}
             recentCommands={recentCommands}
+            categoryStats={categoryStats}
+            totalApiCalls={totalApiCalls}
             activeApiServerIp={activeApiServerIp}
           />
         )}

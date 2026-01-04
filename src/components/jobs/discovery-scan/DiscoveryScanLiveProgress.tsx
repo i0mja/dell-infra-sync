@@ -2,8 +2,13 @@ import { cn } from "@/lib/utils";
 import { Check, Loader2, Circle, Activity } from "lucide-react";
 import { DISCOVERY_PHASES, type DiscoveryPhase } from "@/lib/discovery-scan-messages";
 import { Progress } from "@/components/ui/progress";
-import type { RecentCommand } from "@/hooks/useIdracCommandsProgress";
+import type { RecentCommand, CategoryStats } from "@/hooks/useIdracCommandsProgress";
 
+/** Format duration in ms to human-readable string */
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
 interface FetchOptions {
   scp_backup?: boolean;
   firmware?: boolean;
@@ -45,6 +50,8 @@ interface DiscoveryScanLiveProgressProps {
   scpCompleted: number;
   fetchOptions?: FetchOptions;
   recentCommands?: RecentCommand[];
+  categoryStats?: CategoryStats[];
+  totalApiCalls?: number;
   activeApiServerIp?: string | null;
 }
 
@@ -66,6 +73,8 @@ export function DiscoveryScanLiveProgress({
   scpCompleted,
   fetchOptions,
   recentCommands,
+  categoryStats,
+  totalApiCalls,
   activeApiServerIp,
 }: DiscoveryScanLiveProgressProps) {
   // Filter phases based on fetch_options - hide SCP if disabled
@@ -307,42 +316,67 @@ export function DiscoveryScanLiveProgress({
         </div>
       )}
 
-      {/* Real-time API Activity panel */}
-      {isRunning && recentCommands && recentCommands.length > 0 && (
+      {/* Real-time API Activity panel - grouped by category */}
+      {isRunning && categoryStats && categoryStats.length > 0 && (
         <div className="space-y-2 p-3 bg-muted/30 rounded-lg border">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Activity className="h-3.5 w-3.5" />
-            <span className="font-medium">API Activity</span>
-            {activeApiServerIp && (
-              <span className="text-primary font-mono">{activeApiServerIp}</span>
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <Activity className="h-3.5 w-3.5" />
+              <span className="font-medium">API Activity</span>
+              {activeApiServerIp && (
+                <span className="text-primary font-mono">{activeApiServerIp}</span>
+              )}
+            </div>
+            {totalApiCalls !== undefined && totalApiCalls > 0 && (
+              <span className="text-muted-foreground/70">{totalApiCalls} calls</span>
             )}
           </div>
-          <div className="space-y-1 font-mono text-xs">
-            {recentCommands.slice(-5).map((cmd) => (
+          
+          {/* Category summary */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 font-mono text-xs">
+            {categoryStats.slice(0, 6).map((cat) => (
               <div 
-                key={cmd.id} 
-                className={cn(
-                  "flex items-center gap-2 py-0.5",
-                  cmd.success ? "text-muted-foreground" : "text-destructive"
-                )}
+                key={cat.category} 
+                className="flex items-center justify-between gap-2 py-0.5"
               >
-                <span className="text-muted-foreground/70 w-16">{cmd.time}</span>
                 <span className={cn(
-                  "w-20 truncate",
-                  cmd.success ? "text-foreground" : "text-destructive"
+                  "truncate",
+                  cat.allSuccess ? "text-foreground" : "text-destructive"
                 )}>
-                  {cmd.endpointLabel}
+                  {cat.category}
                 </span>
-                <span className={cn(
-                  "w-8 text-right",
-                  cmd.success ? "text-success" : "text-destructive"
-                )}>
-                  {cmd.success ? '✓' : '✗'}
-                </span>
-                <span className="text-muted-foreground/70 w-16 text-right">{cmd.duration}</span>
+                <div className="flex items-center gap-1.5 text-muted-foreground/70">
+                  <span className={cat.allSuccess ? "text-success" : "text-destructive"}>
+                    {cat.allSuccess ? '✓' : '✗'}
+                  </span>
+                  <span>{formatDuration(cat.totalDurationMs)}</span>
+                  <span className="text-muted-foreground/50">({cat.totalCalls})</span>
+                </div>
               </div>
             ))}
           </div>
+
+          {/* Recent individual calls */}
+          {recentCommands && recentCommands.length > 0 && (
+            <div className="space-y-0.5 pt-2 border-t border-border/50 font-mono text-xs">
+              {recentCommands.slice(-3).map((cmd) => (
+                <div 
+                  key={cmd.id} 
+                  className={cn(
+                    "flex items-center gap-2 py-0.5",
+                    cmd.success ? "text-muted-foreground/70" : "text-destructive"
+                  )}
+                >
+                  <span className="text-muted-foreground/50 w-14">{cmd.time}</span>
+                  <span className="flex-1 truncate">{cmd.endpointLabel}</span>
+                  <span className={cmd.success ? "text-success/70" : "text-destructive"}>
+                    {cmd.success ? '✓' : '✗'}
+                  </span>
+                  <span className="w-14 text-right">{cmd.duration}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
