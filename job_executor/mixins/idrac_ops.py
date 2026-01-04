@@ -1133,7 +1133,13 @@ class IdracMixin:
     def _sync_server_drives(self, server_id: str, drives: List[Dict]):
         """Sync drive inventory to server_drives table using bulk upsert"""
         try:
-            headers = {"apikey": SERVICE_ROLE_KEY, "Authorization": f"Bearer {SERVICE_ROLE_KEY}"}
+            # Correct PostgREST upsert headers - Prefer header for resolution
+            headers = {
+                "apikey": SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "resolution=merge-duplicates,return=minimal"
+            }
             
             # Build list of drive records for bulk upsert
             drive_records = []
@@ -1173,18 +1179,20 @@ class IdracMixin:
             if not drive_records:
                 return
             
-            # Single bulk upsert request instead of per-drive calls
-            upsert_url = f"{DSM_URL}/rest/v1/server_drives"
-            upsert_params = {
-                "on_conflict": "server_id,serial_number",
-                "resolution": "merge-duplicates"
-            }
-            response = requests.post(upsert_url, headers=headers, json=drive_records, params=upsert_params, verify=VERIFY_SSL)
+            # on_conflict in URL query string, resolution in Prefer header
+            upsert_url = f"{DSM_URL}/rest/v1/server_drives?on_conflict=server_id,serial_number"
+            response = requests.post(
+                upsert_url, 
+                headers=headers, 
+                json=drive_records, 
+                verify=VERIFY_SSL,
+                timeout=30
+            )
             
-            if response.status_code in [200, 201]:
+            if response.status_code in [200, 201, 204]:
                 self.log(f"  ✓ Synced {len(drive_records)} drives in single request", "DEBUG")
             else:
-                self.log(f"  Warning: Bulk drive sync returned {response.status_code}", "WARN")
+                self.log(f"  Warning: Bulk drive sync returned {response.status_code}: {response.text[:200]}", "WARN")
                 
         except Exception as e:
             self.log(f"  Error syncing drives for server {server_id}: {e}", "WARN")
@@ -1378,7 +1386,13 @@ class IdracMixin:
     def _sync_server_nics(self, server_id: str, nics: List[Dict]):
         """Sync NIC inventory to server_nics table using bulk upsert"""
         try:
-            headers = {"apikey": SERVICE_ROLE_KEY, "Authorization": f"Bearer {SERVICE_ROLE_KEY}"}
+            # Correct PostgREST upsert headers - Prefer header for resolution
+            headers = {
+                "apikey": SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "resolution=merge-duplicates,return=minimal"
+            }
             
             # Build list of NIC records for bulk upsert
             nic_records = []
@@ -1408,18 +1422,20 @@ class IdracMixin:
             if not nic_records:
                 return
             
-            # Single bulk upsert request instead of per-NIC calls
-            upsert_url = f"{DSM_URL}/rest/v1/server_nics"
-            upsert_params = {
-                "on_conflict": "server_id,fqdd",
-                "resolution": "merge-duplicates"
-            }
-            response = requests.post(upsert_url, headers=headers, json=nic_records, params=upsert_params, verify=VERIFY_SSL)
+            # on_conflict in URL query string, resolution in Prefer header
+            upsert_url = f"{DSM_URL}/rest/v1/server_nics?on_conflict=server_id,fqdd"
+            response = requests.post(
+                upsert_url, 
+                headers=headers, 
+                json=nic_records, 
+                verify=VERIFY_SSL,
+                timeout=30
+            )
             
-            if response.status_code in [200, 201]:
+            if response.status_code in [200, 201, 204]:
                 self.log(f"  ✓ Synced {len(nic_records)} NICs in single request", "DEBUG")
             else:
-                self.log(f"  Warning: Bulk NIC sync returned {response.status_code}", "WARN")
+                self.log(f"  Warning: Bulk NIC sync returned {response.status_code}: {response.text[:200]}", "WARN")
                 
         except Exception as e:
             self.log(f"  Error syncing NICs for server {server_id}: {e}", "WARN")
