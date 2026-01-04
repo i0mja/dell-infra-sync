@@ -35,6 +35,7 @@ export interface DiscoveryScanProgress {
   inAuthenticating: number;
   inSyncing: number;
   inScp: number;
+  activeServerIps: string[];  // IPs currently being synced (parallel sync visibility)
   
   // Final counts
   discovered: number;
@@ -79,6 +80,7 @@ const defaultProgress: DiscoveryScanProgress = {
   inAuthenticating: 0,
   inSyncing: 0,
   inScp: 0,
+  activeServerIps: [],
   serversRefreshed: 0,
   serversTotal: 0,
   scpCompleted: 0,
@@ -185,9 +187,11 @@ export function useDiscoveryScanProgress(jobId: string | undefined, isRunning: b
       scpProgress: r.scp_progress,
     }));
     
-    // Determine active counts based on current stage
-    const inSyncing = currentStage === 'sync' ? 1 : 0;
+    // Determine active counts based on current stage and backend data
+    // Backend now reports actual in_syncing count and active_server_ips
+    const inSyncing = details.in_syncing ?? (currentStage === 'sync' ? Math.min(4, Math.max(0, serversTotal - serversRefreshed)) : 0);
     const inScp = currentStage === 'scp' ? 1 : 0;
+    const activeServerIps: string[] = details.active_server_ips ?? [];
 
     // Detect if job is effectively complete (all work done)
     // If SCP is disabled, don't require scpCompleted to match serversTotal
@@ -223,6 +227,7 @@ export function useDiscoveryScanProgress(jobId: string | undefined, isRunning: b
       inAuthenticating: details.in_authenticating ?? 0,
       inSyncing,
       inScp,
+      activeServerIps,
       discovered: details.discovered_count ?? details.discovered ?? serversTotal,
       authFailures: details.auth_failures ?? 0,
       scpBackups: details.scp_backups_created ?? 0,
