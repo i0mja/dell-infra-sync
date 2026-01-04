@@ -1144,11 +1144,20 @@ class IdracMixin:
             # Build list of drive records for bulk upsert
             drive_records = []
             for drive in drives:
-                if not drive.get('serial_number'):
-                    continue  # Skip drives without serial numbers
+                # Generate unique identifier with fallbacks
+                serial = drive.get('serial_number')
+                if serial:
+                    drive_identifier = f"sn:{serial}"
+                else:
+                    # Fallback to composite: controller + slot + name
+                    controller = drive.get('controller', 'unknown')
+                    slot = drive.get('slot', 'unknown')
+                    name = drive.get('name', 'drive')
+                    drive_identifier = f"loc:{controller}:{slot}:{name}"
                 
                 drive_records.append({
                     'server_id': server_id,
+                    'drive_identifier': drive_identifier,
                     'name': drive.get('name'),
                     'manufacturer': drive.get('manufacturer'),
                     'model': drive.get('model'),
@@ -1177,10 +1186,11 @@ class IdracMixin:
                 })
             
             if not drive_records:
+                self.log(f"  ⚠ No drives to sync for server {server_id}", "WARN")
                 return
             
             # on_conflict in URL query string, resolution in Prefer header
-            upsert_url = f"{DSM_URL}/rest/v1/server_drives?on_conflict=server_id,serial_number"
+            upsert_url = f"{DSM_URL}/rest/v1/server_drives?on_conflict=server_id,drive_identifier"
             response = requests.post(
                 upsert_url, 
                 headers=headers, 
