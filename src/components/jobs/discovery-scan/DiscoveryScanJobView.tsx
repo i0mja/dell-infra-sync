@@ -9,6 +9,7 @@ import { DiscoveryScanServerList } from "./DiscoveryScanServerList";
 import { DiscoveryScanTimeline } from "./DiscoveryScanTimeline";
 import { DiscoveryScanResults } from "../results/DiscoveryScanResults";
 import { useDiscoveryScanProgress } from "@/hooks/useDiscoveryScanProgress";
+import { useIdracCommandsProgress } from "@/hooks/useIdracCommandsProgress";
 import { toast } from "sonner";
 import { AlertTriangle, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 
@@ -75,6 +76,9 @@ export function DiscoveryScanJobView({ job }: DiscoveryScanJobViewProps) {
 
   // Get real-time progress updates (including console logs)
   const progress = useDiscoveryScanProgress(job.id, isRunning || isCompleted || isCancelled);
+
+  // Get real-time iDRAC API call visibility
+  const { recentCommands, activeServerIp: activeApiServerIp } = useIdracCommandsProgress(job.id, isRunning);
 
   // Detect orphaned job: job is "running" but all work is complete
   const isOrphanedComplete = isRunning && progress.isEffectivelyComplete;
@@ -271,6 +275,8 @@ export function DiscoveryScanJobView({ job }: DiscoveryScanJobViewProps) {
             serversTotal={progress.serversTotal}
             scpCompleted={progress.scpCompleted}
             fetchOptions={job.details?.fetch_options}
+            recentCommands={recentCommands}
+            activeApiServerIp={activeApiServerIp}
           />
         )}
 
