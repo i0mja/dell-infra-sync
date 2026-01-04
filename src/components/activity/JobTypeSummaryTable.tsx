@@ -13,7 +13,7 @@ import {
   Loader2,
   MoreHorizontal,
   Settings,
-  TrendingUp,
+  StopCircle,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -32,6 +32,7 @@ interface JobTypeSummaryTableProps {
   summaries: JobTypeSummary[];
   onViewHistory: (jobType: string, label: string) => void;
   onViewLatest: (job: Job) => void;
+  onCancelJob?: (jobId: string) => void;
   canManage?: boolean;
 }
 
@@ -39,6 +40,7 @@ export function JobTypeSummaryTable({
   summaries,
   onViewHistory,
   onViewLatest,
+  onCancelJob,
   canManage = false,
 }: JobTypeSummaryTableProps) {
   const navigate = useNavigate();
@@ -268,6 +270,21 @@ export function JobTypeSummaryTable({
                             <DropdownMenuItem onClick={() => handleConfigure(summary.jobType)}>
                               <Settings className="mr-2 h-4 w-4" />
                               Configure Schedule
+                            </DropdownMenuItem>
+                          </>
+                        )}
+                        {summary.currentJob && summary.stats.runningCount > 0 && canManage && onCancelJob && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onCancelJob(summary.currentJob!.id);
+                              }}
+                              className="text-destructive focus:text-destructive"
+                            >
+                              <StopCircle className="mr-2 h-4 w-4" />
+                              Cancel Running Job
                             </DropdownMenuItem>
                           </>
                         )}

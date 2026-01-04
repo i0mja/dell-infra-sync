@@ -3,6 +3,7 @@ import { MinimizedJobMonitor } from './MinimizedJobMonitor';
 import { JobDetailDialog } from './JobDetailDialog';
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 
 export const GlobalMinimizedJobs = () => {
   const { minimizedJobs, maximizedJob, maximizeJob, removeJob, closeMaximizedJob } = useMinimizedJobs();
@@ -28,6 +29,38 @@ export const GlobalMinimizedJobs = () => {
     }
   }, [maximizedJob]);
 
+  const handleCancelJob = async (jobId: string) => {
+    try {
+      // Fetch current job details to preserve them
+      const { data: currentJob } = await supabase
+        .from('jobs')
+        .select('details')
+        .eq('id', jobId)
+        .single();
+
+      const { error } = await supabase.functions.invoke('update-job', {
+        body: { 
+          job: { 
+            id: jobId, 
+            status: 'cancelled', 
+            completed_at: new Date().toISOString(),
+            details: {
+              ...(typeof currentJob?.details === 'object' && currentJob?.details !== null ? currentJob.details : {}),
+              cancelled_at: new Date().toISOString(),
+              cancellation_reason: 'Cancelled by user'
+            }
+          } 
+        }
+      });
+      if (error) throw error;
+      toast.success("Job cancelled");
+      removeJob(jobId);
+    } catch (err) {
+      console.error('Error cancelling job:', err);
+      toast.error("Failed to cancel job");
+    }
+  };
+
   return (
     <>
       {minimizedJobs.map((job, index) => (
@@ -45,6 +78,7 @@ export const GlobalMinimizedJobs = () => {
             jobType={job.jobType}
             onMaximize={() => maximizeJob(job.jobId)}
             onClose={() => removeJob(job.jobId)}
+            onCancel={() => handleCancelJob(job.jobId)}
           />
         </div>
       ))}
