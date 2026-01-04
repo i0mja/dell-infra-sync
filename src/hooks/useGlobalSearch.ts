@@ -38,6 +38,7 @@ export function useGlobalSearch() {
       const [
         serversRes,
         serverNicsRes,
+        serverDrivesRes,
         vmsRes,
         vmCustomAttrsRes,
         hostsRes,
@@ -64,6 +65,13 @@ export function useGlobalSearch() {
           .from('server_nics')
           .select('server_id, mac_address, permanent_mac_address, fqdd')
           .or(`mac_address.ilike.${term},permanent_mac_address.ilike.${term}`)
+          .limit(MAX_RESULTS_PER_CATEGORY * 3),
+        
+        // Server Drives (search by serial, WWN, model, name)
+        supabase
+          .from('server_drives')
+          .select('server_id, serial_number, wwn, model, name, slot, media_type')
+          .or(`serial_number.ilike.${term},wwn.ilike.${term},model.ilike.${term},name.ilike.${term}`)
           .limit(MAX_RESULTS_PER_CATEGORY * 3),
         
         // VMs
@@ -205,6 +213,47 @@ export function useGlobalSearch() {
                     metadata: { 
                       service_tag: server.service_tag,
                       matched_mac: nic.mac_address || nic.permanent_mac_address
+                    },
+                  });
+                }
+              }
+            });
+          }
+        }
+      }
+
+      // Process Server Drives - find servers by serial number, WWN, model
+      if (serverDrivesRes.data && serverDrivesRes.data.length > 0) {
+        const driveServerIds = serverDrivesRes.data
+          .filter((drive): drive is { server_id: string; serial_number: string | null; wwn: string | null; model: string | null; name: string | null; slot: string | null; media_type: string | null } => 
+            typeof drive.server_id === 'string' && !seenServerIds.has(drive.server_id))
+          .map(drive => drive.server_id);
+        
+        if (driveServerIds.length > 0) {
+          const uniqueDriveServerIds = [...new Set(driveServerIds)] as string[];
+          const { data: driveServers } = await supabase
+            .from('servers')
+            .select('id, hostname, ip_address, service_tag, model')
+            .in('id', uniqueDriveServerIds);
+          
+          if (driveServers) {
+            const serverMap = new Map(driveServers.map(s => [s.id, s]));
+            serverDrivesRes.data.forEach(drive => {
+              if (drive.server_id && !seenServerIds.has(drive.server_id)) {
+                const server = serverMap.get(drive.server_id);
+                if (server) {
+                  seenServerIds.add(server.id);
+                  const driveInfo = drive.serial_number || drive.wwn || drive.model || 'Unknown';
+                  const slotInfo = drive.slot || drive.name?.split(':')[0] || '';
+                  dbResults.push({
+                    id: server.id,
+                    category: 'servers',
+                    title: server.hostname || server.ip_address,
+                    subtitle: `Drive: ${driveInfo}${slotInfo ? ` • ${slotInfo}` : ''}${drive.media_type ? ` • ${drive.media_type}` : ''}`,
+                    path: `/servers?selected=${server.id}`,
+                    metadata: { 
+                      service_tag: server.service_tag,
+                      matched_drive: { serial: drive.serial_number, wwn: drive.wwn, model: drive.model }
                     },
                   });
                 }
