@@ -541,8 +541,8 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
               }
               setPreviousJobStatuses(prev => new Map(prev).set(newJob.id, newJob.status));
               
-              // Track recently completed jobs so they remain visible briefly
-              if (newJob.status === 'completed' || newJob.status === 'failed') {
+              // Track recently completed jobs so they remain visible briefly (but not silent jobs)
+              if ((newJob.status === 'completed' || newJob.status === 'failed') && !isSilentJob(newJob)) {
                 addRecentlyCompleted(newJob);
               }
             }
