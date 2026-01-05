@@ -1439,7 +1439,8 @@ class ClusterHandler(BaseHandler):
                 return []
             
             try:
-                current_inventory = self.executor.get_firmware_inventory(ip, session)
+                dell_ops = self.executor._get_dell_operations()
+                current_inventory = dell_ops.get_firmware_inventory(ip, username, password, server_id=server_id)
             finally:
                 self.executor.delete_idrac_session(session, ip, server_id, job_id)
             
