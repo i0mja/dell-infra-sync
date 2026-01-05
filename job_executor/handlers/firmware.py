@@ -1032,22 +1032,65 @@ class FirmwareHandler(BaseHandler):
                 updates_count = 0
                 critical_count = 0
                 
+                def normalize_name(name: str) -> str:
+                    """Remove MAC addresses and normalize for matching."""
+                    import re
+                    # Remove MAC addresses like "- B4:83:51:11:A3:48"
+                    name = re.sub(r'\s*-\s*([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\s*$', '', name)
+                    return name.lower().strip()
+                
+                def get_component_category(dell_type: str, name: str) -> str:
+                    """Map Dell component type codes to human-readable categories."""
+                    name_lower = (name or '').lower()
+                    
+                    if 'bios' in name_lower:
+                        return 'BIOS'
+                    if 'idrac' in name_lower or 'remote access' in name_lower:
+                        return 'iDRAC'
+                    if 'lifecycle' in name_lower:
+                        return 'Lifecycle Controller'
+                    if 'nic' in name_lower or 'ethernet' in name_lower or 'network' in name_lower or 'x710' in name_lower or 'bcm' in name_lower:
+                        return 'Network'
+                    if 'fibre channel' in name_lower or 'fc adapter' in name_lower or 'lpe' in name_lower:
+                        return 'Fibre Channel'
+                    if 'raid' in name_lower or 'perc' in name_lower or 'backplane' in name_lower or 'boss' in name_lower:
+                        return 'Storage Controller'
+                    if 'disk' in name_lower or 'ssd' in name_lower or 'hdd' in name_lower:
+                        return 'Drive'
+                    if 'power' in name_lower or 'psu' in name_lower:
+                        return 'Power Supply'
+                    if 'cpld' in name_lower:
+                        return 'System CPLD'
+                    if 'tpm' in name_lower:
+                        return 'TPM'
+                    if 'diagnostics' in name_lower:
+                        return 'Diagnostics'
+                    if 'driver' in name_lower:
+                        return 'Driver'
+                    
+                    # Fall back to Dell type code
+                    dell_type = (dell_type or '').upper()
+                    type_map = {'BIOS': 'BIOS', 'FRMW': 'Firmware', 'APAC': 'Application', 'DRVR': 'Driver'}
+                    return type_map.get(dell_type, 'Firmware')
+                
                 for item in current_inventory:
                     component_name = item.get('Name') or item.get('component_name', 'Unknown')
                     current_version = item.get('Version') or item.get('version', 'Unknown')
-                    component_type = item.get('component_type', 'Unknown')
+                    # Fix: Check PascalCase from Dell API first, then snake_case
+                    component_type = item.get('ComponentType') or item.get('component_type', 'Unknown')
                     
                     # Check if there's an update for this component
+                    # Fix: Use 'name' field (not 'component_name') and exact matching
+                    normalized_inventory_name = normalize_name(component_name)
                     update_info = next(
                         (u for u in available_updates 
-                         if u.get('component_name', '').lower() in component_name.lower() or
-                            component_name.lower() in u.get('component_name', '').lower()),
+                         if normalize_name(u.get('name', '')) == normalized_inventory_name),
                         None
                     )
                     
                     component_data = {
                         'componentName': component_name,
-                        'componentType': component_type,
+                        'componentType': get_component_category(component_type, component_name),
                         'currentVersion': current_version,
                         'availableVersion': update_info.get('available_version') if update_info else None,
                         'criticality': update_info.get('criticality', 'optional') if update_info else None,
