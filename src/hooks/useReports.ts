@@ -41,6 +41,8 @@ async function fetchReportData(
     case "cluster_safety":
       return fetchClusterSafety(dateRange);
     // New update reports
+    case "update_scans":
+      return fetchUpdateScans(dateRange);
     case "update_history":
       return fetchUpdateHistory(dateRange);
     case "update_failures":
@@ -326,6 +328,47 @@ async function fetchClusterSafety(dateRange: { start: Date; end: Date }): Promis
 }
 
 // ============= NEW UPDATE REPORTS =============
+
+async function fetchUpdateScans(dateRange: { start: Date; end: Date }): Promise<ReportData> {
+  const { data: scans, error } = await supabase
+    .from("update_availability_scans")
+    .select("id, created_at, completed_at, status, scan_type, summary, error_message")
+    .gte("created_at", dateRange.start.toISOString())
+    .lte("created_at", dateRange.end.toISOString())
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+
+  const rows = (scans || []).map(scan => {
+    const summary = scan.summary as any;
+    return {
+      id: scan.id,
+      scan_date: scan.created_at,
+      completed_at: scan.completed_at,
+      status: scan.status,
+      scan_type: scan.scan_type || "servers",
+      hosts_scanned: summary?.hostsScanned ?? summary?.hosts_scanned ?? 0,
+      updates_available: summary?.updatesAvailable ?? summary?.updates_available ?? 0,
+      critical_updates: summary?.criticalUpdates ?? summary?.critical_updates ?? 0,
+      error_message: scan.error_message,
+    };
+  });
+
+  const summaryData = {
+    total: rows.length,
+    completed: rows.filter(r => r.status === "completed").length,
+    failed: rows.filter(r => r.status === "failed").length,
+    totalUpdatesFound: rows.reduce((sum, r) => sum + (r.updates_available || 0), 0),
+  };
+
+  const chartData = rows.slice(0, 10).map(r => ({
+    date: format(new Date(r.scan_date), "MMM d"),
+    updates: r.updates_available,
+    critical: r.critical_updates,
+  }));
+
+  return { rows, summary: summaryData, chartData };
+}
 
 const UPDATE_JOB_TYPES = [
   // Firmware updates

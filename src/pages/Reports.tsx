@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ReportsFilterToolbar } from "@/components/reports/ReportsFilterToolbar";
@@ -169,6 +169,28 @@ function getTableColumns(reportType: ReportType): ReportColumn[] {
         { key: "check_timestamp", label: "Check Time", format: (value: string) => new Date(value).toLocaleString() },
       ];
 
+    case "update_scans":
+      return [
+        { 
+          key: "scan_date", 
+          label: "Scan Date", 
+          format: (value: string) => value ? format(new Date(value), "MMM d, yyyy HH:mm") : "-"
+        },
+        { key: "scan_type", label: "Type" },
+        { key: "hosts_scanned", label: "Hosts" },
+        { key: "updates_available", label: "Updates" },
+        { key: "critical_updates", label: "Critical" },
+        { 
+          key: "status", 
+          label: "Status",
+          format: (value: string) => (
+            <Badge variant={value === "completed" ? "default" : value === "failed" ? "destructive" : "secondary"}>
+              {value}
+            </Badge>
+          )
+        },
+      ];
+
     case "update_history":
       return [
         { key: "server", label: "Server" },
@@ -331,6 +353,7 @@ function formatFileSize(bytes: number): string {
 
 export default function Reports() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [selectedReportType, setSelectedReportType] = useState<ReportType | null>(null);
   const [dateRangePreset, setDateRangePreset] = useState("30d");
   const [searchTerm, setSearchTerm] = useState("");
@@ -434,6 +457,15 @@ export default function Reports() {
     exportToCSV(data.rows, exportColumns, `${report.id}_report`);
   }, [data, currentReportType, columns, visibleColumns]);
 
+  // Handle row click for navigable reports
+  const handleRowClick = useCallback((row: any) => {
+    if (currentReportType === "update_scans" && row.id) {
+      navigate(`/reports/updates/${row.id}`);
+    } else if (currentReportType === "update_history") {
+      setSelectedUpdate(row);
+    }
+  }, [currentReportType, navigate]);
+
   // Current visible columns for filter
   const currentVisibleColumns = visibleColumns.length > 0 ? visibleColumns : columns.map((c) => c.key);
 
@@ -500,7 +532,7 @@ export default function Reports() {
                 visibleColumns={currentVisibleColumns}
                 isLoading={isLoading}
                 searchTerm={searchTerm}
-                onRowClick={currentReportType === "update_history" ? setSelectedUpdate : undefined}
+                onRowClick={(currentReportType === "update_scans" || currentReportType === "update_history") ? handleRowClick : undefined}
               />
             )}
           </CardContent>

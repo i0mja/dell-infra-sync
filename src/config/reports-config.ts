@@ -11,6 +11,7 @@ export type ReportType =
   | "maintenance_history"
   | "cluster_safety"
   // Update reports
+  | "update_scans"
   | "update_history"
   | "update_failures"
   | "server_update_coverage"
@@ -121,6 +122,15 @@ export const REPORTS: Record<ReportType, ReportConfig> = {
     requiredRole: "viewer",
   },
   // New Update Reports
+  update_scans: {
+    id: "update_scans",
+    name: "Update Scans",
+    description: "Browse firmware update availability scan results",
+    category: "updates",
+    icon: RefreshCw,
+    chartType: null,
+    requiredRole: "viewer",
+  },
   update_history: {
     id: "update_history",
     name: "Update History",
