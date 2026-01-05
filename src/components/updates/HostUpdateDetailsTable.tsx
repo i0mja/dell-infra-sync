@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   Table,
   TableBody,
@@ -16,6 +16,11 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import {
   ChevronDown,
   ChevronRight,
   Search,
@@ -27,6 +32,7 @@ import {
   Download,
 } from 'lucide-react';
 import type { UpdateAvailabilityResult, FirmwareComponent } from '@/hooks/useUpdateAvailabilityScan';
+import { groupFirmwareComponents, type GroupedFirmwareComponent } from '@/lib/firmware-utils';
 
 interface HostUpdateDetailsTableProps {
   results: UpdateAvailabilityResult[];
@@ -83,6 +89,11 @@ interface ExpandedRowProps {
 }
 
 function ExpandedRow({ result }: ExpandedRowProps) {
+  const groupedComponents = useMemo(() => 
+    groupFirmwareComponents(result.firmware_components || []),
+    [result.firmware_components]
+  );
+
   return (
     <div className="p-4 bg-muted/30">
       {result.blockers && result.blockers.length > 0 && (
@@ -99,12 +110,13 @@ function ExpandedRow({ result }: ExpandedRowProps) {
         </div>
       )}
       
-      {result.firmware_components && result.firmware_components.length > 0 ? (
+      {groupedComponents.length > 0 ? (
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
               <TableHead className="w-10"></TableHead>
               <TableHead>Component</TableHead>
+              <TableHead className="text-center w-20">Count</TableHead>
               <TableHead>Type</TableHead>
               <TableHead>Installed</TableHead>
               <TableHead>Available</TableHead>
@@ -112,10 +124,38 @@ function ExpandedRow({ result }: ExpandedRowProps) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {result.firmware_components.map((comp, index) => (
+            {groupedComponents.map((comp, index) => (
               <TableRow key={index} className="hover:bg-muted/50">
                 <TableCell>{getComponentStatusIcon(comp.status)}</TableCell>
-                <TableCell className="font-medium">{comp.name}</TableCell>
+                <TableCell className="font-medium">
+                  {comp.instanceCount > 1 ? (
+                    <Tooltip>
+                      <TooltipTrigger className="text-left cursor-help underline decoration-dotted underline-offset-2">
+                        {comp.name}
+                      </TooltipTrigger>
+                      <TooltipContent side="right" className="max-w-sm">
+                        <p className="font-medium mb-1">{comp.instanceCount} instances:</p>
+                        <ul className="text-xs max-h-48 overflow-auto space-y-0.5">
+                          {comp.instanceNames.slice(0, 10).map((n, i) => (
+                            <li key={i} className="text-muted-foreground">{n}</li>
+                          ))}
+                          {comp.instanceNames.length > 10 && (
+                            <li className="text-muted-foreground italic">
+                              ...and {comp.instanceNames.length - 10} more
+                            </li>
+                          )}
+                        </ul>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : comp.name}
+                </TableCell>
+                <TableCell className="text-center">
+                  {comp.instanceCount > 1 ? (
+                    <Badge variant="outline" className="text-xs">
+                      ×{comp.instanceCount}
+                    </Badge>
+                  ) : null}
+                </TableCell>
                 <TableCell className="text-muted-foreground">{comp.type}</TableCell>
                 <TableCell className="font-mono text-sm">{comp.installedVersion}</TableCell>
                 <TableCell className="font-mono text-sm">
