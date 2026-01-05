@@ -11,19 +11,17 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
 import { 
-  Loader2, 
   Search, 
   Server, 
   Database,
   HardDrive,
   Cloud,
   CheckCircle2,
-  AlertTriangle
 } from 'lucide-react';
 import type { ScanTarget, FirmwareSource } from './types';
+import { FirmwareScanProgressCard } from './FirmwareScanProgressCard';
 
 interface UpdateAvailabilityScanDialogProps {
   open: boolean;
@@ -103,42 +101,16 @@ export function UpdateAvailabilityScanDialog({
         </DialogHeader>
 
         {isScanning ? (
-          <div className="py-6 space-y-4">
-            <div className="flex items-center justify-center gap-2 text-primary">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              <span className="font-medium">Scanning in progress...</span>
-            </div>
-            
-            <Progress value={progressPercent} className="h-2" />
-            
-            <div className="flex items-center justify-between text-sm text-muted-foreground">
-              <span>
-                {scanProgress?.scannedHosts || 0} of {scanProgress?.totalHosts || targetCount} hosts
-              </span>
-              <span>{progressPercent}%</span>
-            </div>
-
-            {scanProgress?.currentHost && (
-              <p className="text-sm text-center text-muted-foreground">
-                Currently scanning: <span className="font-medium">{scanProgress.currentHost}</span>
-              </p>
-            )}
-
-            <Separator />
-
-            <div className="grid grid-cols-2 gap-4 text-center">
-              <div className="p-3 bg-muted/50 rounded-lg">
-                <p className="text-2xl font-bold text-primary">{scanProgress?.updatesFound || 0}</p>
-                <p className="text-xs text-muted-foreground">Updates Found</p>
-              </div>
-              <div className="p-3 bg-muted/50 rounded-lg">
-                <p className={`text-2xl font-bold ${(scanProgress?.criticalFound || 0) > 0 ? 'text-destructive' : 'text-muted-foreground'}`}>
-                  {scanProgress?.criticalFound || 0}
-                </p>
-                <p className="text-xs text-muted-foreground">Critical Updates</p>
-              </div>
-            </div>
-          </div>
+          <FirmwareScanProgressCard 
+            inline
+            scanProgress={{
+              hostsScanned: scanProgress?.scannedHosts || 0,
+              hostsTotal: scanProgress?.totalHosts || targetCount,
+              currentHost: scanProgress?.currentHost,
+              updatesFound: scanProgress?.updatesFound || 0,
+              criticalFound: scanProgress?.criticalFound || 0,
+            }}
+          />
         ) : (
           <>
             {/* Target Summary */}
