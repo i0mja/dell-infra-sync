@@ -30,9 +30,19 @@ export const SLA_MONITORING_JOB_TYPES = [
   'rpo_monitoring',
 ] as const;
 
+// Job types excluded from Operations reports - automated/polling jobs
+// These are background jobs that should not appear in user-facing operational reports
+export const REPORT_EXCLUDED_JOB_TYPES = [
+  ...INTERNAL_JOB_TYPES,
+  ...SCHEDULED_BACKGROUND_JOB_TYPES,
+  'vcenter_sync',           // Automated vCenter syncs
+  'partial_vcenter_sync',   // Partial vCenter syncs (triggered by changes)
+] as const;
+
 export type ScheduledBackgroundJobType = typeof SCHEDULED_BACKGROUND_JOB_TYPES[number];
 export type SlaMonitoringJobType = typeof SLA_MONITORING_JOB_TYPES[number];
 export type InternalJobType = typeof INTERNAL_JOB_TYPES[number];
+export type ReportExcludedJobType = typeof REPORT_EXCLUDED_JOB_TYPES[number];
 
 /**
  * Check if a job type is a scheduled background job
