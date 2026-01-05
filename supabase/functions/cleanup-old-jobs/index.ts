@@ -241,7 +241,8 @@ Deno.serve(async (req) => {
     }
 
     // Delete jobs and tasks in batches to avoid statement timeout
-    const BATCH_SIZE = 5000;
+    // Use smaller batch size (100) to keep URL length within PostgREST limits
+    const BATCH_SIZE = 100;
     let deletedTasks = 0;
     let deletedJobs = 0;
     let batchCount = 0;
@@ -293,6 +294,9 @@ Deno.serve(async (req) => {
       batchCount++;
 
       console.log(`[cleanup-old-jobs] Batch ${batchCount}: deleted ${jobIds.length} jobs, ${deletedTaskBatch?.length || 0} tasks. Total: ${deletedJobs} jobs, ${deletedTasks} tasks`);
+
+      // Small delay between batches to prevent overwhelming the database
+      await new Promise(r => setTimeout(r, 100));
 
     } while (true); // Loop exits via break when no more jobs to delete
 

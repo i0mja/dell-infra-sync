@@ -89,7 +89,8 @@ Deno.serve(async (req) => {
     }
 
     // Delete old records in batches to avoid statement timeout
-    const BATCH_SIZE = 5000;
+    // Use smaller batch size (500) to keep URL length within PostgREST limits
+    const BATCH_SIZE = 500;
     let totalDeleted = 0;
     let batchDeleted = 0;
 
@@ -125,6 +126,11 @@ Deno.serve(async (req) => {
       totalDeleted += batchDeleted;
 
       console.log(`[cleanup-activity-logs] Deleted batch of ${batchDeleted}, total: ${totalDeleted}`);
+
+      // Small delay between batches to prevent overwhelming the database
+      if (batchDeleted === BATCH_SIZE) {
+        await new Promise(r => setTimeout(r, 100));
+      }
 
     } while (batchDeleted === BATCH_SIZE);
 
