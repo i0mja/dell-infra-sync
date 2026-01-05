@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { ReportType } from "@/config/reports-config";
 import { format, differenceInDays } from "date-fns";
+import { REPORT_EXCLUDED_JOB_TYPES } from "@/lib/job-constants";
 
 export interface ReportData {
   rows: any[];
@@ -131,12 +132,17 @@ async function fetchClusterSummary(): Promise<ReportData> {
 }
 
 async function fetchJobSummary(dateRange: { start: Date; end: Date }): Promise<ReportData> {
+  // Exclude automated/polling job types from operations report
+  const excludedTypes = REPORT_EXCLUDED_JOB_TYPES.join(',');
+  
   const { data: jobs, error } = await supabase
     .from("jobs")
     .select("*")
+    .not("job_type", "in", `(${excludedTypes})`)
     .gte("created_at", dateRange.start.toISOString())
     .lte("created_at", dateRange.end.toISOString())
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(1000);
 
   if (error) throw error;
 
