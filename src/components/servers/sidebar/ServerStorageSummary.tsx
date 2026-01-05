@@ -112,8 +112,11 @@ export function ServerStorageSummary({
                   {drive.media_type || drive.protocol || "—"}
                 </Badge>
               </div>
-              <div className="flex items-center gap-2 text-muted-foreground mt-0.5">
-                {drive.slot && <span>Bay {drive.slot}</span>}
+              <div className="flex items-center gap-1.5 text-muted-foreground mt-0.5 flex-wrap">
+                {drive.serial_number && (
+                  <span className="font-mono text-[10px]">SN: {drive.serial_number}</span>
+                )}
+                {drive.slot != null && <span>{drive.serial_number ? '•' : ''} Bay {drive.slot}</span>}
                 {drive.capacity_gb && <span>• {formatCapacity(drive.capacity_gb)}</span>}
                 {drive.manufacturer && <span className="truncate">• {drive.manufacturer}</span>}
               </div>
