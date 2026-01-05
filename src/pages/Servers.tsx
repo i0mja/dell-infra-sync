@@ -82,7 +82,7 @@ export default function Servers() {
   const { launching: launchingConsole, launchConsole } = useConsoleLauncher();
   
   // Update availability scan hook
-  const { startScan, isStarting, scan, progress } = useUpdateAvailabilityScan(activeScanId || undefined);
+  const { startScan, isStarting, scan, progress, hostResultsForProgress } = useUpdateAvailabilityScan(activeScanId || undefined);
 
   // Auto-close dialog and navigate when scan completes
   useEffect(() => {
@@ -755,6 +755,7 @@ export default function Servers() {
             currentHost: progress.currentHost,
             updatesFound: progress.updatesFound,
             criticalFound: progress.criticalFound,
+            hostResults: hostResultsForProgress,
           } : undefined}
           onStartScan={async (firmwareSource) => {
             try {
