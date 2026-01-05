@@ -143,6 +143,30 @@ export function useUpdateAvailabilityScan(scanId?: string) {
     },
   });
 
+  // Transform component data from DB format (componentName, currentVersion) to UI format (name, installedVersion)
+  const transformComponent = (comp: Record<string, unknown>): FirmwareComponent => {
+    const hasUpdate = Boolean(comp.updateAvailable || comp.update_available);
+    const criticality = (comp.criticality as string) || undefined;
+    
+    // Derive status from component data
+    let status: FirmwareComponent['status'] = 'up-to-date';
+    if (hasUpdate) {
+      status = criticality === 'Critical' ? 'critical-update' : 'update-available';
+    } else if (!comp.availableVersion && !comp.available_version) {
+      status = 'not-in-catalog';
+    }
+    
+    return {
+      name: (comp.name || comp.componentName || comp.component_name || 'Unknown') as string,
+      type: (comp.type || comp.componentType || comp.component_type || 'Unknown') as string,
+      installedVersion: (comp.installedVersion || comp.currentVersion || comp.current_version || '-') as string,
+      availableVersion: (comp.availableVersion || comp.available_version) as string | undefined,
+      status,
+      criticality: criticality as FirmwareComponent['criticality'],
+      componentId: (comp.componentId || comp.component_id) as string | undefined,
+    };
+  };
+
   // Fetch scan results
   const { data: results, isLoading: resultsLoading, refetch: refetchResults } = useQuery({
     queryKey: ['update-availability-results', scanId],
@@ -156,7 +180,9 @@ export function useUpdateAvailabilityScan(scanId?: string) {
       if (error) throw error;
       return (data || []).map(r => ({
         ...r,
-        firmware_components: (Array.isArray(r.firmware_components) ? r.firmware_components : []) as unknown as FirmwareComponent[],
+        firmware_components: (Array.isArray(r.firmware_components) 
+          ? r.firmware_components.map((c) => transformComponent(c as Record<string, unknown>))
+          : []) as FirmwareComponent[],
         blockers: (Array.isArray(r.blockers) ? r.blockers : []) as unknown as ScanBlocker[],
       })) as UpdateAvailabilityResult[];
     },

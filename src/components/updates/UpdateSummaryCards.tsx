@@ -82,7 +82,9 @@ export function UpdateSummaryCards({ summary, isLoading }: UpdateSummaryCardsPro
     : 0;
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div className="space-y-2">
+      <p className="text-sm font-medium text-muted-foreground">Dell Hardware Firmware</p>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
       <StatCard
         title="Hosts Scanned"
         value={summary.hostsScanned || 0}
@@ -116,6 +118,7 @@ export function UpdateSummaryCards({ summary, isLoading }: UpdateSummaryCardsPro
         icon={CheckCircle2}
         variant={complianceRate >= 90 ? 'success' : complianceRate >= 70 ? 'warning' : 'danger'}
       />
+      </div>
     </div>
   );
 }
