@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -97,6 +97,19 @@ export function useUpdateAvailabilityScan(scanId?: string) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [progress, setProgress] = useState<ScanProgress | null>(null);
+  
+  // Watermark to prevent progress regression
+  const progressWatermark = useRef({ scannedHosts: 0, updatesFound: 0, criticalFound: 0 });
+  const prevScanIdRef = useRef<string | undefined>(undefined);
+  
+  // Reset progress when scanId changes
+  useEffect(() => {
+    if (scanId !== prevScanIdRef.current) {
+      prevScanIdRef.current = scanId;
+      setProgress(null);
+      progressWatermark.current = { scannedHosts: 0, updatesFound: 0, criticalFound: 0 };
+    }
+  }, [scanId]);
 
   // Fetch a specific scan
   const { data: scan, isLoading: scanLoading, refetch: refetchScan } = useQuery({
@@ -222,21 +235,48 @@ export function useUpdateAvailabilityScan(scanId?: string) {
   useEffect(() => {
     if (job?.details || results) {
       const details = (job?.details || {}) as Record<string, unknown>;
+      const targetScope = (job?.target_scope || {}) as Record<string, unknown>;
       
       // Calculate updates from actual results if available (more accurate)
       const updatesFromResults = results?.reduce((sum, r) => sum + r.updates_available, 0) ?? 0;
       const criticalFromResults = results?.reduce((sum, r) => sum + r.critical_updates, 0) ?? 0;
       const scannedFromResults = results?.length ?? 0;
       
+      // Calculate totalHosts with fallbacks: job details -> target scope server count
+      const totalFromDetails = (details.hosts_total ?? details.hostsTotal ?? 0) as number;
+      const serverIdsCount = Array.isArray(targetScope.server_ids) ? targetScope.server_ids.length : 0;
+      const vcenterHostIdsCount = Array.isArray(targetScope.vcenter_host_ids) ? targetScope.vcenter_host_ids.length : 0;
+      const totalHosts = totalFromDetails || serverIdsCount || vcenterHostIdsCount;
+      
+      // Apply watermark to prevent regression
+      const newScanned = Math.max(
+        scannedFromResults,
+        (details.hosts_scanned ?? details.hostsScanned ?? 0) as number,
+        progressWatermark.current.scannedHosts
+      );
+      const newUpdates = Math.max(
+        updatesFromResults,
+        (details.updates_found ?? details.updatesFound ?? 0) as number,
+        progressWatermark.current.updatesFound
+      );
+      const newCritical = Math.max(
+        criticalFromResults,
+        (details.critical_found ?? details.criticalFound ?? 0) as number,
+        progressWatermark.current.criticalFound
+      );
+      
+      // Update watermarks
+      progressWatermark.current = { scannedHosts: newScanned, updatesFound: newUpdates, criticalFound: newCritical };
+      
       setProgress({
-        scannedHosts: scannedFromResults || (details.hosts_scanned ?? details.hostsScanned ?? 0) as number,
-        totalHosts: (details.hosts_total ?? details.hostsTotal ?? 0) as number,
+        scannedHosts: newScanned,
+        totalHosts,
         currentHost: (details.current_host ?? details.currentHost) as string | undefined,
-        updatesFound: updatesFromResults || (details.updates_found ?? details.updatesFound ?? 0) as number,
-        criticalFound: criticalFromResults || (details.critical_found ?? details.criticalFound ?? 0) as number,
+        updatesFound: newUpdates,
+        criticalFound: newCritical,
       });
     }
-  }, [job?.details, results]);
+  }, [job?.details, job?.target_scope, results]);
 
   // Fetch recent scans
   const { data: recentScans, isLoading: recentScansLoading } = useQuery({

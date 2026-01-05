@@ -135,7 +135,7 @@ export default function VCenter() {
   const [activeScanId, setActiveScanId] = useState<string | null>(null);
   
   // Update availability scan hook
-  const { startScan, isStarting: isScanStarting, scan: activeScan, progress: scanProgress } = useUpdateAvailabilityScan(activeScanId || undefined);
+  const { startScan, isStarting: isScanStarting, scan: activeScan, progress: scanProgress, hostResultsForProgress } = useUpdateAvailabilityScan(activeScanId || undefined);
 
   // Sidebar navigation stack for breadcrumb
   const [sidebarNavStack, setSidebarNavStack] = useState<SidebarNavItem[]>([]);
@@ -1408,6 +1408,7 @@ export default function VCenter() {
             currentHost: scanProgress.currentHost,
             updatesFound: scanProgress.updatesFound,
             criticalFound: scanProgress.criticalFound,
+            hostResults: hostResultsForProgress,
           } : undefined}
           onStartScan={async (firmwareSource) => {
             try {
