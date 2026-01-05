@@ -4,7 +4,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import type { HostScanStatus } from '@/components/updates/FirmwareScanProgressCard';
-import { countUniqueUpdates } from '@/lib/firmware-utils';
+import { countUniqueUpdates, countUniqueCriticalUpdates } from '@/lib/firmware-utils';
 
 export type ScanType = 'cluster' | 'group' | 'servers' | 'single_host';
 export type FirmwareSource = 'local_repository' | 'dell_online_catalog';
@@ -387,6 +387,7 @@ export function useUpdateAvailabilityScan(scanId?: string) {
     // Collect all components to calculate unique updates
     const allComponents = results.flatMap(r => r.firmware_components);
     const uniqueUpdates = countUniqueUpdates(allComponents);
+    const uniqueCriticalUpdates = countUniqueCriticalUpdates(allComponents);
 
     return {
       hostsScanned: results.length,
@@ -398,6 +399,7 @@ export function useUpdateAvailabilityScan(scanId?: string) {
       upToDate: results.reduce((sum, r) => sum + r.up_to_date, 0),
       esxiUpdatesAvailable: results.filter(r => r.esxi_update_available).length,
       uniqueUpdates,
+      uniqueCriticalUpdates,
     };
   }, [results]);
 
