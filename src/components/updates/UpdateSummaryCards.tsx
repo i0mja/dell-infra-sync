@@ -95,10 +95,10 @@ export function UpdateSummaryCards({ summary, isLoading }: UpdateSummaryCardsPro
       
       <StatCard
         title="Updates Available"
-        value={summary.updatesAvailable || 0}
-        subtitle={`across ${summary.hostsScanned || 0} hosts`}
+        value={summary.uniqueUpdates || summary.updatesAvailable || 0}
+        subtitle={`${summary.updatesAvailable || 0} component instances`}
         icon={Download}
-        variant={summary.updatesAvailable && summary.updatesAvailable > 0 ? 'info' : 'success'}
+        variant={(summary.uniqueUpdates || summary.updatesAvailable) ? 'info' : 'success'}
       />
       
       <StatCard
