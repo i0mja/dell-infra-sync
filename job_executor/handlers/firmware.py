@@ -368,7 +368,7 @@ class FirmwareHandler(BaseHandler):
                                     log_to_db=False, timeout=10
                                 )
                                 if test_session:
-                                    self.executor.close_idrac_session(ip, test_session)
+                                    self.executor.delete_idrac_session(test_session, ip=ip)
                                     idrac_online = True
                                     self.log(f"  ✓ iDRAC back online (attempt {attempt+1})")
                                     break
@@ -486,7 +486,7 @@ class FirmwareHandler(BaseHandler):
                 finally:
                     # Always close session
                     if session_token:
-                        self.executor.close_idrac_session(ip, session_token)
+                        self.executor.delete_idrac_session(session_token, ip=ip)
             
             # Update job status
             final_status = 'completed' if failed_count == 0 else 'failed'

@@ -72,7 +72,14 @@ export const MinimizedJobMonitor = ({
   }, [jobId, removeJob]);
 
   const getJobTypeLabel = (type: string) => {
-    return type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    const labels: Record<string, string> = {
+      firmware_inventory_scan: 'Check for Updates',
+      vcenter_sync: 'vCenter Sync',
+      discovery_scan: 'Discovery Scan',
+      firmware_update: 'Firmware Update',
+      rolling_cluster_update: 'Rolling Cluster Update',
+    };
+    return labels[type] || type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
   };
 
   const getStatusIcon = () => {
