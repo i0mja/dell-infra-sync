@@ -88,3 +88,18 @@ export function countUniqueUpdates(components: FirmwareComponent[]): number {
   });
   return uniqueUpdates.size;
 }
+
+/**
+ * Count unique critical updates (distinct combinations of normalized name + available version
+ * where status is 'critical-update').
+ */
+export function countUniqueCriticalUpdates(components: FirmwareComponent[]): number {
+  const uniqueCritical = new Set<string>();
+  components.forEach(c => {
+    if (c.availableVersion && c.status === 'critical-update') {
+      const normalized = normalizeForGrouping(c.name);
+      uniqueCritical.add(`${normalized}|${c.availableVersion}`);
+    }
+  });
+  return uniqueCritical.size;
+}

@@ -32,6 +32,7 @@ export interface ScanSummary {
   upToDate?: number;
   esxiUpdatesAvailable?: number;
   uniqueUpdates?: number;
+  uniqueCriticalUpdates?: number;
 }
 
 export interface ComponentTypeSummary {

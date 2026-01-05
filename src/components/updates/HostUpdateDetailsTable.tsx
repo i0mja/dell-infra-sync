@@ -32,7 +32,7 @@ import {
   Download,
 } from 'lucide-react';
 import type { UpdateAvailabilityResult, FirmwareComponent } from '@/hooks/useUpdateAvailabilityScan';
-import { groupFirmwareComponents, type GroupedFirmwareComponent } from '@/lib/firmware-utils';
+import { groupFirmwareComponents, countUniqueUpdates, countUniqueCriticalUpdates, type GroupedFirmwareComponent } from '@/lib/firmware-utils';
 
 interface HostUpdateDetailsTableProps {
   results: UpdateAvailabilityResult[];
@@ -280,7 +280,10 @@ export function HostUpdateDetailsTable({ results, isLoading, onStartUpdate }: Ho
               </TableRow>
             ) : (
               filteredResults.map((result) => {
-                const groupedCount = groupFirmwareComponents(result.firmware_components || []).length;
+                const components = result.firmware_components || [];
+                const groupedCount = groupFirmwareComponents(components).length;
+                const uniqueUpdates = countUniqueUpdates(components);
+                const uniqueCritical = countUniqueCriticalUpdates(components);
                 return (
                 <Collapsible key={result.id} open={expandedRows.has(result.id)} asChild>
                   <>
@@ -326,18 +329,32 @@ export function HostUpdateDetailsTable({ results, isLoading, onStartUpdate }: Ho
                         </Tooltip>
                       </TableCell>
                       <TableCell className="text-center">
-                        {result.updates_available > 0 ? (
-                          <span className="text-primary font-medium">{result.updates_available}</span>
-                        ) : (
-                          <span className="text-muted-foreground">0</span>
-                        )}
+                        <Tooltip>
+                          <TooltipTrigger className="cursor-help">
+                            {uniqueUpdates > 0 ? (
+                              <span className="text-primary font-medium">{uniqueUpdates}</span>
+                            ) : (
+                              <span className="text-muted-foreground">0</span>
+                            )}
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {result.updates_available} component instances
+                          </TooltipContent>
+                        </Tooltip>
                       </TableCell>
                       <TableCell className="text-center">
-                        {result.critical_updates > 0 ? (
-                          <span className="text-destructive font-medium">{result.critical_updates}</span>
-                        ) : (
-                          <span className="text-muted-foreground">0</span>
-                        )}
+                        <Tooltip>
+                          <TooltipTrigger className="cursor-help">
+                            {uniqueCritical > 0 ? (
+                              <span className="text-destructive font-medium">{uniqueCritical}</span>
+                            ) : (
+                              <span className="text-muted-foreground">0</span>
+                            )}
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {result.critical_updates} component instances
+                          </TooltipContent>
+                        </Tooltip>
                       </TableCell>
                       <TableCell>{getStatusBadge(result.scan_status)}</TableCell>
                       <TableCell>

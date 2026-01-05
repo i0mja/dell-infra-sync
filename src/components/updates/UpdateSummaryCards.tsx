@@ -103,12 +103,12 @@ export function UpdateSummaryCards({ summary, isLoading }: UpdateSummaryCardsPro
       
       <StatCard
         title="Critical Updates"
-        value={summary.criticalUpdates || 0}
-        subtitle={summary.criticalUpdates && summary.criticalUpdates > 0 
-          ? 'Action required' 
+        value={summary.uniqueCriticalUpdates ?? summary.criticalUpdates ?? 0}
+        subtitle={(summary.uniqueCriticalUpdates ?? summary.criticalUpdates ?? 0) > 0 
+          ? `${summary.criticalUpdates || 0} component instances` 
           : 'No critical updates'}
         icon={AlertTriangle}
-        variant={summary.criticalUpdates && summary.criticalUpdates > 0 ? 'danger' : 'success'}
+        variant={(summary.uniqueCriticalUpdates ?? summary.criticalUpdates ?? 0) > 0 ? 'danger' : 'success'}
       />
       
       <StatCard
