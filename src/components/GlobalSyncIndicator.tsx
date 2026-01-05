@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 export function GlobalSyncIndicator() {
   const [runningJobs, setRunningJobs] = useState(0);
   const [dismissed, setDismissed] = useState(false);
+  const prevRunningJobsRef = useRef(0);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -34,11 +35,14 @@ export function GlobalSyncIndicator() {
         });
         
         const count = manualJobs.length;
-        setRunningJobs(count);
-        // Reset dismissed state when new jobs start
-        if (count > 0 && runningJobs === 0) {
+        
+        // Reset dismissed state when new jobs start (using ref for comparison)
+        if (count > 0 && prevRunningJobsRef.current === 0) {
           setDismissed(false);
         }
+        prevRunningJobsRef.current = count;
+        
+        setRunningJobs(count);
       }
     };
 
@@ -67,7 +71,7 @@ export function GlobalSyncIndicator() {
       supabase.removeChannel(channel);
       clearInterval(interval);
     };
-  }, [runningJobs]);
+  }, []); // Empty dependency array - runs once on mount
 
   // Don't show if no jobs, dismissed, or on dashboard
   if (runningJobs === 0 || dismissed || isOnDashboard) {
