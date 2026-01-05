@@ -32,6 +32,46 @@ class DiscoveryHandler(BaseHandler):
             # Check if this is a per-server refresh (when adding individual servers)
             if 'server_ids' in target_scope and target_scope['server_ids']:
                 self.executor.refresh_existing_servers(job, target_scope['server_ids'])
+                
+                # refresh_existing_servers leaves job in 'running' - we need to complete it
+                # Fetch updated job details to get final counts
+                try:
+                    headers = {
+                        "apikey": SERVICE_ROLE_KEY,
+                        "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+                        "Content-Type": "application/json"
+                    }
+                    job_url = f"{DSM_URL}/rest/v1/jobs?id=eq.{job['id']}&select=details"
+                    response = requests.get(job_url, headers=headers, verify=VERIFY_SSL)
+                    if response.status_code == 200:
+                        jobs = _safe_json_parse(response)
+                        final_details = jobs[0].get('details', {}) if jobs else {}
+                    else:
+                        final_details = {}
+                except Exception as e:
+                    self.log(f"Failed to fetch final job details: {e}", "WARN")
+                    final_details = {}
+                
+                servers_refreshed = final_details.get('servers_refreshed', 0)
+                servers_total = final_details.get('servers_total', len(target_scope['server_ids']))
+                servers_failed = final_details.get('servers_failed', 0)
+                
+                # Determine final status
+                if servers_failed > 0 and servers_refreshed == 0:
+                    final_status = 'failed'
+                else:
+                    final_status = 'completed'
+                
+                self.update_job_status(
+                    job['id'],
+                    final_status,
+                    completed_at=utc_now_iso(),
+                    details={
+                        **final_details,
+                        'current_stage': 'complete',
+                        'current_step': f'Complete: {servers_refreshed}/{servers_total} synced',
+                    }
+                )
                 return
             
             # Otherwise, proceed with IP range discovery
