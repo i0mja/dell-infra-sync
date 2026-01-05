@@ -21,7 +21,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import type { ScanTarget, FirmwareSource } from './types';
-import { FirmwareScanProgressCard } from './FirmwareScanProgressCard';
+import { FirmwareScanProgressCard, type HostScanStatus } from './FirmwareScanProgressCard';
 
 interface UpdateAvailabilityScanDialogProps {
   open: boolean;
@@ -35,6 +35,7 @@ interface UpdateAvailabilityScanDialogProps {
     currentHost?: string;
     updatesFound: number;
     criticalFound: number;
+    hostResults?: HostScanStatus[];
   };
 }
 
@@ -109,6 +110,7 @@ export function UpdateAvailabilityScanDialog({
               currentHost: scanProgress?.currentHost,
               updatesFound: scanProgress?.updatesFound || 0,
               criticalFound: scanProgress?.criticalFound || 0,
+              hostResults: scanProgress?.hostResults || [],
             }}
           />
         ) : (

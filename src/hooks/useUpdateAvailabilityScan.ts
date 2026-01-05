@@ -1,8 +1,9 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
+import type { HostScanStatus } from '@/components/updates/FirmwareScanProgressCard';
 
 export type ScanType = 'cluster' | 'group' | 'servers' | 'single_host';
 export type FirmwareSource = 'local_repository' | 'dell_online_catalog';
@@ -142,20 +143,6 @@ export function useUpdateAvailabilityScan(scanId?: string) {
     },
   });
 
-  // Update progress state from job details
-  useEffect(() => {
-    if (job?.details) {
-      const details = job.details as Record<string, unknown>;
-      setProgress({
-        scannedHosts: (details.hosts_scanned ?? details.hostsScanned ?? 0) as number,
-        totalHosts: (details.hosts_total ?? details.hostsTotal ?? 0) as number,
-        currentHost: (details.current_host ?? details.currentHost) as string | undefined,
-        updatesFound: (details.updates_found ?? details.updatesFound ?? 0) as number,
-        criticalFound: (details.critical_found ?? details.criticalFound ?? 0) as number,
-      });
-    }
-  }, [job?.details]);
-
   // Fetch scan results
   const { data: results, isLoading: resultsLoading, refetch: refetchResults } = useQuery({
     queryKey: ['update-availability-results', scanId],
@@ -179,6 +166,40 @@ export function useUpdateAvailabilityScan(scanId?: string) {
       return scan?.status === 'running' || scan?.status === 'pending' ? 2000 : false;
     },
   });
+
+  // Derive host status list from results for real-time progress display
+  const hostResultsForProgress: HostScanStatus[] = useMemo(() => {
+    if (!results || results.length === 0) return [];
+    return results.map(r => ({
+      hostname: r.hostname || 'Unknown',
+      status: r.scan_status === 'failed' ? 'failed' as const : 
+              r.scan_status === 'completed' ? 'completed' as const : 
+              r.scan_status === 'scanning' ? 'scanning' as const : 'pending' as const,
+      componentsChecked: r.total_components,
+      updatesAvailable: r.updates_available,
+      error: r.blockers?.[0]?.message,
+    }));
+  }, [results]);
+
+  // Update progress state from job details and results
+  useEffect(() => {
+    if (job?.details || results) {
+      const details = (job?.details || {}) as Record<string, unknown>;
+      
+      // Calculate updates from actual results if available (more accurate)
+      const updatesFromResults = results?.reduce((sum, r) => sum + r.updates_available, 0) ?? 0;
+      const criticalFromResults = results?.reduce((sum, r) => sum + r.critical_updates, 0) ?? 0;
+      const scannedFromResults = results?.length ?? 0;
+      
+      setProgress({
+        scannedHosts: scannedFromResults || (details.hosts_scanned ?? details.hostsScanned ?? 0) as number,
+        totalHosts: (details.hosts_total ?? details.hostsTotal ?? 0) as number,
+        currentHost: (details.current_host ?? details.currentHost) as string | undefined,
+        updatesFound: updatesFromResults || (details.updates_found ?? details.updatesFound ?? 0) as number,
+        criticalFound: criticalFromResults || (details.critical_found ?? details.criticalFound ?? 0) as number,
+      });
+    }
+  }, [job?.details, results]);
 
   // Fetch recent scans
   const { data: recentScans, isLoading: recentScansLoading } = useQuery({
@@ -399,6 +420,7 @@ export function useUpdateAvailabilityScan(scanId?: string) {
     
     // Progress
     progress,
+    hostResultsForProgress,
     
     // Actions
     startScan: startScanMutation.mutateAsync,
