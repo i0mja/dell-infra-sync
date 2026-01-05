@@ -47,6 +47,10 @@ export function groupFirmwareComponents(components: FirmwareComponent[]): Groupe
       } else if (comp.criticality === 'Recommended' && existing.criticality !== 'Critical') {
         existing.criticality = 'Recommended';
       }
+      // If any component in the group was inferred, mark the group as inferred
+      if (comp.updateInferred) {
+        existing.updateInferred = true;
+      }
     } else {
       groups.set(groupKey, {
         ...comp,

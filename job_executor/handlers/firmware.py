@@ -1075,6 +1075,36 @@ class FirmwareHandler(BaseHandler):
                     type_map = {'BIOS': 'BIOS', 'FRMW': 'Firmware', 'APAC': 'Application', 'DRVR': 'Driver'}
                     return type_map.get(dell_type, 'Firmware')
                 
+                def get_firmware_family(name: str) -> str:
+                    """Identify firmware family for cross-component matching.
+                    
+                    Components in the same family often share firmware packages.
+                    Returns None if component doesn't belong to a known shared-firmware family.
+                    """
+                    name_lower = name.lower()
+                    
+                    # iDRAC and Lifecycle Controller share the same firmware package
+                    if 'idrac' in name_lower or 'remote access' in name_lower or 'lifecycle controller' in name_lower:
+                        return 'idrac_lifecycle'
+                    
+                    # Intel X710 variants (all port configurations share firmware)
+                    if 'x710' in name_lower:
+                        return 'intel_x710'
+                    
+                    # Broadcom BCM5720 / NetXtreme Gigabit variants
+                    if 'bcm5720' in name_lower or 'netxtreme gigabit' in name_lower:
+                        return 'broadcom_bcm5720'
+                    
+                    # Broadcom 10G variants
+                    if 'broadcom' in name_lower and '10g' in name_lower:
+                        return 'broadcom_10g'
+                    
+                    # Emulex / Fibre Channel adapters
+                    if 'emulex' in name_lower or 'lpe31' in name_lower:
+                        return 'emulex_fc'
+                    
+                    return None  # Not part of a known firmware family
+
                 for item in current_inventory:
                     component_name = item.get('Name') or item.get('component_name', 'Unknown')
                     current_version = item.get('Version') or item.get('version', 'Unknown')
@@ -1098,6 +1128,7 @@ class FirmwareHandler(BaseHandler):
                         'criticality': update_info.get('criticality', 'optional') if update_info else None,
                         'updateAvailable': bool(update_info),
                         'rebootRequired': update_info.get('reboot_required', True) if update_info else None,
+                        'updateInferred': False,
                     }
                     components.append(component_data)
                     
@@ -1107,6 +1138,44 @@ class FirmwareHandler(BaseHandler):
                         criticality_value = (update_info.get('criticality') or '').lower()
                         if criticality_value in ('urgent', 'critical'):
                             critical_count += 1
+                
+                # === SECOND PASS: Infer updates for unmatched components ===
+                # Build lookup: {(family, installed_version): update_info}
+                family_updates = {}
+                for comp in components:
+                    if comp.get('updateAvailable') and comp.get('availableVersion'):
+                        family = get_firmware_family(comp['componentName'])
+                        if family:
+                            key = (family, comp['currentVersion'])
+                            if key not in family_updates:
+                                family_updates[key] = {
+                                    'available_version': comp['availableVersion'],
+                                    'criticality': comp.get('criticality'),
+                                    'reboot_required': comp.get('rebootRequired'),
+                                }
+
+                # Apply inferred updates to unmatched components
+                inferred_count = 0
+                for comp in components:
+                    if not comp.get('updateAvailable'):
+                        family = get_firmware_family(comp['componentName'])
+                        if family:
+                            key = (family, comp['currentVersion'])
+                            inferred = family_updates.get(key)
+                            if inferred:
+                                comp['availableVersion'] = inferred['available_version']
+                                comp['criticality'] = inferred['criticality']
+                                comp['updateAvailable'] = True
+                                comp['rebootRequired'] = inferred['reboot_required']
+                                comp['updateInferred'] = True
+                                
+                                updates_count += 1
+                                inferred_count += 1
+                                if (inferred.get('criticality') or '').lower() in ('urgent', 'critical'):
+                                    critical_count += 1
+
+                if inferred_count > 0:
+                    self.log(f"    ℹ Inferred {inferred_count} additional update(s) from related components")
                 
                 total_updates += updates_count
                 total_critical += critical_count
