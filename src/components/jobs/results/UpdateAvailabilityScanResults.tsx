@@ -21,13 +21,14 @@ interface UpdateAvailabilityScanResultsProps {
 export const UpdateAvailabilityScanResults = ({ details, status }: UpdateAvailabilityScanResultsProps) => {
   const navigate = useNavigate();
   
-  const hostsScanned = details?.hosts_scanned ?? details?.summary?.hostsScanned ?? 0;
-  const hostsTotal = details?.hosts_total ?? details?.summary?.hostsTotal ?? hostsScanned;
-  const hostsSuccessful = details?.summary?.hostsSuccessful ?? hostsScanned;
-  const hostsFailed = details?.summary?.hostsFailed ?? 0;
-  const updatesAvailable = details?.summary?.updatesAvailable ?? 0;
-  const criticalUpdates = details?.summary?.criticalUpdates ?? 0;
-  const upToDate = details?.summary?.upToDate ?? 0;
+  // Check direct properties first (new format), then nested summary (legacy)
+  const hostsScanned = details?.hostsScanned ?? details?.hosts_scanned ?? details?.summary?.hostsScanned ?? 0;
+  const hostsTotal = details?.hostsTotal ?? details?.hosts_total ?? details?.summary?.hostsTotal ?? hostsScanned;
+  const hostsSuccessful = details?.hostsSuccessful ?? details?.hostsScanned ?? details?.summary?.hostsSuccessful ?? hostsScanned;
+  const hostsFailed = details?.hostsFailed ?? details?.summary?.hostsFailed ?? 0;
+  const updatesAvailable = details?.updatesAvailable ?? details?.summary?.updatesAvailable ?? 0;
+  const criticalUpdates = details?.criticalUpdates ?? details?.summary?.criticalUpdates ?? 0;
+  const upToDate = details?.upToDate ?? details?.summary?.upToDate ?? 0;
   const scanId = details?.scan_id;
   const currentHost = details?.current_host;
 
