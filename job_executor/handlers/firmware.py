@@ -1002,35 +1002,36 @@ class FirmwareHandler(BaseHandler):
                 # Get firmware inventory via Dell operations
                 dell_ops = self.executor._get_dell_operations()
                 
-                # Check for updates using catalog
-                if firmware_source == 'dell_online_catalog':
-                    check_result = dell_ops.check_available_catalog_updates(
-                        ip, username, password,
-                        catalog_url=dell_catalog_url,
-                        server_id=server_id,
-                        job_id=job_id,
-                        user_id=job.get('created_by')
-                    )
+                # Always fetch firmware inventory first - this ensures we have component data
+                # regardless of what the catalog check returns
+                session_token = self.executor.create_idrac_session(ip, username, password)
+                if not session_token:
+                    raise Exception("Failed to authenticate with iDRAC")
+                
+                try:
+                    # Get full firmware inventory via Redfish
+                    current_inventory = self.executor.get_firmware_inventory(ip, session_token)
+                    self.log(f"    Retrieved {len(current_inventory)} firmware components from {hostname}")
                     
-                    available_updates = check_result.get('available_updates', [])
-                    current_inventory = check_result.get('current_inventory', [])
-                else:
-                    # For local repository, get inventory and compare against uploaded firmware packages
-                    session_token = self.executor.create_idrac_session(ip, username, password)
-                    if not session_token:
-                        raise Exception("Failed to authenticate with iDRAC")
-                    
-                    try:
-                        current_inventory = self.executor.get_firmware_inventory(ip, session_token)
-                        
-                        # Query local firmware packages and compare against installed versions
+                    # Check for updates using catalog or local repository
+                    if firmware_source == 'dell_online_catalog':
+                        check_result = dell_ops.check_available_catalog_updates(
+                            ip, username, password,
+                            catalog_url=dell_catalog_url,
+                            server_id=server_id,
+                            job_id=job_id,
+                            user_id=job.get('created_by')
+                        )
+                        available_updates = check_result.get('available_updates', [])
+                    else:
+                        # For local repository, compare against uploaded firmware packages
                         available_updates = self._check_local_repository_updates(
                             current_inventory, 
                             server.get('model'),
                             server_id
                         )
-                    finally:
-                        self.executor.close_idrac_session(ip, session_token)
+                finally:
+                    self.executor.close_idrac_session(ip, session_token)
                 
                 # Build firmware components list
                 components = []
