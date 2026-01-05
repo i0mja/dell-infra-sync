@@ -19,6 +19,7 @@ export interface FirmwareComponent {
   status: 'up-to-date' | 'update-available' | 'critical-update' | 'not-in-catalog';
   criticality?: 'Critical' | 'Recommended' | 'Optional';
   componentId?: string;
+  updateInferred?: boolean;
 }
 
 export interface ScanBlocker {
@@ -149,6 +150,7 @@ export function useUpdateAvailabilityScan(scanId?: string) {
     const hasUpdate = Boolean(comp.updateAvailable || comp.update_available);
     const rawCriticality = (comp.criticality as string) || undefined;
     const availableVersion = (comp.availableVersion || comp.available_version) as string | undefined;
+    const updateInferred = Boolean(comp.updateInferred || comp.update_inferred);
     
     // Normalize criticality for display (title case)
     const criticality = rawCriticality 
@@ -172,6 +174,7 @@ export function useUpdateAvailabilityScan(scanId?: string) {
       status,
       criticality: criticality as FirmwareComponent['criticality'],
       componentId: (comp.componentId || comp.component_id) as string | undefined,
+      updateInferred,
     };
   };
 

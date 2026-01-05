@@ -159,7 +159,21 @@ function ExpandedRow({ result }: ExpandedRowProps) {
                 <TableCell className="text-muted-foreground">{comp.type}</TableCell>
                 <TableCell className="font-mono text-sm">{comp.installedVersion}</TableCell>
                 <TableCell className="font-mono text-sm">
-                  {comp.availableVersion || '-'}
+                  {comp.availableVersion ? (
+                    <>
+                      {comp.availableVersion}
+                      {comp.updateInferred && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="text-xs text-muted-foreground ml-1 cursor-help">(inferred)</span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            Update inferred from related component with same firmware version
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                    </>
+                  ) : '-'}
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center gap-2">
