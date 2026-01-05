@@ -255,15 +255,37 @@ export function useGlobalSearch() {
                 const server = serverMap.get(drive.server_id);
                 if (server) {
                   seenServerIds.add(server.id);
-                  const driveInfo = drive.serial_number || drive.wwn || drive.model || 'Unknown';
+                  
+                  // Determine which field matched the search term
+                  const termLower = searchTerm.toLowerCase();
+                  let matchLabel: string;
+                  let matchValue: string;
+
+                  if (drive.serial_number?.toLowerCase().includes(termLower)) {
+                    matchLabel = 'Serial';
+                    matchValue = drive.serial_number;
+                  } else if (drive.wwn?.toLowerCase().includes(termLower)) {
+                    matchLabel = 'WWN';
+                    matchValue = drive.wwn;
+                  } else if (drive.model?.toLowerCase().includes(termLower)) {
+                    matchLabel = 'Model';
+                    matchValue = drive.model;
+                  } else if (drive.name?.toLowerCase().includes(termLower)) {
+                    matchLabel = 'Slot';
+                    matchValue = drive.name;
+                  } else {
+                    matchLabel = 'Drive';
+                    matchValue = drive.serial_number || drive.model || 'Unknown';
+                  }
+
                   const slotInfo = drive.slot || drive.name?.split(':')[0] || '';
-                  console.log('[GlobalSearch] Adding server from drive:', server.hostname, 'driveInfo:', driveInfo);
+                  console.log('[GlobalSearch] Adding server from drive:', server.hostname, 'matchLabel:', matchLabel, 'matchValue:', matchValue);
                   dbResults.push({
                     id: server.id,
                     category: 'servers',
                     title: server.hostname || server.ip_address,
-                    subtitle: `Drive: ${driveInfo}${slotInfo ? ` • ${slotInfo}` : ''}${drive.media_type ? ` • ${drive.media_type}` : ''}`,
-              path: `/servers?server=${server.id}`,
+                    subtitle: `${matchLabel}: ${matchValue}${slotInfo && matchLabel !== 'Slot' ? ` • ${slotInfo}` : ''}${drive.media_type ? ` • ${drive.media_type}` : ''}`,
+                    path: `/servers?server=${server.id}`,
                     metadata: { 
                       service_tag: server.service_tag,
                       matched_drive: { serial: drive.serial_number, wwn: drive.wwn, model: drive.model }
