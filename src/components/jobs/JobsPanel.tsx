@@ -252,6 +252,7 @@ export const JobsPanel = ({ defaultView = "all" }: { defaultView?: JobView }) =>
       discovery_scan: "Initial Server Sync",
       vcenter_sync: "vCenter Sync",
       full_server_update: "Full Server Update",
+      firmware_inventory_scan: "Check for Updates",
     };
     return labels[type] || type;
   };
