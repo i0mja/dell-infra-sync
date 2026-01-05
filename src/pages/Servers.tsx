@@ -84,6 +84,29 @@ export default function Servers() {
   // Update availability scan hook
   const { startScan, isStarting, scan, progress } = useUpdateAvailabilityScan(activeScanId || undefined);
 
+  // Auto-close dialog and navigate when scan completes
+  useEffect(() => {
+    if (!scan || !updateScanDialogOpen) return;
+    
+    if (scan.status === 'completed') {
+      setUpdateScanDialogOpen(false);
+      toast.success('Scan Complete', {
+        description: `Found ${scan.summary?.updatesAvailable ?? 0} updates available.`,
+      });
+      navigate(`/updates?scanId=${scan.id}`);
+      setActiveScanId(null);
+    } else if (scan.status === 'failed') {
+      setUpdateScanDialogOpen(false);
+      toast.error('Scan Failed', {
+        description: scan.error_message || 'The firmware scan encountered an error.',
+      });
+      setActiveScanId(null);
+    } else if (scan.status === 'cancelled') {
+      setUpdateScanDialogOpen(false);
+      setActiveScanId(null);
+    }
+  }, [scan?.status, scan?.id, scan?.summary, scan?.error_message, updateScanDialogOpen, navigate]);
+
   // Hooks
   const {
     filteredServers,
