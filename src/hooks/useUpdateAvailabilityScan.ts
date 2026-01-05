@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -115,6 +115,46 @@ export function useUpdateAvailabilityScan(scanId?: string) {
       return data?.status === 'running' || data?.status === 'pending' ? 2000 : false;
     },
   });
+
+  // Fetch associated job for real-time progress
+  const { data: job } = useQuery({
+    queryKey: ['firmware-scan-job', scanId],
+    queryFn: async () => {
+      if (!scanId) return null;
+      const { data, error } = await supabase
+        .from('jobs')
+        .select('id, status, details, target_scope')
+        .eq('job_type', 'firmware_inventory_scan')
+        .order('created_at', { ascending: false })
+        .limit(20);
+      if (error) throw error;
+      // Find job matching this scan_id in target_scope
+      const matchingJob = data?.find((j) => {
+        const scope = j.target_scope as Record<string, unknown> | null;
+        return scope?.scan_id === scanId;
+      });
+      return matchingJob || null;
+    },
+    enabled: !!scanId,
+    refetchInterval: (query) => {
+      const data = query.state.data as { status: string } | null | undefined;
+      return data?.status === 'running' || data?.status === 'pending' ? 1000 : false;
+    },
+  });
+
+  // Update progress state from job details
+  useEffect(() => {
+    if (job?.details) {
+      const details = job.details as Record<string, unknown>;
+      setProgress({
+        scannedHosts: (details.hosts_scanned ?? details.hostsScanned ?? 0) as number,
+        totalHosts: (details.hosts_total ?? details.hostsTotal ?? 0) as number,
+        currentHost: (details.current_host ?? details.currentHost) as string | undefined,
+        updatesFound: (details.updates_found ?? details.updatesFound ?? 0) as number,
+        criticalFound: (details.critical_found ?? details.criticalFound ?? 0) as number,
+      });
+    }
+  }, [job?.details]);
 
   // Fetch scan results
   const { data: results, isLoading: resultsLoading, refetch: refetchResults } = useQuery({
