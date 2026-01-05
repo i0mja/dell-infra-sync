@@ -143,6 +143,32 @@ export default function VCenter() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
+
+  // Auto-close dialog and navigate when scan completes
+  useEffect(() => {
+    if (!activeScan || !updateScanDialogOpen) return;
+    
+    if (activeScan.status === 'completed') {
+      setUpdateScanDialogOpen(false);
+      toast({
+        title: 'Scan Complete',
+        description: `Found ${activeScan.summary?.updatesAvailable ?? 0} updates available.`,
+      });
+      navigate(`/updates?scanId=${activeScan.id}`);
+      setActiveScanId(null);
+    } else if (activeScan.status === 'failed') {
+      setUpdateScanDialogOpen(false);
+      toast({
+        title: 'Scan Failed',
+        description: activeScan.error_message || 'The firmware scan encountered an error.',
+        variant: 'destructive',
+      });
+      setActiveScanId(null);
+    } else if (activeScan.status === 'cancelled') {
+      setUpdateScanDialogOpen(false);
+      setActiveScanId(null);
+    }
+  }, [activeScan?.status, activeScan?.id, activeScan?.summary, activeScan?.error_message, updateScanDialogOpen, navigate, toast]);
   
   const { vcenters } = useVCenters();
   const { vms, clusters, datastores, alarms, networks, loading: vmsLoading, refetch: refetchVCenterData } = useVCenterData(
