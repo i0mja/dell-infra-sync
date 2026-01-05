@@ -108,10 +108,11 @@ export function formatActivityMessage(commandType: string, endpoint: string) {
  * Get the current operation message for a firmware scan
  */
 export function getCurrentOperationMessage(details: any): string {
-  const currentHost = details?.current_host;
-  const currentStep = details?.current_step;
-  const hostsScanned = details?.hosts_scanned ?? 0;
-  const hostsTotal = details?.hosts_total ?? 0;
+  // Check camelCase (new format) first, then snake_case (legacy)
+  const currentHost = details?.currentHost ?? details?.current_host;
+  const currentStep = details?.currentStep ?? details?.current_step;
+  const hostsScanned = details?.hostsScanned ?? details?.hosts_scanned ?? 0;
+  const hostsTotal = details?.hostsTotal ?? details?.hosts_total ?? 0;
   
   if (currentHost) {
     if (currentStep) {
@@ -136,9 +137,10 @@ export function getCurrentOperationMessage(details: any): string {
  * Calculate progress percentage for firmware scan
  */
 export function calculateScanProgress(details: any): number {
-  const hostsScanned = details?.hosts_scanned ?? 0;
-  const hostsTotal = details?.hosts_total ?? 0;
-  const progressPercent = details?.progress_percent;
+  // Check camelCase (new format) first, then snake_case (legacy)
+  const hostsScanned = details?.hostsScanned ?? details?.hosts_scanned ?? 0;
+  const hostsTotal = details?.hostsTotal ?? details?.hosts_total ?? 0;
+  const progressPercent = details?.progressPercent ?? details?.progress_percent;
   
   // Prefer explicit progress percent if available
   if (typeof progressPercent === 'number' && progressPercent > 0) {
@@ -187,11 +189,11 @@ export function formatHostScanResult(result: {
  * Get a summary message for a completed scan
  */
 export function getScanSummaryMessage(details: any): string {
-  const hostsScanned = details?.hosts_scanned ?? 0;
-  const summary = details?.summary || {};
-  const updatesAvailable = summary.updatesAvailable ?? 0;
-  const criticalUpdates = summary.criticalUpdates ?? 0;
-  const hostsFailed = summary.hostsFailed ?? 0;
+  // Check top-level camelCase (new format), then snake_case, then nested summary (legacy)
+  const hostsScanned = details?.hostsScanned ?? details?.hosts_scanned ?? details?.summary?.hostsScanned ?? 0;
+  const updatesAvailable = details?.updatesAvailable ?? details?.updates_available ?? details?.summary?.updatesAvailable ?? 0;
+  const criticalUpdates = details?.criticalUpdates ?? details?.critical_updates ?? details?.summary?.criticalUpdates ?? 0;
+  const hostsFailed = details?.hostsFailed ?? details?.hosts_failed ?? details?.summary?.hostsFailed ?? 0;
   
   const parts: string[] = [`${hostsScanned} host${hostsScanned !== 1 ? 's' : ''} scanned`];
   
