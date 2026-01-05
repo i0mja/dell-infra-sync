@@ -240,44 +240,63 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Get IDs of jobs to delete
-    const { data: jobsToDelete } = await supabase
-      .from('jobs')
-      .select('id')
-      .in('status', ['completed', 'failed', 'cancelled'])
-      .lt('created_at', jobCutoffIso)
-      .limit(50000);
-
-    const jobIds = jobsToDelete?.map(j => j.id) || [];
+    // Delete jobs and tasks in batches to avoid statement timeout
+    const BATCH_SIZE = 5000;
     let deletedTasks = 0;
     let deletedJobs = 0;
+    let batchCount = 0;
 
-    if (jobIds.length > 0) {
-      // Delete tasks first (in batches if needed)
-      const batchSize = 1000;
-      for (let i = 0; i < jobIds.length; i += batchSize) {
-        const batch = jobIds.slice(i, i + batchSize);
-        const { data: deletedTaskBatch } = await supabase
-          .from('job_tasks')
-          .delete()
-          .in('job_id', batch)
-          .select('id');
-        deletedTasks += deletedTaskBatch?.length || 0;
+    do {
+      // Get a batch of job IDs to delete
+      const { data: jobsToDelete, error: selectError } = await supabase
+        .from('jobs')
+        .select('id')
+        .in('status', ['completed', 'failed', 'cancelled'])
+        .lt('created_at', jobCutoffIso)
+        .limit(BATCH_SIZE);
+
+      if (selectError) {
+        console.error('[cleanup-old-jobs] Error selecting jobs:', selectError);
+        throw selectError;
       }
 
-      // Delete jobs (in batches if needed)
-      for (let i = 0; i < jobIds.length; i += batchSize) {
-        const batch = jobIds.slice(i, i + batchSize);
-        const { data: deletedJobBatch } = await supabase
-          .from('jobs')
-          .delete()
-          .in('id', batch)
-          .select('id');
-        deletedJobs += deletedJobBatch?.length || 0;
-      }
-    }
+      if (!jobsToDelete || jobsToDelete.length === 0) break;
 
-    console.log(`[cleanup-old-jobs] Deleted ${deletedJobs} jobs and ${deletedTasks} tasks`);
+      const jobIds = jobsToDelete.map(j => j.id);
+
+      // Delete tasks for these jobs first
+      const { data: deletedTaskBatch, error: taskDeleteError } = await supabase
+        .from('job_tasks')
+        .delete()
+        .in('job_id', jobIds)
+        .select('id');
+
+      if (taskDeleteError) {
+        console.error('[cleanup-old-jobs] Error deleting tasks:', taskDeleteError);
+        throw taskDeleteError;
+      }
+
+      deletedTasks += deletedTaskBatch?.length || 0;
+
+      // Delete the jobs
+      const { error: jobDeleteError } = await supabase
+        .from('jobs')
+        .delete()
+        .in('id', jobIds);
+
+      if (jobDeleteError) {
+        console.error('[cleanup-old-jobs] Error deleting jobs:', jobDeleteError);
+        throw jobDeleteError;
+      }
+
+      deletedJobs += jobIds.length;
+      batchCount++;
+
+      console.log(`[cleanup-old-jobs] Batch ${batchCount}: deleted ${jobIds.length} jobs, ${deletedTaskBatch?.length || 0} tasks. Total: ${deletedJobs} jobs, ${deletedTasks} tasks`);
+
+    } while (true); // Loop exits via break when no more jobs to delete
+
+    console.log(`[cleanup-old-jobs] Completed - deleted ${deletedJobs} jobs and ${deletedTasks} tasks`);
 
     // Update last cleanup timestamp
     if (settings?.id) {

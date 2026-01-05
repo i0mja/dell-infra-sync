@@ -88,20 +88,48 @@ Deno.serve(async (req) => {
       }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    // Delete old records
-    const { data: deleted, error: deleteError } = await supabase
-      .from('idrac_commands')
-      .delete()
-      .lt('timestamp', cutoffIso)
-      .select('id');
+    // Delete old records in batches to avoid statement timeout
+    const BATCH_SIZE = 5000;
+    let totalDeleted = 0;
+    let batchDeleted = 0;
 
-    if (deleteError) {
-      console.error('[cleanup-activity-logs] Error deleting records:', deleteError);
-      throw deleteError;
-    }
+    do {
+      // Select IDs to delete in this batch
+      const { data: toDelete, error: selectError } = await supabase
+        .from('idrac_commands')
+        .select('id')
+        .lt('timestamp', cutoffIso)
+        .limit(BATCH_SIZE);
 
-    const deletedCount = deleted?.length || 0;
-    console.log(`[cleanup-activity-logs] Deleted ${deletedCount} activity logs`);
+      if (selectError) {
+        console.error('[cleanup-activity-logs] Error selecting records:', selectError);
+        throw selectError;
+      }
+
+      if (!toDelete || toDelete.length === 0) break;
+
+      const idsToDelete = toDelete.map(r => r.id);
+
+      // Delete this batch by ID
+      const { error: deleteError } = await supabase
+        .from('idrac_commands')
+        .delete()
+        .in('id', idsToDelete);
+
+      if (deleteError) {
+        console.error('[cleanup-activity-logs] Error deleting batch:', deleteError);
+        throw deleteError;
+      }
+
+      batchDeleted = idsToDelete.length;
+      totalDeleted += batchDeleted;
+
+      console.log(`[cleanup-activity-logs] Deleted batch of ${batchDeleted}, total: ${totalDeleted}`);
+
+    } while (batchDeleted === BATCH_SIZE);
+
+    const deletedCount = totalDeleted;
+    console.log(`[cleanup-activity-logs] Completed - deleted ${deletedCount} activity logs`);
 
     // Update last cleanup timestamp
     if (settings?.id) {
