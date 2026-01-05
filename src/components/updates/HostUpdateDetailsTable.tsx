@@ -265,7 +265,9 @@ export function HostUpdateDetailsTable({ results, isLoading, onStartUpdate }: Ho
                 </TableCell>
               </TableRow>
             ) : (
-              filteredResults.map((result) => (
+              filteredResults.map((result) => {
+                const groupedCount = groupFirmwareComponents(result.firmware_components || []).length;
+                return (
                 <Collapsible key={result.id} open={expandedRows.has(result.id)} asChild>
                   <>
                     <TableRow className="cursor-pointer hover:bg-muted/50" onClick={() => toggleRow(result.id)}>
@@ -299,7 +301,16 @@ export function HostUpdateDetailsTable({ results, isLoading, onStartUpdate }: Ho
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="text-center">{result.total_components}</TableCell>
+                      <TableCell className="text-center">
+                        <Tooltip>
+                          <TooltipTrigger className="cursor-help">
+                            {groupedCount}
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {result.total_components} total instances
+                          </TooltipContent>
+                        </Tooltip>
+                      </TableCell>
                       <TableCell className="text-center">
                         {result.updates_available > 0 ? (
                           <span className="text-primary font-medium">{result.updates_available}</span>
@@ -340,7 +351,8 @@ export function HostUpdateDetailsTable({ results, isLoading, onStartUpdate }: Ho
                     </CollapsibleContent>
                   </>
                 </Collapsible>
-              ))
+              );
+              })
             )}
           </TableBody>
         </Table>
