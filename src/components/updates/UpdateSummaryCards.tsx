@@ -83,7 +83,7 @@ export function UpdateSummaryCards({ summary, isLoading }: UpdateSummaryCardsPro
 
   return (
     <div className="space-y-2">
-      <p className="text-sm font-medium text-muted-foreground">Dell Hardware Firmware</p>
+      <p className="text-sm font-medium text-muted-foreground">Firmware Update Summary</p>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
       <StatCard
         title="Hosts Scanned"
@@ -96,7 +96,7 @@ export function UpdateSummaryCards({ summary, isLoading }: UpdateSummaryCardsPro
       <StatCard
         title="Updates Available"
         value={summary.updatesAvailable || 0}
-        subtitle={`${summary.totalComponents || 0} components checked`}
+        subtitle={`across ${summary.hostsScanned || 0} hosts`}
         icon={Download}
         variant={summary.updatesAvailable && summary.updatesAvailable > 0 ? 'info' : 'success'}
       />
@@ -105,16 +105,16 @@ export function UpdateSummaryCards({ summary, isLoading }: UpdateSummaryCardsPro
         title="Critical Updates"
         value={summary.criticalUpdates || 0}
         subtitle={summary.criticalUpdates && summary.criticalUpdates > 0 
-          ? 'Immediate action required' 
+          ? 'Action required' 
           : 'No critical updates'}
         icon={AlertTriangle}
         variant={summary.criticalUpdates && summary.criticalUpdates > 0 ? 'danger' : 'success'}
       />
       
       <StatCard
-        title="Up to Date"
+        title="Components Current"
         value={summary.upToDate || 0}
-        subtitle={`${complianceRate}% compliance`}
+        subtitle={`${complianceRate}% up to date`}
         icon={CheckCircle2}
         variant={complianceRate >= 90 ? 'success' : complianceRate >= 70 ? 'warning' : 'danger'}
       />

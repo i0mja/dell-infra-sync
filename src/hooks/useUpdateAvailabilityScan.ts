@@ -146,13 +146,20 @@ export function useUpdateAvailabilityScan(scanId?: string) {
   // Transform component data from DB format (componentName, currentVersion) to UI format (name, installedVersion)
   const transformComponent = (comp: Record<string, unknown>): FirmwareComponent => {
     const hasUpdate = Boolean(comp.updateAvailable || comp.update_available);
-    const criticality = (comp.criticality as string) || undefined;
+    const rawCriticality = (comp.criticality as string) || undefined;
+    const availableVersion = (comp.availableVersion || comp.available_version) as string | undefined;
     
-    // Derive status from component data
+    // Normalize criticality for display (title case)
+    const criticality = rawCriticality 
+      ? rawCriticality.charAt(0).toUpperCase() + rawCriticality.slice(1).toLowerCase()
+      : undefined;
+    
+    // Derive status from component data (case-insensitive criticality check)
     let status: FirmwareComponent['status'] = 'up-to-date';
-    if (hasUpdate) {
-      status = criticality === 'Critical' ? 'critical-update' : 'update-available';
-    } else if (!comp.availableVersion && !comp.available_version) {
+    if (hasUpdate && availableVersion) {
+      const critLower = (rawCriticality || '').toLowerCase();
+      status = (critLower === 'critical' || critLower === 'urgent') ? 'critical-update' : 'update-available';
+    } else if (!availableVersion) {
       status = 'not-in-catalog';
     }
     
@@ -160,7 +167,7 @@ export function useUpdateAvailabilityScan(scanId?: string) {
       name: (comp.name || comp.componentName || comp.component_name || 'Unknown') as string,
       type: (comp.type || comp.componentType || comp.component_type || 'Unknown') as string,
       installedVersion: (comp.installedVersion || comp.currentVersion || comp.current_version || '-') as string,
-      availableVersion: (comp.availableVersion || comp.available_version) as string | undefined,
+      availableVersion,
       status,
       criticality: criticality as FirmwareComponent['criticality'],
       componentId: (comp.componentId || comp.component_id) as string | undefined,
