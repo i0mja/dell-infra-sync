@@ -1033,10 +1033,12 @@ class FirmwareHandler(BaseHandler):
                 critical_count = 0
                 
                 def normalize_name(name: str) -> str:
-                    """Remove MAC addresses and normalize for matching."""
+                    """Remove MAC addresses and disk numbers for matching."""
                     import re
                     # Remove MAC addresses like "- B4:83:51:11:A3:48"
                     name = re.sub(r'\s*-\s*([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\s*$', '', name)
+                    # Normalize disk names: "Disk 10 in Backplane..." → "Disk in Backplane..."
+                    name = re.sub(r'Disk \d+', 'Disk', name)
                     return name.lower().strip()
                 
                 def get_component_category(dell_type: str, name: str) -> str:
@@ -1101,7 +1103,9 @@ class FirmwareHandler(BaseHandler):
                     
                     if update_info:
                         updates_count += 1
-                        if update_info.get('criticality') in ('urgent', 'critical', 'recommended'):
+                        # Fix: Case-insensitive criticality check
+                        criticality_value = (update_info.get('criticality') or '').lower()
+                        if criticality_value in ('urgent', 'critical'):
                             critical_count += 1
                 
                 total_updates += updates_count
