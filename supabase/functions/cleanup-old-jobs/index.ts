@@ -265,6 +265,17 @@ Deno.serve(async (req) => {
 
       const jobIds = jobsToDelete.map(j => j.id);
 
+      // Clear foreign key references in replication_targets before deleting jobs
+      const { error: clearRefError } = await supabase
+        .from('replication_targets')
+        .update({ deployed_job_id: null })
+        .in('deployed_job_id', jobIds);
+
+      if (clearRefError) {
+        console.error('[cleanup-old-jobs] Error clearing replication target references:', clearRefError);
+        // Continue anyway - this is informational only
+      }
+
       // Delete tasks for these jobs first
       const { data: deletedTaskBatch, error: taskDeleteError } = await supabase
         .from('job_tasks')
