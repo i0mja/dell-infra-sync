@@ -1,224 +1,317 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
+};
+
+// Background job types to track
+const backgroundJobTypes = [
+  'scheduled_vcenter_sync',
+  'scheduled_replication_check',
+  'rpo_monitoring',
+  'vcenter_sync',
+  'partial_vcenter_sync',
+  'cluster_health_check'
+];
 
 Deno.serve(async (req) => {
+  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders })
+    return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    )
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Get settings
+    // Parse request body for options
+    let preview = false;
+    let overrideRetentionDays: number | null = null;
+    let includeBackgroundJobs = true;
+    
+    try {
+      const body = await req.json();
+      preview = body.preview === true;
+      if (typeof body.retentionDays === 'number' && body.retentionDays > 0) {
+        overrideRetentionDays = body.retentionDays;
+      }
+      if (typeof body.includeBackgroundJobs === 'boolean') {
+        includeBackgroundJobs = body.includeBackgroundJobs;
+      }
+    } catch {
+      // No body or invalid JSON - use defaults
+    }
+
+    console.log(`[cleanup-old-jobs] Starting - preview: ${preview}, overrideRetentionDays: ${overrideRetentionDays}, includeBackgroundJobs: ${includeBackgroundJobs}`);
+
+    // Fetch settings
     const { data: settings, error: settingsError } = await supabase
       .from('activity_settings')
       .select('*')
-      .single()
+      .maybeSingle();
 
-    if (settingsError) throw settingsError
-
-    if (!settings?.job_auto_cleanup_enabled) {
-      return new Response(
-        JSON.stringify({ 
-          success: true,
-          message: 'Job auto cleanup is disabled',
-          deleted_count: 0,
-          stale_cancelled_count: 0
-        }), 
-        { 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          status: 200 
-        }
-      )
+    if (settingsError) {
+      console.error('[cleanup-old-jobs] Error fetching settings:', settingsError);
+      throw settingsError;
     }
 
-    // Calculate stale job cutoff times
-    const stalePendingCutoff = new Date()
-    stalePendingCutoff.setHours(stalePendingCutoff.getHours() - settings.stale_pending_hours)
-    
-    const staleRunningCutoff = new Date()
-    staleRunningCutoff.setHours(staleRunningCutoff.getHours() - settings.stale_running_hours)
+    // Use override if provided, otherwise use settings
+    const retentionDays = overrideRetentionDays || settings?.job_retention_days || 90;
+    const jobAutoCleanupEnabled = settings?.job_auto_cleanup_enabled ?? true;
+    const autoCancelStaleJobs = settings?.auto_cancel_stale_jobs ?? true;
+    const stalePendingHours = settings?.stale_pending_hours || 24;
+    const staleRunningHours = settings?.stale_running_hours || 48;
 
-    // Cancel stale pending jobs
-    let staleCancelledCount = 0
-    if (settings.auto_cancel_stale_jobs) {
-      console.log(`[JOB-CLEANUP] Cancelling pending jobs older than ${stalePendingCutoff.toISOString()}`)
-      
-      const { data: stalePendingJobs, error: stalePendingError } = await supabase
+    // If not preview and auto-cleanup is disabled (and no override), skip
+    if (!preview && !jobAutoCleanupEnabled && !overrideRetentionDays) {
+      console.log('[cleanup-old-jobs] Auto-cleanup disabled and no override, skipping');
+      return new Response(JSON.stringify({
+        success: true,
+        message: 'Auto-cleanup is disabled',
+        preview: false,
+        deleted: { jobs: 0, tasks: 0 },
+        cancelled: { pending: 0, running: 0, orphaned: 0 }
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // Calculate cutoff dates
+    const jobCutoffDate = new Date();
+    jobCutoffDate.setDate(jobCutoffDate.getDate() - retentionDays);
+    const jobCutoffIso = jobCutoffDate.toISOString();
+
+    const pendingCutoff = new Date(Date.now() - stalePendingHours * 60 * 60 * 1000).toISOString();
+    const runningCutoff = new Date(Date.now() - staleRunningHours * 60 * 60 * 1000).toISOString();
+
+    console.log(`[cleanup-old-jobs] Retention: ${retentionDays} days, cutoff: ${jobCutoffIso}`);
+
+    if (preview) {
+      // Preview mode - count records that would be deleted
+      const results: { jobType: string; count: number }[] = [];
+
+      // Get all terminal jobs older than cutoff
+      const { data: jobTypeCounts, error: countError } = await supabase
         .from('jobs')
-        .select('id')
+        .select('job_type')
+        .in('status', ['completed', 'failed', 'cancelled'])
+        .lt('created_at', jobCutoffIso);
+
+      if (countError) {
+        console.error('[cleanup-old-jobs] Error counting jobs:', countError);
+        throw countError;
+      }
+
+      // Aggregate counts by job type
+      const typeCounts: Record<string, number> = {};
+      let totalCount = 0;
+      let backgroundCount = 0;
+      let userCount = 0;
+
+      for (const job of jobTypeCounts || []) {
+        const jobType = job.job_type;
+        typeCounts[jobType] = (typeCounts[jobType] || 0) + 1;
+        totalCount++;
+        
+        if (backgroundJobTypes.includes(jobType)) {
+          backgroundCount++;
+        } else {
+          userCount++;
+        }
+      }
+
+      // Convert to array and sort by count
+      for (const [jobType, count] of Object.entries(typeCounts)) {
+        results.push({ jobType, count });
+      }
+      results.sort((a, b) => b.count - a.count);
+
+      // Count stale jobs
+      const { count: stalePendingCount } = await supabase
+        .from('jobs')
+        .select('*', { count: 'exact', head: true })
         .eq('status', 'pending')
-        .lt('created_at', stalePendingCutoff.toISOString())
+        .lt('created_at', pendingCutoff);
 
-      if (!stalePendingError && stalePendingJobs && stalePendingJobs.length > 0) {
-        const { error: cancelPendingError } = await supabase
-          .from('jobs')
-          .update({
-            status: 'cancelled',
-            completed_at: new Date().toISOString(),
-            details: {
-              cancellation_reason: `Auto-cancelled: stuck in pending state for >${settings.stale_pending_hours} hours`
-            }
-          })
-          .in('id', stalePendingJobs.map(j => j.id))
-
-        if (!cancelPendingError) {
-          staleCancelledCount += stalePendingJobs.length
-          console.log(`[JOB-CLEANUP] Cancelled ${stalePendingJobs.length} stale pending jobs`)
-        }
-      }
-
-      // Cancel stale running jobs
-      console.log(`[JOB-CLEANUP] Cancelling running jobs older than ${staleRunningCutoff.toISOString()}`)
-      
-      const { data: staleRunningJobs, error: staleRunningError } = await supabase
+      const { count: staleRunningCount } = await supabase
         .from('jobs')
-        .select('id')
+        .select('*', { count: 'exact', head: true })
         .eq('status', 'running')
-        .lt('started_at', staleRunningCutoff.toISOString())
+        .lt('started_at', runningCutoff);
 
-      if (!staleRunningError && staleRunningJobs && staleRunningJobs.length > 0) {
-        const { error: cancelRunningError } = await supabase
-          .from('jobs')
-          .update({
-            status: 'cancelled',
-            completed_at: new Date().toISOString(),
-            details: {
-              cancellation_reason: `Auto-cancelled: stuck in running state for >${settings.stale_running_hours} hours`
-            }
-          })
-          .in('id', staleRunningJobs.map(j => j.id))
-
-      if (!cancelRunningError) {
-          staleCancelledCount += staleRunningJobs.length
-          console.log(`[JOB-CLEANUP] Cancelled ${staleRunningJobs.length} stale running jobs`)
-        }
-      }
-
-      // Cancel orphaned sub-jobs whose parent is completed/failed/cancelled
-      console.log(`[JOB-CLEANUP] Checking for orphaned sub-jobs`)
-      
-      const { data: completedParents, error: parentsError } = await supabase
+      // Get actual task count
+      const { data: jobIds } = await supabase
         .from('jobs')
         .select('id')
         .in('status', ['completed', 'failed', 'cancelled'])
+        .lt('created_at', jobCutoffIso)
+        .limit(10000);
 
-      if (!parentsError && completedParents && completedParents.length > 0) {
-        const parentIds = completedParents.map(p => p.id)
-        
-        const { data: orphanedSubJobs, error: orphanedError } = await supabase
-          .from('jobs')
-          .select('id')
-          .in('status', ['pending', 'running'])
-          .not('parent_job_id', 'is', null)
-          .in('parent_job_id', parentIds)
+      let actualTaskCount = 0;
+      if (jobIds && jobIds.length > 0) {
+        const { count } = await supabase
+          .from('job_tasks')
+          .select('*', { count: 'exact', head: true })
+          .in('job_id', jobIds.map(j => j.id));
+        actualTaskCount = count || 0;
+      }
 
-        if (!orphanedError && orphanedSubJobs && orphanedSubJobs.length > 0) {
-          const { error: cancelOrphanedError } = await supabase
-            .from('jobs')
-            .update({
-              status: 'cancelled',
-              completed_at: new Date().toISOString(),
-              details: {
-                cancellation_reason: 'Auto-cancelled: parent job completed/failed/cancelled'
-              }
-            })
-            .in('id', orphanedSubJobs.map(j => j.id))
+      console.log(`[cleanup-old-jobs] Preview: ${totalCount} jobs (${backgroundCount} background, ${userCount} user), ${actualTaskCount} tasks would be deleted`);
 
-          if (!cancelOrphanedError) {
-            staleCancelledCount += orphanedSubJobs.length
-            console.log(`[JOB-CLEANUP] Cancelled ${orphanedSubJobs.length} orphaned sub-jobs`)
+      return new Response(JSON.stringify({
+        success: true,
+        preview: true,
+        retentionDays,
+        cutoffDate: jobCutoffIso,
+        counts: {
+          total: totalCount,
+          background: backgroundCount,
+          user: userCount,
+          tasks: actualTaskCount,
+          byType: results,
+          stale: {
+            pending: stalePendingCount || 0,
+            running: staleRunningCount || 0
           }
         }
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // Execute cleanup
+    let cancelledPending = 0;
+    let cancelledRunning = 0;
+    let cancelledOrphaned = 0;
+
+    // Cancel stale jobs first if enabled
+    if (autoCancelStaleJobs) {
+      // Cancel stale pending jobs
+      const { data: stalePending } = await supabase
+        .from('jobs')
+        .update({ 
+          status: 'cancelled', 
+          completed_at: new Date().toISOString(),
+          notes: 'Auto-cancelled: exceeded stale pending threshold'
+        })
+        .eq('status', 'pending')
+        .lt('created_at', pendingCutoff)
+        .select('id');
+      
+      cancelledPending = stalePending?.length || 0;
+      console.log(`[cleanup-old-jobs] Cancelled ${cancelledPending} stale pending jobs`);
+
+      // Cancel stale running jobs
+      const { data: staleRunning } = await supabase
+        .from('jobs')
+        .update({ 
+          status: 'cancelled', 
+          completed_at: new Date().toISOString(),
+          notes: 'Auto-cancelled: exceeded stale running threshold'
+        })
+        .eq('status', 'running')
+        .lt('started_at', runningCutoff)
+        .select('id');
+      
+      cancelledRunning = staleRunning?.length || 0;
+      console.log(`[cleanup-old-jobs] Cancelled ${cancelledRunning} stale running jobs`);
+
+      // Cancel orphaned sub-jobs
+      const { data: activeParentIds } = await supabase
+        .from('jobs')
+        .select('id')
+        .in('status', ['pending', 'running']);
+
+      const activeIds = activeParentIds?.map(j => j.id) || [];
+
+      if (activeIds.length > 0) {
+        const { data: orphaned } = await supabase
+          .from('jobs')
+          .update({ 
+            status: 'cancelled', 
+            completed_at: new Date().toISOString(),
+            notes: 'Auto-cancelled: parent job no longer active'
+          })
+          .in('status', ['pending', 'running'])
+          .not('parent_job_id', 'is', null)
+          .not('parent_job_id', 'in', `(${activeIds.join(',')})`)
+          .select('id');
+        
+        cancelledOrphaned = orphaned?.length || 0;
+        console.log(`[cleanup-old-jobs] Cancelled ${cancelledOrphaned} orphaned sub-jobs`);
       }
     }
 
-    // Delete old completed/failed/cancelled jobs
-    const cutoffDate = new Date()
-    cutoffDate.setDate(cutoffDate.getDate() - settings.job_retention_days)
-
-    console.log(`[JOB-CLEANUP] Deleting jobs older than ${cutoffDate.toISOString()}`)
-
-    // First, get the IDs of jobs to delete
-    const { data: jobsToDelete, error: jobsQueryError } = await supabase
+    // Get IDs of jobs to delete
+    const { data: jobsToDelete } = await supabase
       .from('jobs')
       .select('id')
       .in('status', ['completed', 'failed', 'cancelled'])
-      .lt('completed_at', cutoffDate.toISOString())
+      .lt('created_at', jobCutoffIso)
+      .limit(50000);
 
-    if (jobsQueryError) throw jobsQueryError
+    const jobIds = jobsToDelete?.map(j => j.id) || [];
+    let deletedTasks = 0;
+    let deletedJobs = 0;
 
-    const jobIds = jobsToDelete?.map(job => job.id) || []
-    
-    let deletedCount = 0
     if (jobIds.length > 0) {
-      // Delete old job tasks first (foreign key constraint)
-      const { error: tasksDeleteError } = await supabase
-        .from('job_tasks')
-        .delete()
-        .in('job_id', jobIds)
-
-      if (tasksDeleteError) {
-        console.error('[JOB-CLEANUP] Error deleting tasks:', tasksDeleteError)
+      // Delete tasks first (in batches if needed)
+      const batchSize = 1000;
+      for (let i = 0; i < jobIds.length; i += batchSize) {
+        const batch = jobIds.slice(i, i + batchSize);
+        const { data: deletedTaskBatch } = await supabase
+          .from('job_tasks')
+          .delete()
+          .in('job_id', batch)
+          .select('id');
+        deletedTasks += deletedTaskBatch?.length || 0;
       }
 
-      // Delete old jobs
-      const { error: jobsDeleteError, count } = await supabase
-        .from('jobs')
-        .delete({ count: 'exact' })
-        .in('id', jobIds)
-
-      if (jobsDeleteError) throw jobsDeleteError
-
-      deletedCount = count || 0
-      console.log(`[JOB-CLEANUP] Deleted ${deletedCount} old jobs`)
-    } else {
-      console.log('[JOB-CLEANUP] No old jobs to delete')
+      // Delete jobs (in batches if needed)
+      for (let i = 0; i < jobIds.length; i += batchSize) {
+        const batch = jobIds.slice(i, i + batchSize);
+        const { data: deletedJobBatch } = await supabase
+          .from('jobs')
+          .delete()
+          .in('id', batch)
+          .select('id');
+        deletedJobs += deletedJobBatch?.length || 0;
+      }
     }
 
+    console.log(`[cleanup-old-jobs] Deleted ${deletedJobs} jobs and ${deletedTasks} tasks`);
+
     // Update last cleanup timestamp
-    const { error: updateError } = await supabase
-      .from('activity_settings')
-      .update({ job_last_cleanup_at: new Date().toISOString() })
-      .eq('id', settings.id)
+    if (settings?.id) {
+      await supabase
+        .from('activity_settings')
+        .update({ job_last_cleanup_at: new Date().toISOString() })
+        .eq('id', settings.id);
+    }
 
-    if (updateError) throw updateError
-
-    return new Response(
-      JSON.stringify({ 
-        success: true,
-        deleted_count: deletedCount,
-        stale_cancelled_count: staleCancelledCount,
-        cutoff_date: cutoffDate.toISOString(),
-        retention_days: settings.job_retention_days,
-        stale_pending_hours: settings.stale_pending_hours,
-        stale_running_hours: settings.stale_running_hours
-      }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 200 
+    return new Response(JSON.stringify({
+      success: true,
+      preview: false,
+      retentionDays,
+      cutoffDate: jobCutoffIso,
+      deleted: {
+        jobs: deletedJobs,
+        tasks: deletedTasks
+      },
+      cancelled: {
+        pending: cancelledPending,
+        running: cancelledRunning,
+        orphaned: cancelledOrphaned
       }
-    )
+    }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
-  } catch (error) {
-    console.error('[JOB-CLEANUP] Error:', error)
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
-    return new Response(
-      JSON.stringify({ 
-        success: false,
-        error: errorMessage 
-      }), 
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 500 
-      }
-    )
+  } catch (error: unknown) {
+    console.error('[cleanup-old-jobs] Error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    return new Response(JSON.stringify({
+      success: false,
+      error: errorMessage
+    }), { 
+      status: 500, 
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+    });
   }
-})
+});
