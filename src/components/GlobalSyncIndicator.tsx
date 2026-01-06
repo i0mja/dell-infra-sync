@@ -4,11 +4,13 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Loader2, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { supabaseQueryWithRetry } from "@/lib/fetch-with-retry";
 
 export function GlobalSyncIndicator() {
   const [runningJobs, setRunningJobs] = useState(0);
   const [dismissed, setDismissed] = useState(false);
   const prevRunningJobsRef = useRef(0);
+  const errorCountRef = useRef(0);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -17,33 +19,48 @@ export function GlobalSyncIndicator() {
 
   useEffect(() => {
     const fetchRunningJobs = async () => {
-      const { data, error } = await supabase
-        .from('jobs')
-        .select('id, job_type, details')
-        .in('job_type', ['run_replication_sync', 'storage_vmotion', 'create_dr_shell'])
-        .in('status', ['pending', 'running']);
+      const { data, error, retryCount } = await supabaseQueryWithRetry(
+        async () => {
+          const result = await supabase
+            .from('jobs')
+            .select('id, job_type, details')
+            .in('job_type', ['run_replication_sync', 'storage_vmotion', 'create_dr_shell'])
+            .in('status', ['pending', 'running']);
+          return result;
+        },
+        { maxRetries: 2, baseDelay: 500 }
+      );
 
-      if (!error && data) {
-        // Filter out scheduled/automatic replication syncs (only show manually triggered ones)
-        const manualJobs = data.filter(job => {
-          if (job.job_type === 'run_replication_sync') {
-            const details = job.details as Record<string, unknown> | null;
-            // Only show if NOT triggered by scheduled/automatic process
-            return !details?.triggered_by;
-          }
-          return true;
-        });
-        
-        const count = manualJobs.length;
-        
-        // Reset dismissed state when new jobs start (using ref for comparison)
-        if (count > 0 && prevRunningJobsRef.current === 0) {
-          setDismissed(false);
+      if (error) {
+        // Only log once per error series
+        if (errorCountRef.current === 0) {
+          console.error('[GlobalSyncIndicator] Error fetching jobs:', error);
         }
-        prevRunningJobsRef.current = count;
-        
-        setRunningJobs(count);
+        errorCountRef.current++;
+        return;
       }
+      
+      errorCountRef.current = 0;
+
+      // Filter out scheduled/automatic replication syncs (only show manually triggered ones)
+      const manualJobs = (data || []).filter(job => {
+        if (job.job_type === 'run_replication_sync') {
+          const details = job.details as Record<string, unknown> | null;
+          // Only show if NOT triggered by scheduled/automatic process
+          return !details?.triggered_by;
+        }
+        return true;
+      });
+      
+      const count = manualJobs.length;
+      
+      // Reset dismissed state when new jobs start (using ref for comparison)
+      if (count > 0 && prevRunningJobsRef.current === 0) {
+        setDismissed(false);
+      }
+      prevRunningJobsRef.current = count;
+      
+      setRunningJobs(count);
     };
 
     fetchRunningJobs();

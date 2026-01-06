@@ -53,3 +53,6 @@ verify_jwt = true  # Requires authentication for SSH key generation
 
 [functions.set-executor-secret]
 verify_jwt = true  # Requires admin authentication for setting executor HMAC secret
+
+[functions.cancel-stale-jobs]
+verify_jwt = false  # Called by cron job or system, uses service role key
