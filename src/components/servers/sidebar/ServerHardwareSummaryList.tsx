@@ -2,14 +2,18 @@ import { Cpu, MemoryStick, HardDrive, Network } from "lucide-react";
 import type { Server } from "@/hooks/useServers";
 import type { ServerDrive } from "@/hooks/useServerDrives";
 import type { ServerNic } from "@/hooks/useServerNics";
+import type { ServerMemory } from "@/hooks/useServerMemory";
+import { ServerHardwareRow } from "./ServerHardwareRow";
+import { MemoryIssueDetail, DriveIssueDetail } from "./HardwareIssueDetails";
 
 interface ServerHardwareSummaryListProps {
   server: Server;
   drives?: ServerDrive[];
   nics?: ServerNic[];
+  memory?: ServerMemory[];
 }
 
-export function ServerHardwareSummaryList({ server, drives, nics }: ServerHardwareSummaryListProps) {
+export function ServerHardwareSummaryList({ server, drives, nics, memory }: ServerHardwareSummaryListProps) {
   // Calculate CPU display
   const cpuCount = server.cpu_count || 0;
   const cpuCores = server.cpu_cores_per_socket || 0;
@@ -36,24 +40,61 @@ export function ServerHardwareSummaryList({ server, drives, nics }: ServerHardwa
   const nicCount = nics?.length || 0;
   const networkDisplay = nicCount > 0 ? `${nicCount} Network Ports` : "—";
 
-  const items = [
-    { icon: Cpu, value: cpuDisplay, color: "text-blue-500" },
-    { icon: MemoryStick, value: memoryDisplay, color: "text-purple-500" },
-    { icon: HardDrive, value: storageDisplay, color: "text-amber-500" },
-    { icon: Network, value: networkDisplay, color: "text-emerald-500" },
-  ];
+  // Find memory issues (health != OK or status = Disabled)
+  const memoryIssues = memory?.filter(m => 
+    (m.health && m.health !== "OK") || m.status === "Disabled"
+  ) || [];
+  const memoryHasCritical = memoryIssues.some(m => m.health === "Critical" || m.status === "Disabled");
+  const memorySeverity = memoryHasCritical ? "critical" : memoryIssues.length > 0 ? "warning" : "ok";
+
+  // Find drive issues (health != OK or status = Disabled or predicted_failure)
+  const driveIssues = drives?.filter(d => 
+    (d.health && d.health !== "OK") || d.status === "Disabled" || d.predicted_failure
+  ) || [];
+  const driveHasCritical = driveIssues.some(d => d.health === "Critical" || d.status === "Disabled");
+  const driveSeverity = driveHasCritical ? "critical" : driveIssues.length > 0 ? "warning" : "ok";
 
   return (
     <div className="space-y-1">
-      {items.map((item, index) => (
-        <div
-          key={index}
-          className="flex items-center gap-3 py-1.5 px-2 rounded-md hover:bg-muted/50 transition-colors"
-        >
-          <item.icon className={`h-4 w-4 ${item.color} flex-shrink-0`} />
-          <span className="text-sm text-foreground">{item.value}</span>
-        </div>
-      ))}
+      {/* CPU - no expandable issues for now */}
+      <ServerHardwareRow
+        icon={Cpu}
+        iconColor="text-blue-500"
+        value={cpuDisplay}
+      />
+
+      {/* Memory - expandable if issues */}
+      <ServerHardwareRow
+        icon={MemoryStick}
+        iconColor="text-purple-500"
+        value={memoryDisplay}
+        issueCount={memoryIssues.length}
+        severity={memorySeverity}
+      >
+        {memoryIssues.map((mem) => (
+          <MemoryIssueDetail key={mem.id} memory={mem} />
+        ))}
+      </ServerHardwareRow>
+
+      {/* Drives - expandable if issues */}
+      <ServerHardwareRow
+        icon={HardDrive}
+        iconColor="text-amber-500"
+        value={storageDisplay}
+        issueCount={driveIssues.length}
+        severity={driveSeverity}
+      >
+        {driveIssues.map((drive) => (
+          <DriveIssueDetail key={drive.id} drive={drive} />
+        ))}
+      </ServerHardwareRow>
+
+      {/* Network - no expandable issues for now */}
+      <ServerHardwareRow
+        icon={Network}
+        iconColor="text-emerald-500"
+        value={networkDisplay}
+      />
     </div>
   );
 }

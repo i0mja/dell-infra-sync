@@ -20,6 +20,7 @@ import {
 import type { Server } from "@/hooks/useServers";
 import { useServerDrives } from "@/hooks/useServerDrives";
 import { useServerNics } from "@/hooks/useServerNics";
+import { useServerMemory } from "@/hooks/useServerMemory";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { formatDistanceToNow } from "date-fns";
@@ -130,9 +131,10 @@ export function ServerDetailsSidebar({
   // Tab state for sidebar views
   const [activeTab, setActiveTab] = useState<"dashboard" | "events" | "tasks" | "settings">("dashboard");
 
-  // Fetch drives and NICs for selected server
+  // Fetch drives, NICs, and memory for selected server
   const { data: drives } = useServerDrives(selectedServer?.id || null);
   const { data: nics } = useServerNics(selectedServer?.id || null);
+  const { data: memory } = useServerMemory(selectedServer?.id);
 
   const handleAutoLinkVCenter = async () => {
     if (!selectedServer) return;
@@ -259,7 +261,8 @@ export function ServerDetailsSidebar({
                 <ServerHardwareSummaryList 
                   server={selectedServer} 
                   drives={drives || undefined} 
-                  nics={nics || undefined} 
+                  nics={nics || undefined}
+                  memory={memory || undefined}
                 />
 
                 <Separator />
