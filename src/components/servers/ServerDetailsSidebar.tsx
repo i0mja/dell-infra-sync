@@ -32,6 +32,9 @@ import {
   ServerPerformanceGauges,
   ServerSidebarTabs,
   ServerQuickActionBar,
+  ServerStorageSummary,
+  ServerMemorySummary,
+  ServerNicsSummary,
 } from "./sidebar";
 
 interface GroupData {
@@ -129,7 +132,7 @@ export function ServerDetailsSidebar({
   onCheckForUpdates,
 }: ServerDetailsSidebarProps) {
   // Tab state for sidebar views
-  const [activeTab, setActiveTab] = useState<"dashboard" | "events" | "tasks" | "settings">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "hardware" | "tasks" | "settings">("dashboard");
 
   // Fetch drives, NICs, and memory for selected server
   const { data: drives } = useServerDrives(selectedServer?.id || null);
@@ -283,17 +286,29 @@ export function ServerDetailsSidebar({
               </>
             )}
 
-            {activeTab === "events" && (
-              <div className="py-4 text-center text-sm text-muted-foreground">
-                <p>Event log view</p>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className="mt-2"
-                  onClick={onViewEventLog}
-                >
-                  View Full Event Log
-                </Button>
+            {activeTab === "hardware" && (
+              <div className="space-y-4">
+                {/* CPU Details */}
+                <div className="space-y-2">
+                  <h4 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+                    Processors
+                  </h4>
+                  <div className="p-2 rounded-md bg-muted/30 text-sm">
+                    <p className="font-medium">{selectedServer.cpu_model || "Unknown CPU"}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {selectedServer.cpu_count || 0} x {selectedServer.cpu_cores_per_socket || 0} Cores
+                    </p>
+                  </div>
+                </div>
+
+                {/* Full Memory Summary */}
+                <ServerMemorySummary server={selectedServer} />
+
+                {/* Full Storage Summary */}
+                <ServerStorageSummary drives={drives || []} />
+
+                {/* Full Network Summary */}
+                <ServerNicsSummary nics={nics || []} />
               </div>
             )}
 
