@@ -66,6 +66,14 @@ export function NotificationHistoryCard() {
         return <Mail className="h-4 w-4 text-blue-500" />;
       case 'teams':
         return <MessageSquare className="h-4 w-4 text-purple-500" />;
+      case 'cluster_safety_alert':
+        return <Bell className="h-4 w-4 text-orange-500" />;
+      case 'sla_violation_alert':
+        return <Clock className="h-4 w-4 text-red-500" />;
+      case 'maintenance_reminder':
+        return <Bell className="h-4 w-4 text-blue-400" />;
+      case 'job_notification':
+        return <Bell className="h-4 w-4 text-green-500" />;
       default:
         return <Bell className="h-4 w-4 text-muted-foreground" />;
     }
@@ -136,6 +144,10 @@ export function NotificationHistoryCard() {
               <SelectItem value="all">All Channels</SelectItem>
               <SelectItem value="email">Email</SelectItem>
               <SelectItem value="teams">Teams</SelectItem>
+              <SelectItem value="cluster_safety_alert">Cluster Safety</SelectItem>
+              <SelectItem value="sla_violation_alert">SLA Violation</SelectItem>
+              <SelectItem value="maintenance_reminder">Maintenance</SelectItem>
+              <SelectItem value="job_notification">Job Notification</SelectItem>
             </SelectContent>
           </Select>
           <Select value={statusFilter} onValueChange={setStatusFilter}>

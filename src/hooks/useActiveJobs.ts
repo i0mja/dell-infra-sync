@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { INTERNAL_JOB_TYPES, SCHEDULED_BACKGROUND_JOB_TYPES } from "@/lib/job-constants";
+import { supabaseQueryWithRetry } from "@/lib/fetch-with-retry";
 
 // Combined list of job types to filter from the active jobs popover
 const FILTERED_JOB_TYPES = [...INTERNAL_JOB_TYPES, ...SCHEDULED_BACKGROUND_JOB_TYPES];
@@ -24,19 +25,43 @@ export function useActiveJobs() {
   const { session } = useAuth();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isRetrying, setIsRetrying] = useState(false);
+  const errorCountRef = useRef(0);
 
   const fetchJobs = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from("jobs")
-        .select("*")
-        .is("parent_job_id", null)
-        .in("status", ["pending", "running"])
-        .not("job_type", "in", `(${FILTERED_JOB_TYPES.join(',')})`)
-        .order("created_at", { ascending: false });
+      setIsRetrying(false);
+      
+      const { data, error, retryCount } = await supabaseQueryWithRetry(
+        async () => {
+          const result = await supabase
+            .from("jobs")
+            .select("*")
+            .is("parent_job_id", null)
+            .in("status", ["pending", "running"])
+            .not("job_type", "in", `(${FILTERED_JOB_TYPES.join(',')})`)
+            .order("created_at", { ascending: false });
+          return result;
+        },
+        { maxRetries: 3, baseDelay: 1000 }
+      );
 
-      if (error) throw error;
+      if (retryCount > 0) {
+        setIsRetrying(true);
+      }
+
+      if (error) {
+        // Only log error once per consecutive failure series
+        if (errorCountRef.current === 0) {
+          console.error("Error fetching active jobs:", error);
+        }
+        errorCountRef.current++;
+        throw error;
+      }
+      
+      // Reset error counter on success
+      errorCountRef.current = 0;
       
       // Filter out scheduled/automatic jobs (only show manually triggered ones)
       const filteredJobs = (data || []).filter(job => {
@@ -55,9 +80,10 @@ export function useActiveJobs() {
       
       setJobs(filteredJobs);
     } catch (error) {
-      console.error("Error fetching active jobs:", error);
+      // Keep existing jobs on error (stale-while-revalidate)
     } finally {
       setLoading(false);
+      setIsRetrying(false);
     }
   };
 
@@ -111,6 +137,7 @@ export function useActiveJobs() {
     completedJobs,
     allJobs: jobs,
     loading,
+    isRetrying,
     refetch: fetchJobs
   };
 }
