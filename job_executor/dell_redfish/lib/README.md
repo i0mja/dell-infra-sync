@@ -58,7 +58,23 @@ This directory contains vendored files from Dell's official iDRAC-Redfish-Script
    )
    ```
 
-## Future Files to Vendor (Phase 2+)
+## Phase 2: System Hardware Inventory (IMPLEMENTED)
+
+### 3. System Hardware Inventory (Memory, CPU, etc.)
+**File**: `GetSystemHWInventoryREDFISH.py`
+**Download**: https://github.com/dell/iDRAC-Redfish-Scripting/blob/master/Redfish%20Python/GetSystemHWInventoryREDFISH.py
+**Purpose**: Retrieve memory DIMMs, processors, and other hardware inventory
+
+**Integration Status**:
+- ✅ Stub created with usage pattern and mapping documentation
+- ⏳ Wrapper pending in `operations.py::get_memory_inventory()`
+- ⚠️ **ACTION REQUIRED**: Replace stub with Dell's actual implementation
+
+**Key Endpoints**:
+- `/redfish/v1/Systems/System.Embedded.1/Memory` - Memory collection
+- `/redfish/v1/Systems/System.Embedded.1/Memory/DIMM.Socket.X` - Individual DIMM details
+
+## Future Files to Vendor (Phase 3+)
 
 - **ExportSystemConfigurationREDFISH.py** - Enhanced SCP export
 - **ImportSystemConfigurationREDFISH.py** - Enhanced SCP import  
