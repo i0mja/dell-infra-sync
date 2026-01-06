@@ -561,6 +561,16 @@ export default function Servers() {
           onNetworkSettings={() => setNetworkSettingsDialogOpen(true)}
           onIdracSettings={() => setIdracSettingsDialogOpen(true)}
           onLaunchConsole={() => selectedServer && handleLaunchConsole(selectedServer)}
+          onCheckForUpdates={() => {
+            if (selectedServer) {
+              setUpdateScanTarget({
+                type: 'servers',
+                serverIds: [selectedServer.id],
+                name: selectedServer.hostname || selectedServer.ip_address,
+              });
+              setUpdateScanDialogOpen(true);
+            }
+          }}
           isRefreshing={selectedServer ? refreshing === selectedServer.id : false}
           isTesting={selectedServer ? testing === selectedServer.id : false}
           isLaunchingConsole={launchingConsole}
