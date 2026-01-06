@@ -344,8 +344,9 @@ export default function ActivityMonitor() {
           if (data) {
             setCommands(prev => [data as IdracCommand, ...prev].slice(0, 500));
             
-            if (!data.success) {
-              toast.error(`Command Failed: ${data.error_message}`);
+            // Skip toast for idrac_api_fallback operations - these are expected failures
+            if (!data.success && data.operation_type !== 'idrac_api_fallback') {
+              toast.error(`Command Failed: ${data.error_message || 'Unknown error'}`);
             }
           }
         }
