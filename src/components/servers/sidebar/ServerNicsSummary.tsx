@@ -67,7 +67,7 @@ export function ServerNicsSummary({ nics, isLoading, onViewAll }: ServerNicsSumm
         {displayNics.map((nic) => (
           <div
             key={nic.id}
-            className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30 hover:bg-muted/50 transition-colors text-xs"
+            className="flex items-start gap-2 p-2 rounded-md bg-muted/30 hover:bg-muted/50 transition-colors text-xs"
           >
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">

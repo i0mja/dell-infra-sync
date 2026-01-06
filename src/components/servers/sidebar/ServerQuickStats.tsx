@@ -21,7 +21,7 @@ function StatCard({
   subValue?: string;
 }) {
   return (
-    <div className="flex flex-col items-center p-2.5 rounded-lg bg-muted/50 border border-border/50">
+    <div className="flex flex-col items-center p-2 rounded-md bg-muted/30">
       <Icon className="h-4 w-4 text-muted-foreground mb-1" />
       <span className="text-xs font-medium">{value}</span>
       {subValue && (
