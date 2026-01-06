@@ -1,4 +1,4 @@
-import { HardDrive, CheckCircle2, AlertTriangle, ExternalLink } from "lucide-react";
+import { HardDrive, CheckCircle2, AlertTriangle, ExternalLink, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { ServerDrive } from "@/hooks/useServerDrives";
@@ -20,6 +20,10 @@ function formatCapacity(gb: number | null): string {
 }
 
 function DriveHealthIcon({ drive }: { drive: ServerDrive }) {
+  // Critical or Disabled drives - show red X
+  if (drive.health === "Critical" || drive.status === "Disabled") {
+    return <XCircle className="h-3.5 w-3.5 text-destructive" />;
+  }
   if (drive.predicted_failure) {
     return <AlertTriangle className="h-3.5 w-3.5 text-destructive" />;
   }
@@ -57,11 +61,20 @@ export function ServerStorageSummary({
   }
 
   // Calculate health summary
-  const healthyCount = drives.filter(d => d.health === "OK" && !d.predicted_failure).length;
+  const criticalCount = drives.filter(d => 
+    d.health === "Critical" || d.status === "Disabled"
+  ).length;
+  const healthyCount = drives.filter(d => 
+    d.health === "OK" && 
+    !d.predicted_failure && 
+    d.status !== "Disabled"
+  ).length;
   const warningCount = drives.filter(d => 
-    d.health === "Warning" || 
-    d.predicted_failure || 
-    (d.life_remaining_percent && d.life_remaining_percent < 20)
+    (d.health === "Warning" || 
+     d.predicted_failure || 
+     (d.life_remaining_percent && d.life_remaining_percent < 20)) &&
+    d.health !== "Critical" &&
+    d.status !== "Disabled"
   ).length;
 
   // Calculate total capacity
@@ -85,6 +98,12 @@ export function ServerStorageSummary({
           <CheckCircle2 className="h-3 w-3" />
           {healthyCount} healthy
         </span>
+        {criticalCount > 0 && (
+          <span className="text-destructive flex items-center gap-1">
+            <XCircle className="h-3 w-3" />
+            {criticalCount} critical
+          </span>
+        )}
         {warningCount > 0 && (
           <span className="text-warning flex items-center gap-1">
             <AlertTriangle className="h-3 w-3" />
@@ -120,13 +139,28 @@ export function ServerStorageSummary({
                 {drive.capacity_gb && <span>• {formatCapacity(drive.capacity_gb)}</span>}
                 {drive.manufacturer && <span className="truncate">• {drive.manufacturer}</span>}
               </div>
-              {drive.predicted_failure && (
+              {/* Critical/Disabled status */}
+              {(drive.health === "Critical" || drive.status === "Disabled") && (
+                <div className="flex items-center gap-1 mt-1 text-destructive">
+                  <XCircle className="h-3 w-3" />
+                  <span className="text-[10px] font-medium">
+                    {drive.health === "Critical" ? "Critical failure" : "Disabled - Drive offline"}
+                  </span>
+                </div>
+              )}
+              {/* Missing serial number warning for failed drives */}
+              {!drive.serial_number && (drive.health === "Critical" || drive.status === "Disabled") && (
+                <div className="text-[10px] text-muted-foreground mt-0.5">
+                  Serial number unavailable (drive may need replacement)
+                </div>
+              )}
+              {drive.predicted_failure && drive.health !== "Critical" && drive.status !== "Disabled" && (
                 <div className="flex items-center gap-1 mt-1 text-destructive">
                   <AlertTriangle className="h-3 w-3" />
                   <span className="text-[10px] font-medium">Predicted failure</span>
                 </div>
               )}
-              {drive.life_remaining_percent !== null && drive.life_remaining_percent < 20 && !drive.predicted_failure && (
+              {drive.life_remaining_percent !== null && drive.life_remaining_percent < 20 && !drive.predicted_failure && drive.health !== "Critical" && drive.status !== "Disabled" && (
                 <div className="text-warning text-[10px] mt-1">
                   {drive.life_remaining_percent}% life remaining
                 </div>
