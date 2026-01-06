@@ -30,6 +30,7 @@ import {
   ServerTasksSection,
   ServerPerformanceGauges,
   ServerSidebarTabs,
+  ServerQuickActionBar,
 } from "./sidebar";
 
 interface GroupData {
@@ -68,6 +69,7 @@ interface ServerDetailsSidebarProps {
   onNetworkSettings?: () => void;
   onIdracSettings?: () => void;
   onLaunchConsole?: () => void;
+  onCheckForUpdates?: () => void;
 }
 
 // Status bar color based on connection status
@@ -123,6 +125,7 @@ export function ServerDetailsSidebar({
   onNetworkSettings,
   onIdracSettings,
   onLaunchConsole,
+  onCheckForUpdates,
 }: ServerDetailsSidebarProps) {
   // Tab state for sidebar views
   const [activeTab, setActiveTab] = useState<"dashboard" | "events" | "tasks" | "settings">("dashboard");
@@ -238,6 +241,20 @@ export function ServerDetailsSidebar({
           <CardContent className="pt-3 pb-2 space-y-4">
             {activeTab === "dashboard" && (
               <>
+                {/* Quick Action Bar */}
+                <ServerQuickActionBar
+                  onLaunchConsole={onLaunchConsole}
+                  onSync={onRefreshInfo}
+                  onCheckForUpdates={onCheckForUpdates}
+                  onPowerControl={onPowerControl}
+                  onViewHealth={onViewHealth}
+                  onSettings={() => setActiveTab("settings")}
+                  isRefreshing={isRefreshing}
+                  isLaunchingConsole={isLaunchingConsole}
+                />
+
+                <Separator />
+
                 {/* Hardware Summary List */}
                 <ServerHardwareSummaryList 
                   server={selectedServer} 

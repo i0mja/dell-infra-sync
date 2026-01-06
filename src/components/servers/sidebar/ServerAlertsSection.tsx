@@ -10,8 +10,8 @@ interface ServerAlertsSectionProps {
 interface HealthEvent {
   id: string;
   component_type: string;
-  status: string;
-  message: string | null;
+  severity: "Critical" | "Warning";
+  message: string;
   created_at: string;
 }
 
@@ -20,21 +20,21 @@ export function ServerAlertsSection({ serverId }: ServerAlertsSectionProps) {
   const { data: alerts } = useQuery({
     queryKey: ["server-alerts", serverId],
     queryFn: async () => {
-      // Check for drives with non-OK status
+      // Check for drives with non-OK health or predicted failure
       const { data: driveAlerts } = await supabase
         .from("server_drives")
-        .select("id, drive_identifier, status, predicted_failure, created_at")
+        .select("id, drive_identifier, health, predicted_failure, created_at")
         .eq("server_id", serverId)
-        .or("status.neq.OK,predicted_failure.eq.true")
+        .or("health.neq.OK,predicted_failure.eq.true")
         .order("created_at", { ascending: false })
         .limit(3);
 
-      // Check for memory with non-OK status
+      // Check for memory with non-OK health
       const { data: memoryAlerts } = await supabase
         .from("server_memory")
-        .select("id, slot_name, status, health, created_at")
+        .select("id, slot_name, health, created_at")
         .eq("server_id", serverId)
-        .neq("status", "OK")
+        .neq("health", "OK")
         .order("created_at", { ascending: false })
         .limit(3);
 
@@ -42,20 +42,21 @@ export function ServerAlertsSection({ serverId }: ServerAlertsSectionProps) {
 
       // Convert drive issues to alerts
       driveAlerts?.forEach((drive) => {
+        // Only add if there's an actual issue
         if (drive.predicted_failure) {
           events.push({
             id: `drive-${drive.id}`,
             component_type: "Drive",
-            status: "Warning",
-            message: `${drive.drive_identifier || 'Drive'} predictive failure detected`,
+            severity: "Warning",
+            message: `${drive.drive_identifier || 'Drive'} - Predictive failure detected`,
             created_at: drive.created_at,
           });
-        } else if (drive.status !== "OK") {
+        } else if (drive.health && drive.health !== "OK") {
           events.push({
             id: `drive-${drive.id}`,
             component_type: "Drive",
-            status: drive.status || "Warning",
-            message: `${drive.drive_identifier || 'Drive'} status: ${drive.status}`,
+            severity: drive.health === "Critical" ? "Critical" : "Warning",
+            message: `${drive.drive_identifier || 'Drive'} - ${drive.health} failure`,
             created_at: drive.created_at,
           });
         }
@@ -63,13 +64,15 @@ export function ServerAlertsSection({ serverId }: ServerAlertsSectionProps) {
 
       // Convert memory issues to alerts
       memoryAlerts?.forEach((mem) => {
-        events.push({
-          id: `mem-${mem.id}`,
-          component_type: "Memory",
-          status: mem.status || "Warning",
-          message: `${mem.slot_name || 'DIMM'} status: ${mem.status}`,
-          created_at: mem.created_at,
-        });
+        if (mem.health && mem.health !== "OK") {
+          events.push({
+            id: `mem-${mem.id}`,
+            component_type: "Memory",
+            severity: mem.health === "Critical" ? "Critical" : "Warning",
+            message: `DIMM ${mem.slot_name || 'Slot'} - ${mem.health} failure`,
+            created_at: mem.created_at,
+          });
+        }
       });
 
       return events.slice(0, 5);
@@ -102,7 +105,7 @@ export function ServerAlertsSection({ serverId }: ServerAlertsSectionProps) {
             key={alert.id}
             className="flex items-start gap-2 py-1.5 px-2 rounded-md bg-destructive/10 text-xs"
           >
-            {alert.status === "Critical" ? (
+            {alert.severity === "Critical" ? (
               <XCircle className="h-3.5 w-3.5 text-destructive flex-shrink-0 mt-0.5" />
             ) : (
               <AlertTriangle className="h-3.5 w-3.5 text-warning flex-shrink-0 mt-0.5" />

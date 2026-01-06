@@ -9,3 +9,4 @@ export { ServerAlertsSection } from "./ServerAlertsSection";
 export { ServerTasksSection } from "./ServerTasksSection";
 export { ServerPerformanceGauges } from "./ServerPerformanceGauges";
 export { ServerSidebarTabs } from "./ServerSidebarTabs";
+export { ServerQuickActionBar } from "./ServerQuickActionBar";
