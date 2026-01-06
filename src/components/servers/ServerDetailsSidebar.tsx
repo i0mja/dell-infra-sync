@@ -29,6 +29,7 @@ import {
   ServerSystemInfo,
   ServerActions,
 } from "./sidebar";
+import { ServerMemorySummary } from "./sidebar/ServerMemorySummary";
 
 interface GroupData {
   id: string;
@@ -258,6 +259,11 @@ export function ServerDetailsSidebar({
               nics={nics || []} 
               isLoading={nicsLoading}
               onViewAll={onViewProperties}
+            />
+
+            {/* Memory/DIMMs - collapsed by default */}
+            <ServerMemorySummary 
+              server={{ id: selectedServer.id, hostname: selectedServer.hostname || selectedServer.ip_address }} 
             />
 
             {/* Storage - collapsed by default */}

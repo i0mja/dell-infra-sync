@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { Loader2, Settings, Clock, Database, Cpu, Activity, HardDrive, Network, FileArchive, RefreshCw } from "lucide-react";
+import { Loader2, Settings, Clock, Database, Cpu, Activity, HardDrive, Network, FileArchive, RefreshCw, MemoryStick } from "lucide-react";
 import { useIdracSettings, IdracFetchOptions } from "@/hooks/useIdracSettings";
 import { formatDistanceToNow } from "date-fns";
 import type { Server } from "@/hooks/useServers";
@@ -84,6 +84,12 @@ const FETCH_OPTIONS = [
     icon: Network,
   },
   {
+    key: "memory" as const,
+    label: "Memory/DIMM Information",
+    description: "Per-DIMM health, capacity, manufacturer, and slot location",
+    icon: MemoryStick,
+  },
+  {
     key: "scp_backup" as const,
     label: "SCP Configuration Backup",
     description: "Full server configuration profile backup (slower, more data)",
@@ -114,6 +120,7 @@ export function IdracSettingsDialog({
     bios: true,
     storage: true,
     nics: true,
+    memory: true,
     scp_backup: false,
   });
 
@@ -141,6 +148,7 @@ export function IdracSettingsDialog({
         bios: globalSettings.fetch_bios,
         storage: globalSettings.fetch_storage,
         nics: globalSettings.fetch_nics,
+        memory: (globalSettings as any).fetch_memory ?? true,
         scp_backup: globalSettings.fetch_scp_backup,
       });
       setSyncEnabled(globalSettings.auto_sync_enabled);
@@ -165,6 +173,7 @@ export function IdracSettingsDialog({
           bios: globalSettings.fetch_bios,
           storage: globalSettings.fetch_storage,
           nics: globalSettings.fetch_nics,
+          memory: (globalSettings as any).fetch_memory ?? true,
           scp_backup: globalSettings.fetch_scp_backup,
         });
         setSyncEnabled(globalSettings.auto_sync_enabled);
@@ -185,12 +194,13 @@ export function IdracSettingsDialog({
         fetch_bios: fetchOptions.bios,
         fetch_storage: fetchOptions.storage,
         fetch_nics: fetchOptions.nics,
+        fetch_memory: fetchOptions.memory,
         fetch_scp_backup: fetchOptions.scp_backup,
         auto_sync_enabled: syncEnabled,
         sync_interval_minutes: parseInt(syncInterval),
         scp_backup_max_age_days: parseInt(scpMaxAgeDays),
         scp_backup_only_if_stale: scpOnlyIfStale,
-      });
+      } as any);
     } else if (server) {
       if (useGlobalDefaults) {
         // Clear server-specific overrides

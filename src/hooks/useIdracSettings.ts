@@ -8,6 +8,7 @@ export interface IdracFetchOptions {
   bios: boolean;
   storage: boolean;
   nics: boolean;
+  memory: boolean;
   scp_backup: boolean;
 }
 
@@ -183,6 +184,7 @@ export function useIdracSettings(serverId?: string) {
       bios: globalSettings?.fetch_bios ?? true,
       storage: globalSettings?.fetch_storage ?? true,
       nics: globalSettings?.fetch_nics ?? true,
+      memory: (globalSettings as any)?.fetch_memory ?? true,
       scp_backup: globalSettings?.fetch_scp_backup ?? false,
     };
   };

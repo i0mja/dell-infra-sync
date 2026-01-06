@@ -1287,6 +1287,7 @@ export type Database = {
           fetch_bios: boolean
           fetch_firmware: boolean
           fetch_health: boolean
+          fetch_memory: boolean
           fetch_nics: boolean
           fetch_scp_backup: boolean
           fetch_storage: boolean
@@ -1304,6 +1305,7 @@ export type Database = {
           fetch_bios?: boolean
           fetch_firmware?: boolean
           fetch_health?: boolean
+          fetch_memory?: boolean
           fetch_nics?: boolean
           fetch_scp_backup?: boolean
           fetch_storage?: boolean
@@ -1321,6 +1323,7 @@ export type Database = {
           fetch_bios?: boolean
           fetch_firmware?: boolean
           fetch_health?: boolean
+          fetch_memory?: boolean
           fetch_nics?: boolean
           fetch_scp_backup?: boolean
           fetch_storage?: boolean
@@ -3341,6 +3344,80 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "server_health_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      server_memory: {
+        Row: {
+          capacity_mb: number | null
+          created_at: string | null
+          dimm_identifier: string
+          error_correction: string | null
+          health: string | null
+          id: string
+          last_updated_at: string | null
+          manufacturer: string | null
+          memory_type: string | null
+          non_volatile_size_mb: number | null
+          operating_speed_mhz: number | null
+          part_number: string | null
+          rank_count: number | null
+          serial_number: string | null
+          server_id: string
+          slot_name: string | null
+          speed_mhz: number | null
+          status: string | null
+          volatile_size_mb: number | null
+        }
+        Insert: {
+          capacity_mb?: number | null
+          created_at?: string | null
+          dimm_identifier: string
+          error_correction?: string | null
+          health?: string | null
+          id?: string
+          last_updated_at?: string | null
+          manufacturer?: string | null
+          memory_type?: string | null
+          non_volatile_size_mb?: number | null
+          operating_speed_mhz?: number | null
+          part_number?: string | null
+          rank_count?: number | null
+          serial_number?: string | null
+          server_id: string
+          slot_name?: string | null
+          speed_mhz?: number | null
+          status?: string | null
+          volatile_size_mb?: number | null
+        }
+        Update: {
+          capacity_mb?: number | null
+          created_at?: string | null
+          dimm_identifier?: string
+          error_correction?: string | null
+          health?: string | null
+          id?: string
+          last_updated_at?: string | null
+          manufacturer?: string | null
+          memory_type?: string | null
+          non_volatile_size_mb?: number | null
+          operating_speed_mhz?: number | null
+          part_number?: string | null
+          rank_count?: number | null
+          serial_number?: string | null
+          server_id?: string
+          slot_name?: string | null
+          speed_mhz?: number | null
+          status?: string | null
+          volatile_size_mb?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "server_memory_server_id_fkey"
             columns: ["server_id"]
             isOneToOne: false
             referencedRelation: "servers"
