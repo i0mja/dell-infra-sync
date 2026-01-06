@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -23,13 +24,13 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { formatDistanceToNow } from "date-fns";
 import {
-  ServerQuickStats,
-  ServerNicsSummary,
-  ServerStorageSummary,
-  ServerSystemInfo,
   ServerActions,
+  ServerHardwareSummaryList,
+  ServerAlertsSection,
+  ServerTasksSection,
+  ServerPerformanceGauges,
+  ServerSidebarTabs,
 } from "./sidebar";
-import { ServerMemorySummary } from "./sidebar/ServerMemorySummary";
 
 interface GroupData {
   id: string;
@@ -123,9 +124,12 @@ export function ServerDetailsSidebar({
   onIdracSettings,
   onLaunchConsole,
 }: ServerDetailsSidebarProps) {
+  // Tab state for sidebar views
+  const [activeTab, setActiveTab] = useState<"dashboard" | "events" | "tasks" | "settings">("dashboard");
+
   // Fetch drives and NICs for selected server
-  const { data: drives, isLoading: drivesLoading } = useServerDrives(selectedServer?.id || null);
-  const { data: nics, isLoading: nicsLoading } = useServerNics(selectedServer?.id || null);
+  const { data: drives } = useServerDrives(selectedServer?.id || null);
+  const { data: nics } = useServerNics(selectedServer?.id || null);
 
   const handleAutoLinkVCenter = async () => {
     if (!selectedServer) return;
@@ -182,17 +186,13 @@ export function ServerDetailsSidebar({
               <h3 className="text-base font-semibold truncate">
                 {selectedServer.hostname || selectedServer.ip_address}
               </h3>
-              <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1.5 flex-wrap">
-                <span className="font-mono">{selectedServer.ip_address}</span>
-                <span className="text-muted-foreground/50">•</span>
-                <span className="truncate">{selectedServer.model || "Unknown"}</span>
+              <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
+                <p className="font-mono">{selectedServer.ip_address}</p>
+                <p className="truncate">{selectedServer.model || "Unknown Model"}</p>
                 {selectedServer.service_tag && (
-                  <>
-                    <span className="text-muted-foreground/50">•</span>
-                    <span className="font-mono">{selectedServer.service_tag}</span>
-                  </>
+                  <p className="font-mono">{selectedServer.service_tag}</p>
                 )}
-              </p>
+              </div>
             </div>
             <Button variant="ghost" size="icon" className="h-7 w-7 -mr-1" onClick={onClose}>
               <X className="h-4 w-4" />
@@ -200,7 +200,7 @@ export function ServerDetailsSidebar({
           </div>
 
           {/* Status Badges */}
-          <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+          <div className="flex items-center gap-1.5 mt-3 flex-wrap">
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -218,95 +218,114 @@ export function ServerDetailsSidebar({
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
-            {selectedServer.overall_health && (
+            {selectedServer.overall_health && selectedServer.overall_health !== "OK" && (
               <Badge variant={getHealthBadgeVariant(selectedServer.overall_health)}>
-                {selectedServer.overall_health}
+                {selectedServer.overall_health === "Warning" ? "1 Issue" : selectedServer.overall_health}
               </Badge>
             )}
             {selectedServer.power_state && (
               <Badge variant="outline" className="capitalize">
-                {selectedServer.power_state}
+                Power: {selectedServer.power_state}
               </Badge>
-            )}
-            {selectedServer.credential_set_id ? (
-              <Badge variant="secondary" className="text-[10px]">Creds</Badge>
-            ) : (
-              <Badge variant="outline" className="text-[10px] text-muted-foreground">No Creds</Badge>
-            )}
-            {selectedServer.vcenter_host_id && (
-              <Badge variant="secondary" className="text-[10px]">vCenter</Badge>
             )}
           </div>
         </CardHeader>
 
         <Separator />
 
-        {/* Scrollable Content */}
+        {/* Scrollable Content - Dashboard View */}
         <ScrollArea className="flex-1">
-          <CardContent className="pt-3 pb-2 space-y-3">
-            {/* Quick Stats Grid */}
-            <ServerQuickStats 
-              server={selectedServer} 
-              drives={drives || undefined} 
-              nics={nics || undefined} 
-            />
+          <CardContent className="pt-3 pb-2 space-y-4">
+            {activeTab === "dashboard" && (
+              <>
+                {/* Hardware Summary List */}
+                <ServerHardwareSummaryList 
+                  server={selectedServer} 
+                  drives={drives || undefined} 
+                  nics={nics || undefined} 
+                />
 
-            {/* System Information - collapsed by default */}
-            <ServerSystemInfo server={selectedServer} />
+                <Separator />
 
-            {/* Network Interfaces - collapsed by default */}
-            <ServerNicsSummary 
-              nics={nics || []} 
-              isLoading={nicsLoading}
-              onViewAll={onViewProperties}
-            />
+                {/* Alerts Section */}
+                <ServerAlertsSection serverId={selectedServer.id} />
 
-            {/* Memory/DIMMs - collapsed by default */}
-            <ServerMemorySummary 
-              server={{ id: selectedServer.id, hostname: selectedServer.hostname || selectedServer.ip_address }} 
-            />
+                {/* Tasks Section */}
+                <ServerTasksSection serverId={selectedServer.id} />
 
-            {/* Storage - collapsed by default */}
-            <ServerStorageSummary
-              drives={drives || []}
-              isLoading={drivesLoading}
-              totalStorageTB={selectedServer.total_storage_tb}
-              onViewAll={onViewProperties}
-            />
+                <Separator />
+
+                {/* Performance Gauges */}
+                <ServerPerformanceGauges 
+                  server={selectedServer} 
+                  drives={drives || undefined} 
+                />
+              </>
+            )}
+
+            {activeTab === "events" && (
+              <div className="py-4 text-center text-sm text-muted-foreground">
+                <p>Event log view</p>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="mt-2"
+                  onClick={onViewEventLog}
+                >
+                  View Full Event Log
+                </Button>
+              </div>
+            )}
+
+            {activeTab === "tasks" && (
+              <div className="py-4 text-center text-sm text-muted-foreground">
+                <p>Tasks view</p>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="mt-2"
+                  onClick={onViewAudit}
+                >
+                  View Full Activity
+                </Button>
+              </div>
+            )}
+
+            {activeTab === "settings" && (
+              <div className="space-y-2">
+                <ServerActions
+                  server={selectedServer}
+                  refreshing={isRefreshing}
+                  testing={isTesting}
+                  launchingConsole={isLaunchingConsole}
+                  onTestConnection={onTestConnection}
+                  onRefreshInfo={onRefreshInfo}
+                  onPowerControl={onPowerControl}
+                  onLaunchConsole={onLaunchConsole}
+                  onBiosConfig={onBiosConfig}
+                  onBootConfig={onBootConfig}
+                  onVirtualMedia={onVirtualMedia}
+                  onScpBackup={onScpBackup}
+                  onNetworkSettings={onNetworkSettings}
+                  onIdracSettings={onIdracSettings}
+                  onViewEventLog={onViewEventLog}
+                  onViewHealth={onViewHealth}
+                  onViewAudit={onViewAudit}
+                  onAssignCredentials={onAssignCredentials}
+                  onLinkVCenter={handleAutoLinkVCenter}
+                  onViewProperties={onViewProperties}
+                  onWorkflow={onWorkflow}
+                  onCreateJob={onCreateJob}
+                  onEdit={onEdit}
+                  onDelete={onDelete}
+                />
+              </div>
+            )}
           </CardContent>
         </ScrollArea>
 
-        <Separator />
-
-        {/* Actions Section - Fixed at bottom */}
-        <div className="p-4 flex-shrink-0">
-          <ServerActions
-            server={selectedServer}
-            refreshing={isRefreshing}
-            testing={isTesting}
-            launchingConsole={isLaunchingConsole}
-            onTestConnection={onTestConnection}
-            onRefreshInfo={onRefreshInfo}
-            onPowerControl={onPowerControl}
-            onLaunchConsole={onLaunchConsole}
-            onBiosConfig={onBiosConfig}
-            onBootConfig={onBootConfig}
-            onVirtualMedia={onVirtualMedia}
-            onScpBackup={onScpBackup}
-            onNetworkSettings={onNetworkSettings}
-            onIdracSettings={onIdracSettings}
-            onViewEventLog={onViewEventLog}
-            onViewHealth={onViewHealth}
-            onViewAudit={onViewAudit}
-            onAssignCredentials={onAssignCredentials}
-            onLinkVCenter={handleAutoLinkVCenter}
-            onViewProperties={onViewProperties}
-            onWorkflow={onWorkflow}
-            onCreateJob={onCreateJob}
-            onEdit={onEdit}
-            onDelete={onDelete}
-          />
-        </div>
+        {/* Bottom Tab Navigation */}
+        <ServerSidebarTabs activeTab={activeTab} onTabChange={setActiveTab} />
       </Card>
     );
   }

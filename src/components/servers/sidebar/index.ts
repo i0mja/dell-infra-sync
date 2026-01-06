@@ -4,3 +4,8 @@ export { ServerNicsSummary } from "./ServerNicsSummary";
 export { ServerStorageSummary } from "./ServerStorageSummary";
 export { ServerSystemInfo } from "./ServerSystemInfo";
 export { ServerActions } from "./ServerActions";
+export { ServerHardwareSummaryList } from "./ServerHardwareSummaryList";
+export { ServerAlertsSection } from "./ServerAlertsSection";
+export { ServerTasksSection } from "./ServerTasksSection";
+export { ServerPerformanceGauges } from "./ServerPerformanceGauges";
+export { ServerSidebarTabs } from "./ServerSidebarTabs";
