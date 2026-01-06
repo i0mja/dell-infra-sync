@@ -1,4 +1,4 @@
-import { LayoutDashboard, Activity, ListTodo, Settings } from "lucide-react";
+import { LayoutDashboard, HardDrive, ListTodo, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -8,13 +8,13 @@ import {
 } from "@/components/ui/tooltip";
 
 interface ServerSidebarTabsProps {
-  activeTab: "dashboard" | "events" | "tasks" | "settings";
-  onTabChange: (tab: "dashboard" | "events" | "tasks" | "settings") => void;
+  activeTab: "dashboard" | "hardware" | "tasks" | "settings";
+  onTabChange: (tab: "dashboard" | "hardware" | "tasks" | "settings") => void;
 }
 
 const tabs = [
   { id: "dashboard" as const, icon: LayoutDashboard, label: "Dashboard" },
-  { id: "events" as const, icon: Activity, label: "Events" },
+  { id: "hardware" as const, icon: HardDrive, label: "Hardware" },
   { id: "tasks" as const, icon: ListTodo, label: "Tasks" },
   { id: "settings" as const, icon: Settings, label: "Settings" },
 ];

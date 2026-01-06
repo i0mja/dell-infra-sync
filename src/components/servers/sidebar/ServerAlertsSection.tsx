@@ -15,6 +15,24 @@ interface HealthEvent {
   created_at: string;
 }
 
+// Extract bay number from drive_identifier for human-readable display
+function extractBayFromIdentifier(driveId: string | null): string {
+  if (!driveId) return "Drive";
+  
+  // Pattern: loc:RAID.SL.3-1:9:Disk.Bay.9:... -> Bay 9
+  const bayMatch = driveId.match(/Disk\.Bay\.(\d+)/);
+  if (bayMatch) return `Bay ${bayMatch[1]}`;
+  
+  // Pattern with slot number: loc:RAID...:9:... -> Bay 9
+  const slotMatch = driveId.match(/loc:[^:]+:(\d+):/);
+  if (slotMatch) return `Bay ${slotMatch[1]}`;
+  
+  // Pattern: sn:SERIALNUMBER -> just show "Drive"
+  if (driveId.startsWith("sn:")) return "Drive";
+  
+  return "Drive";
+}
+
 export function ServerAlertsSection({ serverId }: ServerAlertsSectionProps) {
   // Query recent health events/warnings for this server
   const { data: alerts } = useQuery({
@@ -23,7 +41,7 @@ export function ServerAlertsSection({ serverId }: ServerAlertsSectionProps) {
       // Check for drives with non-OK health or predicted failure
       const { data: driveAlerts } = await supabase
         .from("server_drives")
-        .select("id, drive_identifier, health, predicted_failure, created_at")
+        .select("id, drive_identifier, slot, health, predicted_failure, created_at")
         .eq("server_id", serverId)
         .or("health.neq.OK,predicted_failure.eq.true")
         .order("created_at", { ascending: false })
@@ -42,13 +60,18 @@ export function ServerAlertsSection({ serverId }: ServerAlertsSectionProps) {
 
       // Convert drive issues to alerts
       driveAlerts?.forEach((drive) => {
+        // Use slot if available, otherwise parse from drive_identifier
+        const bayDisplay = drive.slot != null 
+          ? `Bay ${drive.slot}` 
+          : extractBayFromIdentifier(drive.drive_identifier);
+        
         // Only add if there's an actual issue
         if (drive.predicted_failure) {
           events.push({
             id: `drive-${drive.id}`,
             component_type: "Drive",
             severity: "Warning",
-            message: `${drive.drive_identifier || 'Drive'} - Predictive failure detected`,
+            message: `${bayDisplay} - Predictive failure detected`,
             created_at: drive.created_at,
           });
         } else if (drive.health && drive.health !== "OK") {
@@ -56,7 +79,7 @@ export function ServerAlertsSection({ serverId }: ServerAlertsSectionProps) {
             id: `drive-${drive.id}`,
             component_type: "Drive",
             severity: drive.health === "Critical" ? "Critical" : "Warning",
-            message: `${drive.drive_identifier || 'Drive'} - ${drive.health} failure`,
+            message: `${bayDisplay} - ${drive.health} failure`,
             created_at: drive.created_at,
           });
         }

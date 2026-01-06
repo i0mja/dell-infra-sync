@@ -15,7 +15,7 @@ export function ServerTasksSection({ serverId }: ServerTasksSectionProps) {
   const { data: tasks, isLoading } = useQuery({
     queryKey: ["server-tasks", serverId],
     queryFn: async () => {
-      // Get recent job tasks for this server
+      // Get recent job tasks for this server with parent job status
       const { data } = await supabase
         .from("job_tasks")
         .select(`
@@ -24,7 +24,7 @@ export function ServerTasksSection({ serverId }: ServerTasksSectionProps) {
           completed_at,
           started_at,
           created_at,
-          job:jobs(id, job_type)
+          job:jobs(id, job_type, status)
         `)
         .eq("server_id", serverId)
         .order("created_at", { ascending: false })
@@ -35,8 +35,29 @@ export function ServerTasksSection({ serverId }: ServerTasksSectionProps) {
     staleTime: 30000,
   });
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
+  type TaskWithJob = {
+    id: string;
+    status: string;
+    completed_at: string | null;
+    started_at: string | null;
+    created_at: string;
+    job: { id: string; job_type: string; status: string } | null;
+  };
+
+  const getStatusIcon = (task: TaskWithJob) => {
+    // Check if task is "running" but parent job is in a terminal state
+    const terminalJobStates = ["completed", "cancelled", "failed"];
+    const isStaleRunning = 
+      task.status === "running" && 
+      task.job?.status && 
+      terminalJobStates.includes(task.job.status);
+    
+    if (isStaleRunning) {
+      // Show as stale/pending since parent job is done
+      return <Clock className="h-3.5 w-3.5 text-muted-foreground" />;
+    }
+
+    switch (task.status) {
       case "completed":
         return <CheckCircle2 className="h-3.5 w-3.5 text-success" />;
       case "failed":
@@ -102,7 +123,7 @@ export function ServerTasksSection({ serverId }: ServerTasksSectionProps) {
               key={task.id}
               className="flex items-center gap-2 py-1.5 px-2 rounded-md bg-muted/30 hover:bg-muted/50 transition-colors text-xs"
             >
-              {getStatusIcon(task.status)}
+              {getStatusIcon(task as TaskWithJob)}
               <span className="flex-1 truncate text-foreground">
                 {task.job?.job_type ? formatJobType(task.job.job_type) : "Task"}
               </span>
