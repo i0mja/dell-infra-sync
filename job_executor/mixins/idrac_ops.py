@@ -311,6 +311,9 @@ class IdracMixin:
                     future_nics = executor.submit(
                         self._fetch_network_adapters, ip, username, password, server_id, job_id
                     )
+                    future_memory = executor.submit(
+                        self._fetch_memory_dimms, ip, username, password, server_id, job_id
+                    )
                     # Note: Event logs skipped for speed - they're not critical for discovery
                     
                     # Collect results with timeouts
@@ -359,6 +362,15 @@ class IdracMixin:
                             self.log(f"  ✓ Discovered {len(nics)} NIC ports", "INFO")
                     except Exception as e:
                         self.log(f"  ⚠ NIC fetch failed: {e}", "DEBUG")
+                    
+                    try:
+                        memory_dimms = future_memory.result(timeout=45)
+                        if memory_dimms:
+                            base_info['memory_dimms'] = memory_dimms
+                            base_info['total_dimms'] = len(memory_dimms)
+                            self.log(f"  ✓ Discovered {len(memory_dimms)} DIMMs", "INFO")
+                    except Exception as e:
+                        self.log(f"  ⚠ Memory fetch failed: {e}", "DEBUG")
             
             return base_info
         except Exception as e:
@@ -1802,6 +1814,231 @@ class IdracMixin:
             self.log(f"  Error syncing NICs for server {server_id}: {e}", "WARN")
             return 0
 
+    def _fetch_memory_dimms(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None) -> List[Dict]:
+        """
+        Fetch memory/DIMM inventory using Dell Redfish Memory API.
+        
+        Dell Redfish Pattern (per GetSystemHWInventoryREDFISH.py):
+        1. GET /redfish/v1/Systems/System.Embedded.1/Memory → list of DIMMs
+        2. For each DIMM, extract health, capacity, manufacturer, etc.
+        
+        Returns list of DIMM dicts ready for server_memory table.
+        """
+        import re
+        dimms = []
+        
+        try:
+            # Get memory collection with $expand for efficiency
+            memory_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Memory?$expand=Members"
+            memory_response, memory_time = self.throttler.request_with_safety(
+                method='GET',
+                url=memory_url,
+                ip=ip,
+                logger=self.log,
+                auth=(username, password),
+                timeout=(2, 30)
+            )
+            
+            # Log the API call
+            expand_succeeded = memory_response is not None and memory_response.status_code == 200
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job_id,
+                task_id=None,
+                command_type='GET',
+                endpoint='/redfish/v1/Systems/System.Embedded.1/Memory?$expand=Members',
+                full_url=memory_url,
+                request_headers=None,
+                request_body=None,
+                status_code=memory_response.status_code if memory_response else None,
+                response_time_ms=memory_time,
+                response_body=None,
+                success=expand_succeeded,
+                error_message=memory_response.text[:200] if memory_response and memory_response.status_code != 200 else None,
+                operation_type='idrac_api' if expand_succeeded else 'idrac_api_fallback'
+            )
+            
+            # Fallback to non-expanded if needed
+            if not memory_response or memory_response.status_code != 200:
+                memory_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Memory"
+                memory_response, memory_time = self.throttler.request_with_safety(
+                    method='GET',
+                    url=memory_url,
+                    ip=ip,
+                    logger=self.log,
+                    auth=(username, password),
+                    timeout=(2, 15)
+                )
+                
+                # Log fallback
+                self.log_idrac_command(
+                    server_id=server_id,
+                    job_id=job_id,
+                    task_id=None,
+                    command_type='GET',
+                    endpoint='/redfish/v1/Systems/System.Embedded.1/Memory',
+                    full_url=memory_url,
+                    request_headers=None,
+                    request_body=None,
+                    status_code=memory_response.status_code if memory_response else None,
+                    response_time_ms=memory_time,
+                    response_body=None,
+                    success=memory_response is not None and memory_response.status_code == 200,
+                    operation_type='idrac_api'
+                )
+            
+            if not memory_response or memory_response.status_code != 200:
+                return dimms
+            
+            memory_data = memory_response.json()
+            members = memory_data.get('Members', [])
+            
+            for member in members:
+                try:
+                    # If $expand worked, member has full data; else fetch individually
+                    if '@odata.id' in member and 'Id' not in member:
+                        dimm_url = f"https://{ip}{member['@odata.id']}"
+                        dimm_resp, _ = self.throttler.request_with_safety(
+                            method='GET',
+                            url=dimm_url,
+                            ip=ip,
+                            logger=self.log,
+                            auth=(username, password),
+                            timeout=(2, 10)
+                        )
+                        if not dimm_resp or dimm_resp.status_code != 200:
+                            continue
+                        dimm_data = dimm_resp.json()
+                    else:
+                        dimm_data = member
+                    
+                    # Skip absent DIMMs (empty slots)
+                    status = dimm_data.get('Status', {})
+                    if status.get('State') == 'Absent':
+                        continue
+                    
+                    # Extract slot name from Id (e.g., "DIMM.Socket.B2" -> "B2")
+                    dimm_id = dimm_data.get('Id', '')
+                    slot_match = re.search(r'DIMM\.Socket\.(\w+)', dimm_id)
+                    slot_name = slot_match.group(1) if slot_match else dimm_id
+                    
+                    dimm_record = {
+                        'server_id': server_id,
+                        'dimm_identifier': dimm_id,
+                        'slot_name': slot_name,
+                        'manufacturer': dimm_data.get('Manufacturer'),
+                        'part_number': dimm_data.get('PartNumber'),
+                        'serial_number': dimm_data.get('SerialNumber') or None,
+                        'capacity_mb': dimm_data.get('CapacityMiB'),
+                        'speed_mhz': dimm_data.get('OperatingSpeedMhz'),
+                        'memory_type': dimm_data.get('MemoryDeviceType'),
+                        'rank_count': dimm_data.get('RankCount'),
+                        'health': status.get('Health'),  # "OK", "Warning", "Critical"
+                        'status': status.get('State'),   # "Enabled", "Disabled"
+                        'operating_speed_mhz': dimm_data.get('OperatingSpeedMhz'),
+                        'error_correction': dimm_data.get('ErrorCorrection'),
+                        'volatile_size_mb': dimm_data.get('VolatileSizeMiB'),
+                        'non_volatile_size_mb': dimm_data.get('NonVolatileSizeMiB'),
+                    }
+                    
+                    dimms.append(dimm_record)
+                    
+                except Exception as e:
+                    self.log(f"  ⚠ Error parsing DIMM {member.get('@odata.id', 'unknown')}: {e}", "DEBUG")
+                    continue
+            
+            return dimms
+            
+        except Exception as e:
+            self.log(f"Error fetching memory DIMMs from {ip}: {e}", "ERROR")
+            return dimms
+
+    def _sync_server_memory(self, server_id: str, dimms: List[Dict], log_fn=None, job_id: str = None) -> int:
+        """
+        Sync memory/DIMM data to server_memory table using PostgREST bulk upsert.
+        Uses on_conflict=server_id,dimm_identifier with merge-duplicates.
+        """
+        if not dimms:
+            return 0
+        
+        try:
+            # Prepare memory records with timestamps
+            memory_records = []
+            for dimm in dimms:
+                record = {
+                    'server_id': server_id,
+                    'dimm_identifier': dimm.get('dimm_identifier'),
+                    'slot_name': dimm.get('slot_name'),
+                    'manufacturer': dimm.get('manufacturer'),
+                    'part_number': dimm.get('part_number'),
+                    'serial_number': dimm.get('serial_number'),
+                    'capacity_mb': dimm.get('capacity_mb'),
+                    'speed_mhz': dimm.get('speed_mhz'),
+                    'memory_type': dimm.get('memory_type'),
+                    'rank_count': dimm.get('rank_count'),
+                    'health': dimm.get('health'),
+                    'status': dimm.get('status'),
+                    'operating_speed_mhz': dimm.get('operating_speed_mhz'),
+                    'error_correction': dimm.get('error_correction'),
+                    'volatile_size_mb': dimm.get('volatile_size_mb'),
+                    'non_volatile_size_mb': dimm.get('non_volatile_size_mb'),
+                    'last_updated_at': datetime.utcnow().isoformat() + 'Z',
+                }
+                memory_records.append(record)
+            
+            # PostgREST bulk upsert with on_conflict using column names
+            upsert_url = f"{DSM_URL}/rest/v1/server_memory?on_conflict=server_id,dimm_identifier"
+            headers = {
+                "apikey": SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "resolution=merge-duplicates"
+            }
+            
+            start_time = time.time()
+            response = requests.post(
+                upsert_url,
+                headers=headers,
+                json=memory_records,
+                verify=VERIFY_SSL,
+                timeout=30
+            )
+            response_time_ms = int((time.time() - start_time) * 1000)
+            
+            # Log database sync operation for visibility
+            self.log_idrac_command(
+                server_id=server_id,
+                job_id=job_id,
+                task_id=None,
+                command_type='DB_SYNC',
+                endpoint='/server_memory (upsert)',
+                full_url=upsert_url,
+                request_headers=None,
+                request_body={'dimm_count': len(memory_records)},
+                status_code=response.status_code,
+                response_time_ms=response_time_ms,
+                response_body=None,
+                success=response.status_code in [200, 201, 204],
+                error_message=response.text[:200] if response.status_code not in [200, 201, 204] else None,
+                operation_type='idrac_api'
+            )
+            
+            if response.status_code in [200, 201, 204]:
+                self.log(f"  ✓ Synced {len(memory_records)} DIMMs", "DEBUG")
+                if log_fn:
+                    log_fn(f"✓ Saved {len(memory_records)} DIMMs", "SUCCESS")
+                return len(memory_records)
+            else:
+                error_text = response.text[:200] if response.text else 'Unknown error'
+                self.log(f"  ⚠ Memory sync failed: HTTP {response.status_code} - {error_text}", "WARN")
+                if log_fn:
+                    log_fn(f"⚠ Memory sync error: HTTP {response.status_code}", "WARN")
+                return 0
+                
+        except Exception as e:
+            self.log(f"  Error syncing memory for server {server_id}: {e}", "WARN")
+            return 0
+
     def _should_backup_server(self, server_id: str, max_age_days: int) -> bool:
         """Check if server needs a backup based on age threshold"""
         try:
@@ -2175,6 +2412,14 @@ class IdracMixin:
                     update_data['overall_health'] = 'OK' if all_healthy else 'Warning'
                     update_data['last_health_check'] = datetime.utcnow().isoformat() + 'Z'
                 
+                # Check memory health from DIMMs and update overall health
+                if info.get('memory_dimms'):
+                    memory_healths = [d.get('health') for d in info['memory_dimms'] if d.get('health')]
+                    memory_healthy = all(h == 'OK' for h in memory_healths)
+                    if not memory_healthy:
+                        # Downgrade overall health if any DIMM is unhealthy
+                        update_data['overall_health'] = 'Warning'
+                
                 # Promote credential_set_id if we used discovered_by or ip_range and server doesn't have one
                 if not server.get('credential_set_id') and used_cred_set_id and cred_source in ['discovered_by_credential_set_id', 'ip_range']:
                     update_data['credential_set_id'] = used_cred_set_id
@@ -2239,6 +2484,12 @@ class IdracMixin:
                     if info.get('nics'):
                         log_local(f'→ Reading NICs: found {len(info["nics"])} adapter(s)', 'INFO')
                         nics_synced = self._sync_server_nics(server_id, info['nics'], log_fn=log_local, job_id=job_id) or 0
+                    
+                    # Sync memory/DIMMs to server_memory table with console logging
+                    memory_synced = 0
+                    if info.get('memory_dimms'):
+                        log_local(f'→ Reading memory: found {len(info["memory_dimms"])} DIMM(s)', 'INFO')
+                        memory_synced = self._sync_server_memory(server_id, info['memory_dimms'], log_fn=log_local, job_id=job_id) or 0
                     
                     # Try auto-linking to vCenter if service_tag was updated
                     if info.get('service_tag'):

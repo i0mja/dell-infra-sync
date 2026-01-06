@@ -96,16 +96,25 @@
 #     return match.group(1) if match else dimm_id
 #
 # ==============================================================================
-
-# TODO: Download and integrate Dell's actual implementation from:
-# https://github.com/dell/iDRAC-Redfish-Scripting/blob/master/Redfish%20Python/GetSystemHWInventoryREDFISH.py
+#
+# IMPLEMENTATION NOTE:
+# The memory fetching is now implemented directly in:
+#   job_executor/mixins/idrac_ops.py -> _fetch_memory_dimms()
+#
+# This follows the Dell pattern documented above and uses:
+# - $expand optimization for bulk fetching
+# - Parallel fetch with drives/NICs/health
+# - PostgREST bulk upsert to server_memory table
+#
+# The Dell script is kept as reference for other hardware inventory needs.
+# ==============================================================================
 
 def get_memory_information(idrac_ip: str, username: str, password: str) -> list:
     """
-    Stub - implement using Dell's official script pattern.
-    See comments above for implementation details.
+    Stub - actual implementation is in job_executor/mixins/idrac_ops.py::_fetch_memory_dimms()
+    
+    This stub is kept for reference. See idrac_ops.py for production implementation.
     """
     raise NotImplementedError(
-        "Download Dell's GetSystemHWInventoryREDFISH.py from "
-        "https://github.com/dell/iDRAC-Redfish-Scripting/"
+        "Use IdracMixin._fetch_memory_dimms() from job_executor/mixins/idrac_ops.py instead"
     )
