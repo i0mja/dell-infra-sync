@@ -818,20 +818,21 @@ export function ServersTable({
                         </>
                       )}
                       <ContextMenuSeparator />
-                      <ContextMenuItem onClick={() => {
-                        setGroupTargetServers([server.id]);
-                        setGroupDialogOpen(true);
-                      }}>
-                        <FolderPlus className="mr-2 h-4 w-4" />
-                        Add to Group...
-                      </ContextMenuItem>
-                      {selectedServers.has(server.id) && selectedServers.size > 1 && (
+                      {selectedServers.has(server.id) && selectedServers.size > 1 ? (
                         <ContextMenuItem onClick={() => {
                           setGroupTargetServers(Array.from(selectedServers));
                           setGroupDialogOpen(true);
                         }}>
                           <FolderPlus className="mr-2 h-4 w-4" />
                           Add Selected to Group ({selectedServers.size})
+                        </ContextMenuItem>
+                      ) : (
+                        <ContextMenuItem onClick={() => {
+                          setGroupTargetServers([server.id]);
+                          setGroupDialogOpen(true);
+                        }}>
+                          <FolderPlus className="mr-2 h-4 w-4" />
+                          Add to Group...
                         </ContextMenuItem>
                       )}
                       {onServerDelete && (
@@ -1103,20 +1104,21 @@ export function ServersTable({
                                 </>
                               )}
                               <ContextMenuSeparator />
-                              <ContextMenuItem onClick={() => {
-                                setGroupTargetServers([server.id]);
-                                setGroupDialogOpen(true);
-                              }}>
-                                <FolderPlus className="mr-2 h-4 w-4" />
-                                Add to Group...
-                              </ContextMenuItem>
-                              {selectedServers.has(server.id) && selectedServers.size > 1 && (
+                              {selectedServers.has(server.id) && selectedServers.size > 1 ? (
                                 <ContextMenuItem onClick={() => {
                                   setGroupTargetServers(Array.from(selectedServers));
                                   setGroupDialogOpen(true);
                                 }}>
                                   <FolderPlus className="mr-2 h-4 w-4" />
                                   Add Selected to Group ({selectedServers.size})
+                                </ContextMenuItem>
+                              ) : (
+                                <ContextMenuItem onClick={() => {
+                                  setGroupTargetServers([server.id]);
+                                  setGroupDialogOpen(true);
+                                }}>
+                                  <FolderPlus className="mr-2 h-4 w-4" />
+                                  Add to Group...
                                 </ContextMenuItem>
                               )}
                               {onServerDelete && (
