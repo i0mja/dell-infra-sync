@@ -11,17 +11,72 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { Loader2, Info, Server, Key, Search } from "lucide-react";
+import { Loader2, Info, Server, Key, Search, FolderPlus, Cpu, Activity, Settings, HardDrive, Network, MemoryStick, FileArchive, Zap, Sparkles } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { BackendStatusHelper } from "./BackendStatusHelper";
 import { serverSchema, credentialSchema, safeValidateInput } from "@/lib/validations";
+import { useIdracSettings } from "@/hooks/useIdracSettings";
 
 interface AddServerDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
 }
+
+// Fetch options configuration - consistent with IdracSettingsDialog
+const FETCH_OPTIONS = [
+  {
+    key: "firmware" as const,
+    label: "Firmware Versions",
+    description: "iDRAC, BIOS, NIC, RAID firmware",
+    icon: Cpu,
+  },
+  {
+    key: "health" as const,
+    label: "Health Status",
+    description: "Power, sensors, fans, temps",
+    icon: Activity,
+  },
+  {
+    key: "bios" as const,
+    label: "BIOS Settings",
+    description: "Current configuration",
+    icon: Settings,
+  },
+  {
+    key: "storage" as const,
+    label: "Storage / WWNs",
+    description: "Drives, RAID, datastore correlation",
+    icon: HardDrive,
+  },
+  {
+    key: "nics" as const,
+    label: "NIC MACs",
+    description: "Network adapters",
+    icon: Network,
+  },
+  {
+    key: "memory" as const,
+    label: "Memory/DIMMs",
+    description: "Per-DIMM health and slots",
+    icon: MemoryStick,
+  },
+  {
+    key: "scp_backup" as const,
+    label: "SCP Backup",
+    description: "Full config backup (slower)",
+    icon: FileArchive,
+  },
+];
+
+const SCP_AGE_THRESHOLDS = [
+  { value: "7", label: "7 days" },
+  { value: "14", label: "14 days" },
+  { value: "30", label: "30 days" },
+  { value: "60", label: "60 days" },
+  { value: "90", label: "90 days" },
+];
 
 export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDialogProps) => {
   const [loading, setLoading] = useState(false);
@@ -52,6 +107,24 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
   // Discovery state - default OFF in Local Mode for safety
   const [autoDiscover, setAutoDiscover] = useState(!isLocalMode);
   
+  // Fetch options state - granular control over what to collect
+  const [fetchOptions, setFetchOptions] = useState({
+    firmware: true,
+    health: true,
+    bios: true,
+    storage: true,
+    nics: true,
+    memory: true,
+    scp_backup: false,
+  });
+  const [scpMaxAgeDays, setScpMaxAgeDays] = useState("30");
+  const [scpOnlyIfStale, setScpOnlyIfStale] = useState(true);
+  
+  // Group assignment state
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [serverGroups, setServerGroups] = useState<any[]>([]);
+  const [loadingGroups, setLoadingGroups] = useState(false);
+  
   // Test connection state
   const [testingConnection, setTestingConnection] = useState(false);
   const [testResult, setTestResult] = useState<{
@@ -62,12 +135,33 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
   const [testJobId, setTestJobId] = useState<string | null>(null);
   const [showLocalHelper, setShowLocalHelper] = useState(false);
 
-  // Fetch credential sets on mount
+  // Load global iDRAC settings as defaults
+  const { globalSettings, loading: loadingSettings } = useIdracSettings();
+
+  // Fetch credential sets and groups on mount
   useEffect(() => {
     if (open) {
       fetchCredentialSets();
+      fetchServerGroups();
     }
   }, [open]);
+
+  // Initialize fetch options from global settings
+  useEffect(() => {
+    if (!loadingSettings && globalSettings) {
+      setFetchOptions({
+        firmware: globalSettings.fetch_firmware,
+        health: globalSettings.fetch_health,
+        bios: globalSettings.fetch_bios,
+        storage: globalSettings.fetch_storage,
+        nics: globalSettings.fetch_nics,
+        memory: (globalSettings as any).fetch_memory ?? true,
+        scp_backup: globalSettings.fetch_scp_backup,
+      });
+      setScpMaxAgeDays(String(globalSettings.scp_backup_max_age_days ?? 30));
+      setScpOnlyIfStale(globalSettings.scp_backup_only_if_stale ?? true);
+    }
+  }, [loadingSettings, globalSettings]);
 
   const fetchCredentialSets = async () => {
     const { data } = await supabase
@@ -83,6 +177,47 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
       setCredentialMode("saved");
     } else {
       setCredentialMode("manual");
+    }
+  };
+
+  const fetchServerGroups = async () => {
+    setLoadingGroups(true);
+    try {
+      const { data } = await supabase
+        .from("server_groups")
+        .select("id, name, description")
+        .order("name");
+      setServerGroups(data || []);
+    } finally {
+      setLoadingGroups(false);
+    }
+  };
+
+  const handleFetchOptionChange = (key: keyof typeof fetchOptions, checked: boolean) => {
+    setFetchOptions(prev => ({ ...prev, [key]: checked }));
+  };
+
+  const applyPreset = (preset: "essential" | "full") => {
+    if (preset === "essential") {
+      setFetchOptions({
+        firmware: true,
+        health: true,
+        bios: false,
+        storage: true,
+        nics: false,
+        memory: false,
+        scp_backup: false,
+      });
+    } else {
+      setFetchOptions({
+        firmware: true,
+        health: true,
+        bios: true,
+        storage: true,
+        nics: true,
+        memory: true,
+        scp_backup: false,
+      });
     }
   };
 
@@ -204,6 +339,14 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
           .eq('id', newServer.id);
       }
 
+      // Step 2.6: Add server to group if selected
+      if (selectedGroupId && newServer?.id) {
+        await supabase.from("server_group_members").insert({
+          group_id: selectedGroupId,
+          server_id: newServer.id,
+        });
+      }
+
       // Step 3: Create discovery job if auto-discover is enabled
       if (autoDiscover && user) {
         const jobData: any = {
@@ -215,14 +358,19 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
           credential_set_ids: credentialMode === "manual" && !saveCredentials
             ? null
             : [credentialSetIdToUse],
-          details: credentialMode === "manual" && !saveCredentials
-            ? {
-                manual_credentials: {
-                  username: manualUsername,
-                  password: manualPassword,
-                }
+          details: {
+            ...(credentialMode === "manual" && !saveCredentials ? {
+              manual_credentials: {
+                username: manualUsername,
+                password: manualPassword,
               }
-            : null,
+            } : {}),
+            fetch_options: {
+              ...fetchOptions,
+              scp_backup_max_age_days: parseInt(scpMaxAgeDays),
+              scp_backup_only_if_stale: scpOnlyIfStale,
+            },
+          },
         };
 
         const { error: jobError } = await supabase
@@ -253,7 +401,17 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
     setManualPassword("");
     setSaveCredentials(false);
     setCredentialName("");
-    setAutoDiscover(true);
+    setAutoDiscover(!isLocalMode);
+    setFetchOptions({
+      firmware: true,
+      health: true,
+      bios: true,
+      storage: true,
+      nics: true,
+      memory: true,
+      scp_backup: false,
+    });
+    setSelectedGroupId(null);
     setCurrentTab("info");
     setTestingConnection(false);
     setTestResult(null);
@@ -365,21 +523,24 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
   );
   const canSubmit = canProceedToDiscovery;
 
+  // Count enabled fetch options for summary
+  const enabledOptionsCount = Object.values(fetchOptions).filter(Boolean).length;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[90vh]">
         <DialogHeader>
           <DialogTitle>Add Dell Server</DialogTitle>
           <DialogDescription>
-            Configure server details, credentials, and auto-discovery options
+            Configure server details, credentials, discovery options, and group assignment
           </DialogDescription>
         </DialogHeader>
 
         <Tabs value={currentTab} onValueChange={setCurrentTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="info" className="gap-2">
               <Server className="h-4 w-4" />
-              Server Info
+              Info
             </TabsTrigger>
             <TabsTrigger value="credentials" disabled={!canProceedToCredentials} className="gap-2">
               <Key className="h-4 w-4" />
@@ -388,6 +549,10 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
             <TabsTrigger value="discovery" disabled={!canProceedToDiscovery} className="gap-2">
               <Search className="h-4 w-4" />
               Discovery
+            </TabsTrigger>
+            <TabsTrigger value="group" disabled={!canProceedToDiscovery} className="gap-2">
+              <FolderPlus className="h-4 w-4" />
+              Group
             </TabsTrigger>
           </TabsList>
 
@@ -628,28 +793,123 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
                       Automatically fetch server details from iDRAC
                     </Label>
                     <p className="text-sm text-muted-foreground">
-                      Recommended - A discovery job will be created to populate all server information
+                      A discovery job will be created to populate server information
                     </p>
                   </div>
                 </div>
 
                 {autoDiscover && (
-                  <Alert>
-                    <Info className="h-4 w-4" />
-                    <AlertDescription>
-                      <strong>What will be fetched:</strong>
-                      <ul className="list-disc ml-4 mt-2 space-y-1 text-sm">
-                        <li>Hostname and service tag</li>
-                        <li>Server model and hardware specs (CPU, RAM)</li>
-                        <li>iDRAC firmware version</li>
-                        <li>BIOS version</li>
-                        <li>Current connection status</li>
-                      </ul>
-                      <p className="mt-3 text-sm">
-                        <strong>Note:</strong> The Job Executor must be running to process this discovery job.
-                      </p>
-                    </AlertDescription>
-                  </Alert>
+                  <>
+                    {/* Quick presets */}
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => applyPreset("essential")}
+                        className="gap-2"
+                      >
+                        <Zap className="h-4 w-4" />
+                        Essential Only
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => applyPreset("full")}
+                        className="gap-2"
+                      >
+                        <Sparkles className="h-4 w-4" />
+                        Full Onboarding
+                      </Button>
+                    </div>
+
+                    {/* Granular fetch options */}
+                    <div className="border rounded-md p-4 space-y-3">
+                      <Label className="text-sm font-medium">Data to Collect</Label>
+                      <div className="grid grid-cols-2 gap-3">
+                        {FETCH_OPTIONS.map((option) => {
+                          const Icon = option.icon;
+                          return (
+                            <div
+                              key={option.key}
+                              className="flex items-start space-x-2 p-2 rounded hover:bg-muted/50"
+                            >
+                              <Checkbox
+                                id={`fetch_${option.key}`}
+                                checked={fetchOptions[option.key]}
+                                onCheckedChange={(checked) =>
+                                  handleFetchOptionChange(option.key, checked as boolean)
+                                }
+                              />
+                              <div className="space-y-0.5 flex-1">
+                                <Label
+                                  htmlFor={`fetch_${option.key}`}
+                                  className="font-normal cursor-pointer flex items-center gap-2 text-sm"
+                                >
+                                  <Icon className="h-4 w-4 text-muted-foreground" />
+                                  {option.label}
+                                </Label>
+                                <p className="text-xs text-muted-foreground">
+                                  {option.description}
+                                </p>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* SCP backup options */}
+                      {fetchOptions.scp_backup && (
+                        <div className="mt-3 pt-3 border-t space-y-3">
+                          <div className="flex items-center gap-4">
+                            <div className="flex items-center space-x-2">
+                              <Checkbox
+                                id="scp_only_if_stale"
+                                checked={scpOnlyIfStale}
+                                onCheckedChange={(checked) => setScpOnlyIfStale(checked as boolean)}
+                              />
+                              <Label htmlFor="scp_only_if_stale" className="text-sm font-normal cursor-pointer">
+                                Only if older than
+                              </Label>
+                            </div>
+                            <Select value={scpMaxAgeDays} onValueChange={setScpMaxAgeDays}>
+                              <SelectTrigger className="w-[120px]">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {SCP_AGE_THRESHOLDS.map((threshold) => (
+                                  <SelectItem key={threshold.value} value={threshold.value}>
+                                    {threshold.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Dynamic summary */}
+                    <Alert>
+                      <Info className="h-4 w-4" />
+                      <AlertDescription>
+                        <strong>What will be fetched ({enabledOptionsCount} options):</strong>
+                        <ul className="list-disc ml-4 mt-2 space-y-1 text-sm">
+                          {fetchOptions.firmware && <li>Firmware versions (iDRAC, BIOS, NIC, RAID)</li>}
+                          {fetchOptions.health && <li>Health status (power, sensors, fans, temps)</li>}
+                          {fetchOptions.bios && <li>BIOS settings and boot configuration</li>}
+                          {fetchOptions.storage && <li>Storage configuration, RAID volumes, WWNs</li>}
+                          {fetchOptions.nics && <li>NIC MAC addresses and configuration</li>}
+                          {fetchOptions.memory && <li>Memory/DIMM health and slot information</li>}
+                          {fetchOptions.scp_backup && <li>Full SCP configuration backup</li>}
+                        </ul>
+                        <p className="mt-3 text-xs text-muted-foreground">
+                          Estimated time: ~10-15 seconds per server
+                        </p>
+                      </AlertDescription>
+                    </Alert>
+                  </>
                 )}
 
                 {!autoDiscover && (
@@ -665,6 +925,96 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
                     type="button"
                     variant="outline"
                     onClick={() => setCurrentTab("credentials")}
+                    className="flex-1"
+                  >
+                    Back
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => setCurrentTab("group")}
+                    className="flex-1"
+                  >
+                    Next: Group
+                  </Button>
+                </div>
+              </TabsContent>
+
+              {/* Tab 4: Group Assignment */}
+              <TabsContent value="group" className="space-y-4 mt-0">
+                <Alert>
+                  <FolderPlus className="h-4 w-4" />
+                  <AlertDescription>
+                    Optionally assign this server to a group for easier management and bulk operations.
+                  </AlertDescription>
+                </Alert>
+
+                <div className="space-y-2">
+                  <Label>Server Group (Optional)</Label>
+                  {loadingGroups ? (
+                    <div className="flex items-center gap-2 p-4 border rounded-md">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span className="text-sm text-muted-foreground">Loading groups...</span>
+                    </div>
+                  ) : serverGroups.length > 0 ? (
+                    <div className="space-y-2">
+                      <div
+                        className={`flex items-center space-x-3 p-3 border rounded-md cursor-pointer transition-colors ${
+                          selectedGroupId === null ? "border-primary bg-primary/5" : "hover:bg-muted/50"
+                        }`}
+                        onClick={() => setSelectedGroupId(null)}
+                      >
+                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                          selectedGroupId === null ? "border-primary" : "border-muted-foreground"
+                        }`}>
+                          {selectedGroupId === null && (
+                            <div className="w-2 h-2 rounded-full bg-primary" />
+                          )}
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium">No Group</p>
+                          <p className="text-xs text-muted-foreground">Server will be ungrouped</p>
+                        </div>
+                      </div>
+                      
+                      {serverGroups.map((group) => (
+                        <div
+                          key={group.id}
+                          className={`flex items-center space-x-3 p-3 border rounded-md cursor-pointer transition-colors ${
+                            selectedGroupId === group.id ? "border-primary bg-primary/5" : "hover:bg-muted/50"
+                          }`}
+                          onClick={() => setSelectedGroupId(group.id)}
+                        >
+                          <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                            selectedGroupId === group.id ? "border-primary" : "border-muted-foreground"
+                          }`}>
+                            {selectedGroupId === group.id && (
+                              <div className="w-2 h-2 rounded-full bg-primary" />
+                            )}
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium">{group.name}</p>
+                            {group.description && (
+                              <p className="text-xs text-muted-foreground">{group.description}</p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <Alert>
+                      <Info className="h-4 w-4" />
+                      <AlertDescription>
+                        No server groups exist yet. You can create groups from the Servers page after adding this server.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </div>
+
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setCurrentTab("discovery")}
                     className="flex-1"
                   >
                     Back
