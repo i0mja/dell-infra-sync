@@ -2,6 +2,7 @@ import { AlertCircle, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ServerMemory } from "@/hooks/useServerMemory";
 import type { ServerDrive } from "@/hooks/useServerDrives";
+import { isDriveCritical } from "@/lib/driveHealth";
 
 interface MemoryIssueProps {
   memory: ServerMemory;
@@ -61,7 +62,7 @@ interface DriveIssueProps {
 }
 
 export function DriveIssueDetail({ drive }: DriveIssueProps) {
-  const isCritical = drive.health === "Critical" || drive.status === "Disabled";
+  const isCritical = isDriveCritical(drive);
   const isPredictive = drive.predicted_failure;
   
   // Extract bay number from slot or name
@@ -81,8 +82,12 @@ export function DriveIssueDetail({ drive }: DriveIssueProps) {
 
   // Determine status message
   let statusMessage = "";
-  if (isCritical) {
+  if (drive.health === "Critical") {
     statusMessage = "Critical failure — drive offline";
+  } else if (drive.status === "UnavailableOffline") {
+    statusMessage = "Unavailable — drive offline";
+  } else if (drive.status === "Disabled") {
+    statusMessage = "Disabled — drive offline";
   } else if (isPredictive) {
     statusMessage = "Predictive failure — replace soon";
   } else {

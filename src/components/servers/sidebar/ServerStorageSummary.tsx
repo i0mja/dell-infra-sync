@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { ServerDrive } from "@/hooks/useServerDrives";
 import { CollapsibleSection } from "./CollapsibleSection";
+import { isDriveCritical, getDriveFailureMessage } from "@/lib/driveHealth";
 
 interface ServerStorageSummaryProps {
   drives: ServerDrive[];
@@ -20,8 +21,8 @@ function formatCapacity(gb: number | null): string {
 }
 
 function DriveHealthIcon({ drive }: { drive: ServerDrive }) {
-  // Critical or Disabled drives - show red X
-  if (drive.health === "Critical" || drive.status === "Disabled") {
+  // Critical, Disabled, or UnavailableOffline drives - show red X
+  if (isDriveCritical(drive)) {
     return <XCircle className="h-3.5 w-3.5 text-destructive" />;
   }
   if (drive.predicted_failure) {
@@ -61,20 +62,17 @@ export function ServerStorageSummary({
   }
 
   // Calculate health summary
-  const criticalCount = drives.filter(d => 
-    d.health === "Critical" || d.status === "Disabled"
-  ).length;
+  const criticalCount = drives.filter(d => isDriveCritical(d)).length;
   const healthyCount = drives.filter(d => 
     d.health === "OK" && 
     !d.predicted_failure && 
-    d.status !== "Disabled"
+    !isDriveCritical(d)
   ).length;
   const warningCount = drives.filter(d => 
     (d.health === "Warning" || 
      d.predicted_failure || 
      (d.life_remaining_percent && d.life_remaining_percent < 20)) &&
-    d.health !== "Critical" &&
-    d.status !== "Disabled"
+    !isDriveCritical(d)
   ).length;
 
   // Calculate total capacity
@@ -139,28 +137,28 @@ export function ServerStorageSummary({
                 {drive.capacity_gb && <span>• {formatCapacity(drive.capacity_gb)}</span>}
                 {drive.manufacturer && <span className="truncate">• {drive.manufacturer}</span>}
               </div>
-              {/* Critical/Disabled status */}
-              {(drive.health === "Critical" || drive.status === "Disabled") && (
+              {/* Critical/Disabled/UnavailableOffline status */}
+              {isDriveCritical(drive) && (
                 <div className="flex items-center gap-1 mt-1 text-destructive">
                   <XCircle className="h-3 w-3" />
                   <span className="text-[10px] font-medium">
-                    {drive.health === "Critical" ? "Critical failure" : "Disabled - Drive offline"}
+                    {getDriveFailureMessage(drive)}
                   </span>
                 </div>
               )}
               {/* Missing serial number warning for failed drives */}
-              {!drive.serial_number && (drive.health === "Critical" || drive.status === "Disabled") && (
+              {!drive.serial_number && isDriveCritical(drive) && (
                 <div className="text-[10px] text-muted-foreground mt-0.5">
                   Serial number unavailable (drive may need replacement)
                 </div>
               )}
-              {drive.predicted_failure && drive.health !== "Critical" && drive.status !== "Disabled" && (
+              {drive.predicted_failure && !isDriveCritical(drive) && (
                 <div className="flex items-center gap-1 mt-1 text-destructive">
                   <AlertTriangle className="h-3 w-3" />
                   <span className="text-[10px] font-medium">Predicted failure</span>
                 </div>
               )}
-              {drive.life_remaining_percent !== null && drive.life_remaining_percent < 20 && !drive.predicted_failure && drive.health !== "Critical" && drive.status !== "Disabled" && (
+              {drive.life_remaining_percent !== null && drive.life_remaining_percent < 20 && !drive.predicted_failure && !isDriveCritical(drive) && (
                 <div className="text-warning text-[10px] mt-1">
                   {drive.life_remaining_percent}% life remaining
                 </div>

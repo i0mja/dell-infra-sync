@@ -5,6 +5,7 @@ import type { ServerNic } from "@/hooks/useServerNics";
 import type { ServerMemory } from "@/hooks/useServerMemory";
 import { ServerHardwareRow } from "./ServerHardwareRow";
 import { MemoryIssueDetail, DriveIssueDetail } from "./HardwareIssueDetails";
+import { isDriveCritical, hasDriveIssue } from "@/lib/driveHealth";
 
 interface ServerHardwareSummaryListProps {
   server: Server;
@@ -47,11 +48,11 @@ export function ServerHardwareSummaryList({ server, drives, nics, memory }: Serv
   const memoryHasCritical = memoryIssues.some(m => m.health === "Critical" || m.status === "Disabled");
   const memorySeverity = memoryHasCritical ? "critical" : memoryIssues.length > 0 ? "warning" : "ok";
 
-  // Find drive issues (health != OK or status = Disabled or predicted_failure)
+  // Find drive issues (health != OK or status = Disabled/UnavailableOffline or predicted_failure)
   const driveIssues = drives?.filter(d => 
-    (d.health && d.health !== "OK") || d.status === "Disabled" || d.predicted_failure
+    hasDriveIssue(d) || (d.health && d.health !== "OK")
   ) || [];
-  const driveHasCritical = driveIssues.some(d => d.health === "Critical" || d.status === "Disabled");
+  const driveHasCritical = driveIssues.some(d => isDriveCritical(d));
   const driveSeverity = driveHasCritical ? "critical" : driveIssues.length > 0 ? "warning" : "ok";
 
   return (
