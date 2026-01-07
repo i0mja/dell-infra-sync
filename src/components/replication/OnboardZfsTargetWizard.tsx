@@ -37,6 +37,8 @@ import { VMCombobox } from "./VMCombobox";
 import { ZfsApplianceSelector } from "./ZfsApplianceSelector";
 import { ZfsTargetTemplate } from "@/hooks/useZfsTemplates";
 import { VMMultiSelectList } from "./VMMultiSelectList";
+import { AgentSelector } from "./AgentSelector";
+import { ZfsAgent, useZfsAgents } from "@/hooks/useZfsAgents";
 import { TemplateCloneConfig, CloneSettings } from "./TemplateCloneConfig";
 import {
   Collapsible,
@@ -185,11 +187,12 @@ export function OnboardZfsTargetWizard({
   const [jobId, setJobId] = useState<string | null>(null);
   
   // Page 1: Selection
-  const [sourceMode, setSourceMode] = useState<'library' | 'vcenter'>('library');
+  const [sourceMode, setSourceMode] = useState<'library' | 'vcenter' | 'agent'>('library');
   const [selectedTemplate, setSelectedTemplate] = useState<ZfsTargetTemplate | null>(null);
   const [selectedVCenterId, setSelectedVCenterId] = useState(preselectedVCenterId || "");
   const [selectedVMId, setSelectedVMId] = useState(preselectedVMId || "");
   const [targetName, setTargetName] = useState("");
+  const [selectedAgent, setSelectedAgent] = useState<ZfsAgent | null>(null);
   
   // Page 2: Authentication
   const [authMethod, setAuthMethod] = useState<'existing_key' | 'generate_key' | 'password'>('existing_key');
@@ -373,6 +376,7 @@ export function OnboardZfsTargetWizard({
       setIsTemplateMode(false);
       setSourceMode('library');
       setSelectedTemplate(null);
+      setSelectedAgent(null);
       setCloneSettings({
         cloneName: '',
         targetDatastore: '',
@@ -563,6 +567,57 @@ export function OnboardZfsTargetWizard({
   
   // Start the onboarding job
   const startOnboarding = async () => {
+    // Agent mode - register agent directly
+    if (sourceMode === 'agent' && selectedAgent) {
+      try {
+        const { data: user } = await supabase.auth.getUser();
+        
+        const { data: job, error } = await supabase
+          .from('jobs')
+          .insert({
+            job_type: 'register_agent_target' as unknown as 'onboard_zfs_target',
+            status: 'pending',
+            created_by: user?.user?.id,
+            target_scope: { 
+              agent_id: selectedAgent.id,
+            },
+            details: {
+              target_name: targetName,
+              agent_id: selectedAgent.id,
+              agent_hostname: selectedAgent.hostname,
+              pool_name: selectedAgent.pool_name || zfsPoolName,
+              datastore_name: datastoreName,
+              protection_group_option: protectionGroupOption,
+              existing_protection_group_id: protectionGroupOption === 'existing' ? existingProtectionGroupId : undefined,
+              protection_group_name: protectionGroupOption === 'new' ? protectionGroupName : undefined,
+              protection_group_description: protectionGroupOption === 'new' ? protectionGroupDescription : undefined,
+              vms_to_protect: protectionGroupOption !== 'skip' ? vmsToProtect : undefined,
+              replication_schedule: protectionGroupOption !== 'skip' 
+                ? (schedulePreset === 'custom' ? customCron : SCHEDULE_PRESETS[schedulePreset].cron)
+                : undefined,
+              rpo_minutes: protectionGroupOption !== 'skip' 
+                ? (schedulePreset === 'custom' ? 60 : SCHEDULE_PRESETS[schedulePreset].rpoMinutes)
+                : undefined,
+            }
+          })
+          .select()
+          .single();
+        
+        if (error) throw error;
+        
+        setJobId(job.id);
+        toast({ title: 'Registering agent target', description: 'Connecting to ZFS agent...' });
+      } catch (err) {
+        toast({ 
+          title: 'Failed to register agent', 
+          description: err instanceof Error ? err.message : 'Unknown error',
+          variant: 'destructive' 
+        });
+      }
+      return;
+    }
+    
+    // Standard VM-based onboarding
     if (!selectedVCenterId || !selectedVMId) {
       toast({ title: 'Please select a vCenter and VM', variant: 'destructive' });
       return;
@@ -1064,6 +1119,10 @@ export function OnboardZfsTargetWizard({
   const canProceedFromPage = (page: number): boolean => {
     switch (page) {
       case 1: 
+        // Agent mode requires agent selection
+        if (sourceMode === 'agent') {
+          return !!selectedAgent && !!targetName;
+        }
         // Library mode requires template selection OR direct vcenter mode requires VM selection
         const baseValid = sourceMode === 'library' 
           ? !!selectedTemplate && !!selectedVMId && !!targetName
@@ -1074,10 +1133,14 @@ export function OnboardZfsTargetWizard({
         }
         return baseValid;
       case 2: 
+        // Agent mode skips SSH - always valid
+        if (sourceMode === 'agent') return true;
         return authMethod === 'password' ? !!rootPassword : 
                authMethod === 'existing_key' ? !!selectedSshKeyId : 
                authMethod === 'generate_key' ? (!!newGeneratedKeyId || !!selectedSshKeyId) : false;
       case 3: 
+        // Agent mode skips storage config - always valid
+        if (sourceMode === 'agent') return true;
         // Need pool name, network, and either a selected disk OR destroyExistingPool with a reclaimable disk
         const hasValidDisk = !!selectedDisk || (destroyExistingPool && excludedDisks.some(d => d.reclaimable));
         return !!zfsPoolName && !!nfsNetwork && (hasValidDisk || !diskDetectionDone);
@@ -1097,17 +1160,35 @@ export function OnboardZfsTargetWizard({
   const isJobFailed = jobStatus === 'failed';
   const hasStartedJob = !!jobId;
   
-  // Navigation handlers
+  // Navigation handlers - skip SSH/Storage pages for agent mode
   const handleNext = () => {
-    if (currentPage < 6 && canProceedFromPage(currentPage)) {
-      setCurrentPage(currentPage + 1);
+    if (currentPage >= 6 || !canProceedFromPage(currentPage)) return;
+    
+    let nextPage = currentPage + 1;
+    
+    // Agent mode skips pages 2 (SSH) and 3 (Storage)
+    if (sourceMode === 'agent') {
+      if (currentPage === 1) {
+        nextPage = 4; // Jump from Target to vCenter Integration
+      }
     }
+    
+    setCurrentPage(nextPage);
   };
   
   const handleBack = () => {
-    if (currentPage > 1 && !hasStartedJob) {
-      setCurrentPage(currentPage - 1);
+    if (currentPage <= 1 || hasStartedJob) return;
+    
+    let prevPage = currentPage - 1;
+    
+    // Agent mode skips pages 2 (SSH) and 3 (Storage) 
+    if (sourceMode === 'agent') {
+      if (currentPage === 4) {
+        prevPage = 1; // Jump from vCenter Integration back to Target
+      }
     }
+    
+    setCurrentPage(prevPage);
   };
   
   return (
@@ -1129,17 +1210,23 @@ export function OnboardZfsTargetWizard({
             const Icon = page.icon;
             const isActive = currentPage === page.id;
             const isComplete = currentPage > page.id || (isJobComplete && page.id <= 6);
+            // Agent mode skips SSH and Storage pages
+            const isSkipped = sourceMode === 'agent' && (page.id === 2 || page.id === 3);
             
             return (
               <div key={page.id} className="flex items-center">
                 <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium transition-colors ${
-                  isActive 
-                    ? 'bg-primary text-primary-foreground' 
-                    : isComplete 
-                      ? 'bg-green-500/10 text-green-600' 
-                      : 'bg-muted text-muted-foreground'
+                  isSkipped
+                    ? 'bg-muted/50 text-muted-foreground/50 line-through'
+                    : isActive 
+                      ? 'bg-primary text-primary-foreground' 
+                      : isComplete 
+                        ? 'bg-green-500/10 text-green-600' 
+                        : 'bg-muted text-muted-foreground'
                 }`}>
-                  {isComplete && !isActive ? (
+                  {isSkipped ? (
+                    <SkipForward className="h-3 w-3" />
+                  ) : isComplete && !isActive ? (
                     <CheckCircle2 className="h-3 w-3" />
                   ) : (
                     <Icon className="h-3 w-3" />
@@ -1167,22 +1254,23 @@ export function OnboardZfsTargetWizard({
                 <RadioGroup 
                   value={sourceMode} 
                   onValueChange={(v) => {
-                    setSourceMode(v as 'library' | 'vcenter');
+                    setSourceMode(v as 'library' | 'vcenter' | 'agent');
                     // Reset selections when switching modes
                     setSelectedTemplate(null);
                     setSelectedVCenterId('');
                     setSelectedVMId('');
+                    setSelectedAgent(null);
                   }}
-                  className="grid grid-cols-2 gap-3"
+                  className="grid grid-cols-3 gap-3"
                 >
                   <div className={`flex items-start space-x-3 p-3 rounded-lg border cursor-pointer transition-colors ${sourceMode === 'library' ? 'border-primary bg-primary/5' : 'bg-card hover:border-muted-foreground/30'}`}>
                     <RadioGroupItem value="library" id="source-library" className="mt-0.5" />
                     <div className="flex-1">
                       <Label htmlFor="source-library" className="text-sm font-medium cursor-pointer">
-                        From Appliance Library
+                        Appliance Library
                       </Label>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Pre-configured templates ready for deployment
+                        Deploy from template
                       </p>
                     </div>
                   </div>
@@ -1190,15 +1278,56 @@ export function OnboardZfsTargetWizard({
                     <RadioGroupItem value="vcenter" id="source-vcenter" className="mt-0.5" />
                     <div className="flex-1">
                       <Label htmlFor="source-vcenter" className="text-sm font-medium cursor-pointer">
-                        From vCenter VM
+                        vCenter VM
                       </Label>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Select any VM and configure manually
+                        Configure via SSH
+                      </p>
+                    </div>
+                  </div>
+                  <div className={`flex items-start space-x-3 p-3 rounded-lg border cursor-pointer transition-colors ${sourceMode === 'agent' ? 'border-primary bg-primary/5' : 'bg-card hover:border-muted-foreground/30'}`}>
+                    <RadioGroupItem value="agent" id="source-agent" className="mt-0.5" />
+                    <div className="flex-1">
+                      <Label htmlFor="source-agent" className="text-sm font-medium cursor-pointer">
+                        Existing Agent
+                      </Label>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Connect via API
                       </p>
                     </div>
                   </div>
                 </RadioGroup>
               </div>
+
+              {/* Agent Mode - Agent Selector */}
+              {sourceMode === 'agent' && (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Select ZFS Agent</Label>
+                    <AgentSelector
+                      selectedAgentId={selectedAgent?.id}
+                      onSelect={(agent) => {
+                        setSelectedAgent(agent);
+                        if (agent) {
+                          setTargetName(agent.hostname.replace(/\./g, '-'));
+                          setZfsPoolName(agent.pool_name || 'tank');
+                        }
+                      }}
+                    />
+                  </div>
+                  
+                  {selectedAgent && (
+                    <div className="space-y-2">
+                      <Label>Target Name</Label>
+                      <Input
+                        value={targetName}
+                        onChange={(e) => setTargetName(e.target.value)}
+                        placeholder="e.g., zfs-dr-01"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Library Mode - ZFS Appliance Selector */}
               {sourceMode === 'library' && (
