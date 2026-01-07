@@ -5697,6 +5697,8 @@ export type Database = {
         | "ldap_api"
         | "ssh_command"
         | "idrac_api_fallback"
+        | "session_create"
+        | "session_delete"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -5925,6 +5927,8 @@ export const Constants = {
         "ldap_api",
         "ssh_command",
         "idrac_api_fallback",
+        "session_create",
+        "session_delete",
       ],
     },
   },

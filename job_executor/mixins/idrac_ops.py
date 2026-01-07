@@ -576,10 +576,16 @@ class IdracMixin:
         Runs quick test requests to determine optimal query strategy.
         Results are cached in servers.supported_endpoints JSONB.
         
+        IMPORTANT: Some iDRAC versions have connection-level failures (SSL/TLS errors)
+        for $expand on specific endpoints (especially NetworkAdapters). We test each
+        endpoint type separately to handle this.
+        
         Returns capability flags dict with:
-        - expand_levels_1: Supports $expand=*($levels=1)
-        - expand_levels_2: Supports $expand=*($levels=2)
-        - expand_members: Supports $expand=Members
+        - expand_levels_1: Supports $expand=*($levels=1) on Memory/Storage
+        - expand_levels_2: Supports $expand=*($levels=2) on Memory/Storage
+        - expand_members: General $expand=Members support
+        - expand_network_adapters: NetworkAdapters specifically supports $expand
+        - expand_storage: Storage specifically supports $expand
         - detected_at: ISO timestamp
         - idrac_version: Current firmware for cache invalidation
         """
@@ -587,22 +593,26 @@ class IdracMixin:
             'expand_levels_1': False,
             'expand_levels_2': False,
             'expand_members': False,
+            'expand_network_adapters': False,  # Test separately - known to fail on some firmwares
+            'expand_storage': False,  # Test separately for Storage endpoint
             'detected_at': datetime.now().isoformat(),
             'idrac_version': None
         }
         
         try:
-            # Test $expand=*($levels=1) on Memory (reliable test endpoint)
+            # Test 1: $expand=*($levels=1) on Memory (generally reliable)
             memory_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Memory?$expand=*($levels=1)"
             resp, resp_time = self._make_session_request(ip, memory_url, session, username, password, timeout=(2, 15))
             
+            # Only mark as supported if we get HTTP 200 (not connection errors)
             if resp and resp.status_code == 200:
                 caps['expand_levels_1'] = True
-                self.log(f"  ✓ iDRAC supports $expand=*($levels=1)", "DEBUG")
+                caps['expand_members'] = True  # If levels work, members likely work too
+                self.log(f"  ✓ Memory supports $expand=*($levels=1)", "DEBUG")
             else:
-                self.log(f"  ✗ iDRAC does not support $expand=*($levels=1)", "DEBUG")
+                status_info = f"HTTP {resp.status_code}" if resp else "connection error"
+                self.log(f"  ✗ Memory $expand=*($levels=1) failed: {status_info}", "DEBUG")
             
-            # Log capability test
             self.log_idrac_command(
                 server_id=server_id, job_id=job_id, task_id=None,
                 command_type='GET', endpoint='/Memory?$expand=*($levels=1) [capability test]',
@@ -613,15 +623,16 @@ class IdracMixin:
                 operation_type='idrac_api'
             )
             
-            # Test $expand=Members on NetworkAdapters
+            # Test 2: NetworkAdapters $expand SEPARATELY (known to cause connection errors on some firmwares)
             adapters_url = f"https://{ip}/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters?$expand=Members"
             resp, resp_time = self._make_session_request(ip, adapters_url, session, username, password, timeout=(2, 15))
             
             if resp and resp.status_code == 200:
-                caps['expand_members'] = True
-                self.log(f"  ✓ iDRAC supports $expand=Members", "DEBUG")
+                caps['expand_network_adapters'] = True
+                self.log(f"  ✓ NetworkAdapters supports $expand=Members", "DEBUG")
             else:
-                self.log(f"  ✗ iDRAC does not support $expand=Members", "DEBUG")
+                status_info = f"HTTP {resp.status_code}" if resp else "connection error"
+                self.log(f"  ✗ NetworkAdapters $expand=Members failed: {status_info}", "DEBUG")
             
             self.log_idrac_command(
                 server_id=server_id, job_id=job_id, task_id=None,
@@ -633,16 +644,38 @@ class IdracMixin:
                 operation_type='idrac_api'
             )
             
-            # If basic expand works, test deeper levels
-            if caps['expand_members']:
+            # Test 3: Storage $expand SEPARATELY
+            storage_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Storage?$expand=Members"
+            resp, resp_time = self._make_session_request(ip, storage_url, session, username, password, timeout=(2, 15))
+            
+            if resp and resp.status_code == 200:
+                caps['expand_storage'] = True
+                self.log(f"  ✓ Storage supports $expand=Members", "DEBUG")
+            else:
+                status_info = f"HTTP {resp.status_code}" if resp else "connection error"
+                self.log(f"  ✗ Storage $expand=Members failed: {status_info}", "DEBUG")
+            
+            self.log_idrac_command(
+                server_id=server_id, job_id=job_id, task_id=None,
+                command_type='GET', endpoint='/Storage?$expand=Members [capability test]',
+                full_url=storage_url, request_headers=None, request_body=None,
+                status_code=resp.status_code if resp else None,
+                response_time_ms=resp_time, response_body=None,
+                success=resp is not None and resp.status_code == 200,
+                operation_type='idrac_api'
+            )
+            
+            # Test 4: If NetworkAdapters $expand works, test deeper levels
+            if caps['expand_network_adapters']:
                 nics_url = f"https://{ip}/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters?$expand=*($levels=2)"
                 resp, resp_time = self._make_session_request(ip, nics_url, session, username, password, timeout=(2, 20))
                 
                 if resp and resp.status_code == 200:
                     caps['expand_levels_2'] = True
-                    self.log(f"  ✓ iDRAC supports $expand=*($levels=2)", "DEBUG")
+                    self.log(f"  ✓ NetworkAdapters supports $expand=*($levels=2)", "DEBUG")
                 else:
-                    self.log(f"  ✗ iDRAC does not support $expand=*($levels=2)", "DEBUG")
+                    status_info = f"HTTP {resp.status_code}" if resp else "connection error"
+                    self.log(f"  ✗ NetworkAdapters $expand=*($levels=2) failed: {status_info}", "DEBUG")
                 
                 self.log_idrac_command(
                     server_id=server_id, job_id=job_id, task_id=None,
@@ -653,6 +686,8 @@ class IdracMixin:
                     success=resp is not None and resp.status_code == 200,
                     operation_type='idrac_api'
                 )
+            
+            self.log(f"  Capabilities detected: levels1={caps['expand_levels_1']}, levels2={caps['expand_levels_2']}, nics={caps['expand_network_adapters']}, storage={caps['expand_storage']}", "DEBUG")
             
             return caps
             
@@ -1067,16 +1102,20 @@ class IdracMixin:
         caps = capabilities or {}
         
         try:
-            # Choose best expansion strategy based on cached capabilities
-            if caps.get('expand_levels_1', True):  # Default True for first sync
+            # Check if Storage $expand is supported (tested separately)
+            # Default to FALSE if not detected - safer to skip $expand than waste API calls
+            if not caps.get('expand_storage', False):
+                # No $expand support for Storage - go straight to legacy with session
+                self.log(f"  → Storage: skipping $expand (not supported by this iDRAC)", "DEBUG")
+                return self._fetch_storage_drives(ip, username, password, server_id, job_id, session=session)
+            
+            # Choose best expansion level
+            if caps.get('expand_levels_1', False):
                 storage_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Storage?$expand=*($levels=1)"
                 endpoint_label = '/Storage?$expand=*($levels=1)'
-            elif caps.get('expand_members', True):
+            else:
                 storage_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Storage?$expand=Members"
                 endpoint_label = '/Storage?$expand=Members'
-            else:
-                # No expansion support - use legacy method with session
-                return self._fetch_storage_drives(ip, username, password, server_id, job_id, session=session)
             
             storage_response, storage_time = self._make_session_request(
                 ip, storage_url, session, username, password, timeout=(2, 45)
@@ -1186,6 +1225,9 @@ class IdracMixin:
         OPTIMIZED: Fetch NIC inventory using capability-aware $expand.
         
         Uses cached capabilities to skip unsupported $expand attempts.
+        IMPORTANT: Uses 'expand_network_adapters' flag specifically tested for NICs
+        to avoid connection-level failures on some iDRAC versions.
+        
         Before: 10-20 API calls (with wasted fallback attempts)
         After: 2-3 API calls (no wasted calls)
         """
@@ -1193,16 +1235,20 @@ class IdracMixin:
         caps = capabilities or {}
         
         try:
-            # Choose best expansion strategy based on cached capabilities
-            if caps.get('expand_levels_2', True):  # Default True for first sync
+            # Check if NetworkAdapters $expand is supported (tested separately from Memory/Storage)
+            # Default to FALSE if not detected - safer to skip $expand than waste API calls
+            if not caps.get('expand_network_adapters', False):
+                # No $expand support for NICs - go straight to legacy with session
+                self.log(f"  → NICs: skipping $expand (not supported by this iDRAC)", "DEBUG")
+                return self._fetch_network_adapters(ip, username, password, server_id, job_id, session=session)
+            
+            # Choose best expansion level for NICs
+            if caps.get('expand_levels_2', False):
                 adapters_url = f"https://{ip}/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters?$expand=*($levels=2)"
                 endpoint_label = '/NetworkAdapters?$expand=*($levels=2)'
-            elif caps.get('expand_members', True):
+            else:
                 adapters_url = f"https://{ip}/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters?$expand=Members"
                 endpoint_label = '/NetworkAdapters?$expand=Members'
-            else:
-                # No expansion support - use legacy method with session
-                return self._fetch_network_adapters(ip, username, password, server_id, job_id, session=session)
             
             adapters_response, adapters_time = self._make_session_request(
                 ip, adapters_url, session, username, password, timeout=(2, 45)
@@ -1300,6 +1346,8 @@ class IdracMixin:
         OPTIMIZED: Fetch memory/DIMM inventory using capability-aware $expand.
         
         Uses cached capabilities to skip unsupported $expand attempts.
+        Memory $expand is generally reliable (expand_levels_1 tested on Memory endpoint).
+        
         Before: 16+ API calls (with wasted fallback attempts)
         After: 1 API call (no wasted calls)
         """
@@ -1308,16 +1356,15 @@ class IdracMixin:
         caps = capabilities or {}
         
         try:
-            # Choose best expansion strategy based on cached capabilities
-            if caps.get('expand_levels_1', True):  # Default True for first sync
-                memory_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Memory?$expand=*($levels=1)"
-                endpoint_label = '/Memory?$expand=*($levels=1)'
-            elif caps.get('expand_members', True):
-                memory_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Memory?$expand=Members"
-                endpoint_label = '/Memory?$expand=Members'
-            else:
-                # No expansion support - use legacy method with session
+            # Check if Memory $expand is supported (expand_levels_1 is tested on Memory specifically)
+            # Default to FALSE if not detected - safer to skip $expand than waste API calls
+            if not caps.get('expand_levels_1', False):
+                # No $expand support - go straight to legacy with session
+                self.log(f"  → Memory: skipping $expand (not supported by this iDRAC)", "DEBUG")
                 return self._fetch_memory_dimms(ip, username, password, server_id, job_id, session=session)
+            
+            memory_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Memory?$expand=*($levels=1)"
+            endpoint_label = '/Memory?$expand=*($levels=1)'
             
             memory_response, memory_time = self._make_session_request(
                 ip, memory_url, session, username, password, timeout=(2, 45)
@@ -1929,47 +1976,36 @@ class IdracMixin:
 
     def _fetch_network_adapters(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, session: Dict = None) -> List[Dict]:
         """
-        Fetch NIC inventory using Dell Redfish Network Adapters API with $expand optimization.
+        Fetch NIC inventory using Dell Redfish Network Adapters API.
         All API calls are logged to idrac_commands for visibility.
         Session-aware: Uses session token if provided for auth efficiency.
         
-        OPTIMIZED: Uses $expand to reduce N+1 queries.
+        LEGACY method: Called when $expand is not supported.
+        Uses N+1 pattern but maintains session for efficiency.
         
-        Dell Redfish Pattern (optimized):
-        1. GET /redfish/v1/Chassis/System.Embedded.1/NetworkAdapters?$expand=Members → all adapters
-        2. For each adapter, GET NetworkDeviceFunctions?$expand=Members → all functions in one call
-        
-        This reduces calls from ~20+ to ~3-5 per server.
+        Dell Redfish Pattern:
+        1. GET /redfish/v1/Chassis/System.Embedded.1/NetworkAdapters → list adapters
+        2. For each adapter, GET individual adapter + NetworkDeviceFunctions
         """
         nics = []
         
         try:
-            # OPTIMIZED: Get network adapters with $expand
-            adapters_url = f"https://{ip}/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters?$expand=Members"
+            # NO $expand - this is the fallback for iDRACs that don't support it
+            adapters_url = f"https://{ip}/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters"
             
-            # Use session-based request if available, otherwise basic auth
-            if session and session.get('token'):
-                adapters_response, adapters_time = self._make_session_request(
-                    ip, adapters_url, session, username, password, timeout=(2, 30)
-                )
-            else:
-                adapters_response, adapters_time = self.throttler.request_with_safety(
-                    method='GET',
-                    url=adapters_url,
-                    ip=ip,
-                    logger=self.log,
-                    auth=(username, password),
-                    timeout=(2, 30)
-                )
+            # Use session-based request if available for efficiency
+            adapters_response, adapters_time = self._make_session_request(
+                ip, adapters_url, session, username, password, timeout=(2, 30)
+            )
             
-            # Log the network adapters API call - mark as fallback_attempt if it failed
+            # Log the network adapters API call
             adapters_succeeded = adapters_response is not None and adapters_response.status_code == 200
             self.log_idrac_command(
                 server_id=server_id,
                 job_id=job_id,
                 task_id=None,
                 command_type='GET',
-                endpoint='/NetworkAdapters?$expand=Members',
+                endpoint='/NetworkAdapters',
                 full_url=adapters_url,
                 request_headers=None,
                 request_body=None,
@@ -1978,37 +2014,8 @@ class IdracMixin:
                 response_body=None,
                 success=adapters_succeeded,
                 error_message=adapters_response.text[:200] if adapters_response and adapters_response.status_code != 200 else None,
-                operation_type='idrac_api' if adapters_succeeded else 'idrac_api_fallback'
+                operation_type='idrac_api'
             )
-            
-            # Fallback to non-expanded if $expand not supported
-            if not adapters_response or adapters_response.status_code != 200:
-                adapters_url = f"https://{ip}/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters"
-                adapters_response, adapters_time = self.throttler.request_with_safety(
-                    method='GET',
-                    url=adapters_url,
-                    ip=ip,
-                    logger=self.log,
-                    auth=(username, password),
-                    timeout=(2, 15)
-                )
-                
-                # Log fallback call
-                self.log_idrac_command(
-                    server_id=server_id,
-                    job_id=job_id,
-                    task_id=None,
-                    command_type='GET',
-                    endpoint='/NetworkAdapters',
-                    full_url=adapters_url,
-                    request_headers=None,
-                    request_body=None,
-                    status_code=adapters_response.status_code if adapters_response else None,
-                    response_time_ms=adapters_time,
-                    response_body=None,
-                    success=adapters_response is not None and adapters_response.status_code == 200,
-                    operation_type='idrac_api'
-                )
             
             if not adapters_response or adapters_response.status_code != 200:
                 return nics
@@ -2018,45 +2025,38 @@ class IdracMixin:
             
             for adapter_item in adapter_items:
                 try:
-                    # If $expand worked, adapter_item has full data
-                    if 'Id' in adapter_item and 'Manufacturer' in adapter_item:
-                        adapter_data = adapter_item
-                    elif '@odata.id' in adapter_item:
-                        # Need to fetch adapter
-                        adapter_url = f"https://{ip}{adapter_item['@odata.id']}"
-                        adapter_resp, adapter_time = self.throttler.request_with_safety(
-                            method='GET',
-                            url=adapter_url,
-                            ip=ip,
-                            logger=self.log,
-                            auth=(username, password),
-                            timeout=(2, 15)
-                        )
-                        
-                        # Log adapter fetch
-                        adapter_id = adapter_item['@odata.id'].split('/')[-1]
-                        self.log_idrac_command(
-                            server_id=server_id,
-                            job_id=job_id,
-                            task_id=None,
-                            command_type='GET',
-                            endpoint=f'/NetworkAdapters/{adapter_id}',
-                            full_url=adapter_url,
-                            request_headers=None,
-                            request_body=None,
-                            status_code=adapter_resp.status_code if adapter_resp else None,
-                            response_time_ms=adapter_time,
-                            response_body=None,
-                            success=adapter_resp is not None and adapter_resp.status_code == 200,
-                            operation_type='idrac_api'
-                        )
-                        
-                        if not adapter_resp or adapter_resp.status_code != 200:
-                            continue
-                        
-                        adapter_data = adapter_resp.json()
-                    else:
+                    # Legacy method: adapter_item is always a reference, fetch individually
+                    if '@odata.id' not in adapter_item:
                         continue
+                    
+                    # Fetch adapter with session
+                    adapter_url = f"https://{ip}{adapter_item['@odata.id']}"
+                    adapter_resp, adapter_time = self._make_session_request(
+                        ip, adapter_url, session, username, password, timeout=(2, 15)
+                    )
+                    
+                    # Log adapter fetch
+                    adapter_id = adapter_item['@odata.id'].split('/')[-1]
+                    self.log_idrac_command(
+                        server_id=server_id,
+                        job_id=job_id,
+                        task_id=None,
+                        command_type='GET',
+                        endpoint=f'/NetworkAdapters/{adapter_id}',
+                        full_url=adapter_url,
+                        request_headers=None,
+                        request_body=None,
+                        status_code=adapter_resp.status_code if adapter_resp else None,
+                        response_time_ms=adapter_time,
+                        response_body=None,
+                        success=adapter_resp is not None and adapter_resp.status_code == 200,
+                        operation_type='idrac_api'
+                    )
+                    
+                    if not adapter_resp or adapter_resp.status_code != 200:
+                        continue
+                    
+                    adapter_data = adapter_resp.json()
                     
                     adapter_id = adapter_data.get('Id')
                     manufacturer = adapter_data.get('Manufacturer')
@@ -2064,66 +2064,29 @@ class IdracMixin:
                     serial = adapter_data.get('SerialNumber')
                     part_number = adapter_data.get('PartNumber')
                     
-                    # Get NetworkDeviceFunctions with $expand
+                    # Get NetworkDeviceFunctions - NO $expand in legacy method
                     functions_link = adapter_data.get('NetworkDeviceFunctions', {}).get('@odata.id')
                     if functions_link:
-                        # OPTIMIZED: Request with $expand=Members
-                        functions_url = f"https://{ip}{functions_link}?$expand=Members"
-                        functions_resp, functions_time = self.throttler.request_with_safety(
-                            method='GET',
-                            url=functions_url,
-                            ip=ip,
-                            logger=self.log,
-                            auth=(username, password),
-                            timeout=(2, 30)
+                        functions_url = f"https://{ip}{functions_link}"
+                        functions_resp, functions_time = self._make_session_request(
+                            ip, functions_url, session, username, password, timeout=(2, 20)
                         )
                         
-                        # Log functions fetch - mark as fallback_attempt if it failed
-                        funcs_succeeded = functions_resp is not None and functions_resp.status_code == 200
                         self.log_idrac_command(
                             server_id=server_id,
                             job_id=job_id,
                             task_id=None,
                             command_type='GET',
-                            endpoint=f'/NetworkAdapters/{adapter_id}/NetworkDeviceFunctions?$expand',
+                            endpoint=f'/NetworkAdapters/{adapter_id}/NetworkDeviceFunctions',
                             full_url=functions_url,
                             request_headers=None,
                             request_body=None,
                             status_code=functions_resp.status_code if functions_resp else None,
                             response_time_ms=functions_time,
                             response_body=None,
-                            success=funcs_succeeded,
-                            operation_type='idrac_api' if funcs_succeeded else 'idrac_api_fallback'
+                            success=functions_resp is not None and functions_resp.status_code == 200,
+                            operation_type='idrac_api'
                         )
-                        
-                        # Fallback without $expand
-                        if not functions_resp or functions_resp.status_code != 200:
-                            functions_url = f"https://{ip}{functions_link}"
-                            functions_resp, functions_time = self.throttler.request_with_safety(
-                                method='GET',
-                                url=functions_url,
-                                ip=ip,
-                                logger=self.log,
-                                auth=(username, password),
-                                timeout=(2, 15)
-                            )
-                            
-                            # Log fallback
-                            self.log_idrac_command(
-                                server_id=server_id,
-                                job_id=job_id,
-                                task_id=None,
-                                command_type='GET',
-                                endpoint=f'/NetworkAdapters/{adapter_id}/NetworkDeviceFunctions',
-                                full_url=functions_url,
-                                request_headers=None,
-                                request_body=None,
-                                status_code=functions_resp.status_code if functions_resp else None,
-                                response_time_ms=functions_time,
-                                response_body=None,
-                                success=functions_resp is not None and functions_resp.status_code == 200,
-                                operation_type='idrac_api'
-                            )
                         
                         if not functions_resp or functions_resp.status_code != 200:
                             continue
@@ -2132,45 +2095,37 @@ class IdracMixin:
                         
                         for func_item in functions_data.get('Members', []):
                             try:
-                                # If $expand worked, func_item has full data
-                                if 'Id' in func_item and 'Ethernet' in func_item:
-                                    func_data = func_item
-                                elif '@odata.id' in func_item:
-                                    # Need to fetch individual function
-                                    func_url = f"https://{ip}{func_item['@odata.id']}"
-                                    func_resp, func_time = self.throttler.request_with_safety(
-                                        method='GET',
-                                        url=func_url,
-                                        ip=ip,
-                                        logger=self.log,
-                                        auth=(username, password),
-                                        timeout=(2, 15)
-                                    )
-                                    
-                                    # Log function fetch
-                                    func_id = func_item['@odata.id'].split('/')[-1]
-                                    self.log_idrac_command(
-                                        server_id=server_id,
-                                        job_id=job_id,
-                                        task_id=None,
-                                        command_type='GET',
-                                        endpoint=f'/NetworkDeviceFunctions/{func_id}',
-                                        full_url=func_url,
-                                        request_headers=None,
-                                        request_body=None,
-                                        status_code=func_resp.status_code if func_resp else None,
-                                        response_time_ms=func_time,
-                                        response_body=None,
-                                        success=func_resp is not None and func_resp.status_code == 200,
-                                        operation_type='idrac_api'
-                                    )
-                                    
-                                    if not func_resp or func_resp.status_code != 200:
-                                        continue
-                                    
-                                    func_data = func_resp.json()
-                                else:
+                                if '@odata.id' not in func_item:
                                     continue
+                                
+                                # Fetch individual function with session
+                                func_url = f"https://{ip}{func_item['@odata.id']}"
+                                func_resp, func_time = self._make_session_request(
+                                    ip, func_url, session, username, password, timeout=(2, 15)
+                                )
+                                
+                                # Log function fetch
+                                func_id = func_item['@odata.id'].split('/')[-1]
+                                self.log_idrac_command(
+                                    server_id=server_id,
+                                    job_id=job_id,
+                                    task_id=None,
+                                    command_type='GET',
+                                    endpoint=f'/NetworkDeviceFunctions/{func_id}',
+                                    full_url=func_url,
+                                    request_headers=None,
+                                    request_body=None,
+                                    status_code=func_resp.status_code if func_resp else None,
+                                    response_time_ms=func_time,
+                                    response_body=None,
+                                    success=func_resp is not None and func_resp.status_code == 200,
+                                    operation_type='idrac_api'
+                                )
+                                
+                                if not func_resp or func_resp.status_code != 200:
+                                    continue
+                                
+                                func_data = func_resp.json()
                                 
                                 nic_info = self._extract_nic_info(func_data, manufacturer, model, serial, part_number)
                                 if nic_info:
