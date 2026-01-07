@@ -57,6 +57,7 @@ import {
   ChevronDown,
   Cpu,
   HardDrive,
+  Bot,
   Network,
   Tag,
   Camera,
@@ -172,6 +173,12 @@ export function PrepareTemplateWizard({
   const [enableNfsTuning, setEnableNfsTuning] = useState(true);
   const [showAdvancedTuning, setShowAdvancedTuning] = useState(false);
   
+  // ZFS Agent installation
+  const [installAgent, setInstallAgent] = useState(true);
+  const [agentPort, setAgentPort] = useState(8080);
+  const [agentAutoRegister, setAgentAutoRegister] = useState(true);
+  const [showAgentAdvanced, setShowAgentAdvanced] = useState(false);
+  
   // Step 5: Clean
   const [clearMachineId, setClearMachineId] = useState(true);
   const [clearSshHostKeys, setClearSshHostKeys] = useState(true);
@@ -257,6 +264,10 @@ export function PrepareTemplateWizard({
       setEnablePrefetch(true);
       setEnableNfsTuning(true);
       setShowAdvancedTuning(false);
+      setInstallAgent(true);
+      setAgentPort(8080);
+      setAgentAutoRegister(true);
+      setShowAgentAdvanced(false);
       setClearMachineId(true);
       setClearSshHostKeys(true);
       setCleanCloudInit(true);
@@ -468,6 +479,12 @@ export function PrepareTemplateWizard({
               enable_prefetch: enablePrefetch,
               nfs_tuning: enableNfsTuning,
             },
+            // ZFS Agent installation
+            install_agent: installAgent,
+            agent_config: installAgent ? {
+              api_port: agentPort,
+              auto_register: agentAutoRegister,
+            } : undefined,
             cleanup: {
               clear_machine_id: clearMachineId,
               clear_ssh_host_keys: clearSshHostKeys,
@@ -1205,6 +1222,71 @@ export function PrepareTemplateWizard({
                   Install health check script (/usr/local/bin/zfs-health-check)
                 </Label>
               </div>
+              
+              {/* ZFS Agent Installation */}
+              <Collapsible open={showAgentAdvanced} onOpenChange={setShowAgentAdvanced}>
+                <div className="flex items-center justify-between pt-4 border-t">
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="install-agent"
+                      checked={installAgent}
+                      onCheckedChange={(checked) => setInstallAgent(!!checked)}
+                    />
+                    <Label htmlFor="install-agent" className="flex items-center gap-2">
+                      <Bot className="h-4 w-4" />
+                      Install ZFS Agent (REST API)
+                    </Label>
+                    <Badge variant="secondary" className="text-xs">Recommended</Badge>
+                  </div>
+                  <CollapsibleTrigger asChild>
+                    <Button variant="ghost" size="sm" disabled={!installAgent}>
+                      <ChevronDown className={`h-4 w-4 transition-transform ${showAgentAdvanced ? 'rotate-180' : ''}`} />
+                    </Button>
+                  </CollapsibleTrigger>
+                </div>
+                
+                {installAgent && (
+                  <p className="text-xs text-muted-foreground ml-6 mt-1">
+                    Enables API-based orchestration for faster, more reliable replication operations.
+                  </p>
+                )}
+                
+                <CollapsibleContent className="space-y-4 pt-3 pl-6">
+                  <div className="space-y-3">
+                    <div className="space-y-2">
+                      <Label className="text-sm">API Port</Label>
+                      <Input
+                        type="number"
+                        value={agentPort}
+                        onChange={(e) => setAgentPort(parseInt(e.target.value) || 8080)}
+                        placeholder="8080"
+                        className="max-w-[120px]"
+                        disabled={!installAgent}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Port for the ZFS Agent REST API (default: 8080)
+                      </p>
+                    </div>
+                    
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="agent-auto-register"
+                        checked={agentAutoRegister}
+                        onCheckedChange={(checked) => setAgentAutoRegister(!!checked)}
+                        disabled={!installAgent}
+                      />
+                      <div>
+                        <Label htmlFor="agent-auto-register" className="text-sm">
+                          Auto-register with DSM on first boot
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          Agent will automatically register itself when deployed
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
             </div>
           )}
           
