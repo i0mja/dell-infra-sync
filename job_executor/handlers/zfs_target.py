@@ -1317,9 +1317,32 @@ class ZfsTargetHandler(BaseHandler):
         vcenter_id = details['vcenter_id']
         template_moref = details['template_moref']
         vm_name = details['vm_name']
-        zfs_disk_gb = details.get('zfs_disk_gb', 500)
         network_name = details.get('network_name')
         cluster_name = details.get('cluster_name') or details.get('default_cluster')
+        
+        # Dynamic disk sizing: use calculated_disk_gb if provided, else fallback to template default
+        calculated_disk_gb = details.get('calculated_disk_gb')
+        template_disk_gb = details.get('zfs_disk_gb', 500)
+        
+        if calculated_disk_gb:
+            zfs_disk_gb = calculated_disk_gb
+            protection_group_id = details.get('protection_group_id', 'unknown')
+            headroom_percent = details.get('headroom_percent', 50)
+            vm_count = details.get('vm_count', 0)
+            source_bytes = details.get('source_vm_storage_bytes', 0)
+            self._log_console(job_id, 'INFO', 
+                f'Dynamic disk sizing: {zfs_disk_gb} GB '
+                f'(PG: {protection_group_id[:8] if protection_group_id != "unknown" else "unknown"}..., '
+                f'{vm_count} VMs, {source_bytes / (1024**3):.1f} GB source, {headroom_percent}% headroom)', 
+                details)
+        else:
+            zfs_disk_gb = template_disk_gb
+            self._log_console(job_id, 'INFO', 
+                f'Using template default disk size: {zfs_disk_gb} GB (no protection group specified)', 
+                details)
+        
+        # Store final disk size in details for reference
+        details['final_disk_gb'] = zfs_disk_gb
         
         self._log_console(job_id, 'INFO', f'Connecting to vCenter...', details)
         
@@ -1634,6 +1657,13 @@ class ZfsTargetHandler(BaseHandler):
         vm_moref = details.get('cloned_vm_moref')
         use_dhcp = details.get('use_dhcp', True)
         
+        # Dynamic sizing metadata
+        protection_group_id = details.get('protection_group_id')
+        headroom_percent = details.get('headroom_percent')
+        vm_count = details.get('vm_count')
+        source_vm_storage_bytes = details.get('source_vm_storage_bytes')
+        provisioned_disk_gb = details.get('final_disk_gb') or details.get('calculated_disk_gb') or details.get('zfs_disk_gb')
+        
         self._log_console(job_id, 'INFO', f'Registering replication target: {vm_name}', details)
         
         headers = {
@@ -1658,8 +1688,17 @@ class ZfsTargetHandler(BaseHandler):
             'source_template_id': template_id,
             'deployed_job_id': job_id,
             'deployed_vm_moref': vm_moref,
-            'deployed_ip_source': 'dhcp' if use_dhcp else 'static'
+            'deployed_ip_source': 'dhcp' if use_dhcp else 'static',
+            # Dynamic sizing metadata
+            'protection_group_id': protection_group_id,
+            'headroom_percent': headroom_percent,
+            'vm_count_at_provisioning': vm_count,
+            'source_vm_storage_bytes': source_vm_storage_bytes,
+            'provisioned_disk_gb': provisioned_disk_gb,
         }
+        
+        # Remove None values to avoid Supabase errors
+        target_data = {k: v for k, v in target_data.items() if v is not None}
         
         response = requests.post(
             f'{DSM_URL}/rest/v1/replication_targets',
@@ -1676,6 +1715,12 @@ class ZfsTargetHandler(BaseHandler):
         target_id = result[0]['id'] if result else None
         
         self._log_console(job_id, 'INFO', f'Replication target registered: {target_id}', details)
+        
+        # Log dynamic sizing info if used
+        if protection_group_id:
+            self._log_console(job_id, 'INFO', 
+                f'Target provisioned with dynamic sizing: {provisioned_disk_gb} GB disk, '
+                f'{vm_count} VMs, {headroom_percent}% headroom', details)
         
         # Update template deployment count
         if template_id:

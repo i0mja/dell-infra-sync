@@ -57,7 +57,12 @@ import {
   Power,
   PowerOff,
   Wand2,
+  ShieldCheck,
 } from "lucide-react";
+import { ProtectionGroupSelector } from "./ProtectionGroupSelector";
+import { DiskSizingPreview } from "./DiskSizingPreview";
+import { useProtectionGroupStorage, ProtectionGroupStorage } from "@/hooks/useProtectionGroupStorage";
+import { calculateDiskSize } from "@/utils/diskSizing";
 import {
   Collapsible,
   CollapsibleContent,
@@ -102,6 +107,9 @@ interface SiteConfig {
   // Source mode
   sourceMode: 'library' | 'vcenter';
   selectedTemplate: ZfsTargetTemplate | null;
+  // Dynamic disk sizing
+  protectionGroupId: string;
+  headroomPercent: number;
 }
 
 type StepStatus = 'pending' | 'running' | 'success' | 'failed' | 'warning' | 'skipped' | 'fixing' | 'fixed';
@@ -209,6 +217,8 @@ const defaultSiteConfig = (): SiteConfig => ({
   cloneSettings: defaultCloneSettings(),
   sourceMode: 'library',
   selectedTemplate: null,
+  protectionGroupId: '',
+  headroomPercent: 50,
 });
 
 export function PairedZfsDeployWizard({
@@ -510,8 +520,32 @@ export function PairedZfsDeployWizard({
     return job.status;
   }, []);
   
+  // Get protection group storage data for disk sizing
+  const { data: protectionGroups = [] } = useProtectionGroupStorage();
+  
+  // Get selected protection group details
+  const getProtectionGroupDetails = (pgId: string | undefined) => {
+    if (!pgId) return null;
+    return protectionGroups.find(pg => pg.id === pgId) || null;
+  };
+  
+  const sourceProtectionGroup = getProtectionGroupDetails(sourceConfig.protectionGroupId);
+  const drProtectionGroup = getProtectionGroupDetails(drConfig.protectionGroupId);
+  
+  // Calculate disk sizes based on protection group storage
+  const getCalculatedDiskSize = (config: SiteConfig) => {
+    const pg = getProtectionGroupDetails(config.protectionGroupId);
+    if (!pg) return undefined; // Will use template default
+    return calculateDiskSize(pg.totalStorageBytes, config.headroomPercent);
+  };
+  
   // Build job details for a site
   const buildJobDetails = (config: SiteConfig, vm: any, siteRole: 'primary' | 'dr') => {
+    const protectionGroup = getProtectionGroupDetails(config.protectionGroupId);
+    const calculatedDiskGb = protectionGroup 
+      ? calculateDiskSize(protectionGroup.totalStorageBytes, config.headroomPercent)
+      : undefined;
+    
     const baseDetails: Record<string, unknown> = {
       target_name: config.targetName,
       site_role: siteRole,
@@ -524,6 +558,12 @@ export function PairedZfsDeployWizard({
       datastore_name: config.datastoreName,
       install_packages: true,
       create_user: true,
+      // Dynamic disk sizing fields
+      protection_group_id: config.protectionGroupId || undefined,
+      headroom_percent: config.headroomPercent,
+      calculated_disk_gb: calculatedDiskGb,
+      vm_count: protectionGroup?.vmCount || 0,
+      source_vm_storage_bytes: protectionGroup?.totalStorageBytes || 0,
     };
     
     // Add template clone config if deploying from template
@@ -1037,7 +1077,29 @@ export function PairedZfsDeployWizard({
       )}
       
       {currentPage === 3 && (
-        <div className="space-y-3">
+        <div className="space-y-4">
+          {/* Protection Group Selector for Dynamic Disk Sizing */}
+          <ProtectionGroupSelector
+            selectedId={config.protectionGroupId}
+            onSelect={(pg) => setConfig(prev => ({ 
+              ...prev, 
+              protectionGroupId: pg?.id || '' 
+            }))}
+            label="Protection Group (for disk sizing)"
+            placeholder="Optional: Auto-size disk based on VMs"
+          />
+          
+          {/* Disk Sizing Preview - only show when protection group is selected */}
+          {config.protectionGroupId && getProtectionGroupDetails(config.protectionGroupId) && (
+            <DiskSizingPreview
+              vmStorageBytes={getProtectionGroupDetails(config.protectionGroupId)!.totalStorageBytes}
+              vmCount={getProtectionGroupDetails(config.protectionGroupId)!.vmCount}
+              headroomPercent={config.headroomPercent}
+              onHeadroomChange={(percent) => setConfig(prev => ({ ...prev, headroomPercent: percent }))}
+              protectionGroupName={getProtectionGroupDetails(config.protectionGroupId)!.name}
+            />
+          )}
+          
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1">
               <Label className="text-xs">ZFS Pool</Label>
