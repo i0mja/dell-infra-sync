@@ -279,10 +279,11 @@ class DatabaseMixin:
                         if verified:
                             return True
                         else:
-                            # Verification failed after retries - fall through to fallback
-                            self.log(f"Status verification failed after 3 attempts, attempting fallback...", "WARN")
+                            # Verification failed - retry the full PATCH instead of fallback
+                            self.log(f"Status verification failed after 3 attempts (PATCH attempt {attempt+1}/{max_retries}), retrying PATCH...", "WARN")
                             last_error = "Verification failed - status update not persisted"
-                            # Fall through to fallback logic below
+                            time.sleep(0.5 * (attempt + 1))  # Backoff before retry
+                            continue  # RETRY THE FULL PATCH
                     else:
                         return True  # Non-terminal status, no verification needed
                 else:
@@ -302,62 +303,63 @@ class DatabaseMixin:
                         continue
                     
                     self.log(f"Job update failed: {last_error}", "ERROR")
+                    break  # Exit loop to attempt fallback
+            
+            # FALLBACK: Only reached after ALL retries exhausted
+            if status in ['paused', 'failed', 'cancelled', 'completed']:
+                self.log(f"All {max_retries} PATCH retries exhausted, attempting fallback minimal update...", "WARN")
+                minimal_payload = {"status": status}
                 
-                # FALLBACK: Try minimal update with just status and essential fields
-                if status in ['paused', 'failed', 'cancelled', 'completed']:
-                    self.log("Attempting fallback minimal update...", "INFO")
-                    minimal_payload = {"status": status}
-                    
-                    if status == 'completed':
-                        # Include essential completion details
-                        minimal_payload["completed_at"] = completed_at or datetime.now().isoformat()
-                        minimal_payload["details"] = {
-                            "progress_percent": 100,
-                            "current_step": "Complete (fallback update)",
-                            "fallback_update": True,
-                            "vms_synced": details.get("vms_synced", 0) if details else 0,
-                            "total_vms": details.get("total_vms", 0) if details else 0
-                        }
-                    elif status == 'paused':
-                        # Include only essential pause fields plus blockers if small enough
-                        minimal_payload["details"] = {
-                            "pause_reason": details.get("pause_reason", "Paused - check workflow steps") if details else "Paused",
-                            "awaiting_blocker_resolution": details.get("awaiting_blocker_resolution", False) if details else False,
-                            "hosts_with_blockers": details.get("hosts_with_blockers", 0) if details else 0,
-                            "total_critical_blockers": details.get("total_critical_blockers", 0) if details else 0,
-                            "can_retry": True,
-                            "fallback_update": True
-                        }
-                        # Try to include blockers if small enough (under 50KB)
-                        if details and details.get('current_blockers'):
-                            try:
-                                blockers_json = json.dumps(details['current_blockers'])
-                                if len(blockers_json) < 50000:
-                                    minimal_payload["details"]["current_blockers"] = details['current_blockers']
-                                    self.log(f"Including blockers in fallback ({len(blockers_json)} bytes)", "DEBUG")
-                                else:
-                                    self.log(f"Blockers too large for fallback ({len(blockers_json)} bytes), stored in workflow step", "WARN")
-                            except Exception as blocker_err:
-                                self.log(f"Could not serialize blockers for fallback: {blocker_err}", "WARN")
-                    
-                    try:
-                        fallback_response = requests.patch(
-                            url,
-                            headers=headers,
-                            params=params,
-                            json=minimal_payload,
-                            verify=VERIFY_SSL,
-                            timeout=10
-                        )
-                        if fallback_response.status_code in [200, 204]:
-                            self.log("Fallback minimal update succeeded", "INFO")
-                            return True
-                        else:
-                            self.log(f"Fallback update also failed: {fallback_response.status_code}", "ERROR")
-                    except Exception as fallback_err:
-                        self.log(f"Fallback update exception: {fallback_err}", "ERROR")
+                if status == 'completed':
+                    # Include essential completion details
+                    minimal_payload["completed_at"] = completed_at or datetime.now().isoformat()
+                    minimal_payload["details"] = {
+                        "progress_percent": 100,
+                        "current_step": "Complete (fallback update)",
+                        "fallback_update": True,
+                        "vms_synced": details.get("vms_synced", 0) if details else 0,
+                        "total_vms": details.get("total_vms", 0) if details else 0
+                    }
+                elif status == 'paused':
+                    # Include only essential pause fields plus blockers if small enough
+                    minimal_payload["details"] = {
+                        "pause_reason": details.get("pause_reason", "Paused - check workflow steps") if details else "Paused",
+                        "awaiting_blocker_resolution": details.get("awaiting_blocker_resolution", False) if details else False,
+                        "hosts_with_blockers": details.get("hosts_with_blockers", 0) if details else 0,
+                        "total_critical_blockers": details.get("total_critical_blockers", 0) if details else 0,
+                        "can_retry": True,
+                        "fallback_update": True
+                    }
+                    # Try to include blockers if small enough (under 50KB)
+                    if details and details.get('current_blockers'):
+                        try:
+                            blockers_json = json.dumps(details['current_blockers'])
+                            if len(blockers_json) < 50000:
+                                minimal_payload["details"]["current_blockers"] = details['current_blockers']
+                                self.log(f"Including blockers in fallback ({len(blockers_json)} bytes)", "DEBUG")
+                            else:
+                                self.log(f"Blockers too large for fallback ({len(blockers_json)} bytes), stored in workflow step", "WARN")
+                        except Exception as blocker_err:
+                            self.log(f"Could not serialize blockers for fallback: {blocker_err}", "WARN")
                 
-                return False
+                try:
+                    fallback_response = requests.patch(
+                        url,
+                        headers=headers,
+                        params=params,
+                        json=minimal_payload,
+                        verify=VERIFY_SSL,
+                        timeout=10
+                    )
+                    if fallback_response.status_code in [200, 204]:
+                        self.log("Fallback minimal update succeeded", "INFO")
+                        return True
+                    else:
+                        self.log(f"Fallback update also failed: {fallback_response.status_code}", "ERROR")
+                except Exception as fallback_err:
+                    self.log(f"Fallback update exception: {fallback_err}", "ERROR")
+            
+            return False
                 
         except Exception as e:
             self.log(f"Error updating job status: {e}", "ERROR")
