@@ -2013,20 +2013,34 @@ class ReplicationHandler(BaseHandler):
             # ALWAYS complete the job - this is the critical part
             success = len(results['errors']) == 0
             final_status = 'completed' if success else 'failed'
-            try:
-                self.update_job_status(
-                    job_id,
-                    final_status,
-                    completed_at=utc_now_iso(),
-                    details=results
-                )
-            except Exception as status_err:
-                self.executor.log(f"[{job_id}] ERROR: Failed to update job status: {status_err}", "ERROR")
-                # Last resort - minimal update with bare essentials
+            
+            # Retry final status update up to 3 times with exponential backoff
+            # Critical fix: check return value, not just exceptions
+            update_success = False
+            for status_attempt in range(3):
                 try:
-                    self.update_job_status(job_id, final_status)
+                    result = self.update_job_status(
+                        job_id,
+                        final_status,
+                        completed_at=utc_now_iso(),
+                        details=results
+                    )
+                    if result:
+                        update_success = True
+                        break
+                    else:
+                        self.executor.log(f"[{job_id}] Status update returned False (attempt {status_attempt+1}/3)", "WARN")
+                        time.sleep(0.5 * (status_attempt + 1))
+                except Exception as status_err:
+                    self.executor.log(f"[{job_id}] Status update exception (attempt {status_attempt+1}/3): {status_err}", "ERROR")
+                    time.sleep(0.5 * (status_attempt + 1))
+            
+            if not update_success:
+                self.executor.log(f"[{job_id}] Final status update failed after 3 attempts, trying minimal update", "ERROR")
+                try:
+                    self.update_job_status(job_id, final_status, completed_at=utc_now_iso())
                 except:
-                    pass  # Truly can't update - will be caught by stale detection
+                    pass  # Will be caught by stale detection
             
             self.executor.log(f"[{job_id}] Replication sync complete: {results['vms_synced']} VMs synced")
             
