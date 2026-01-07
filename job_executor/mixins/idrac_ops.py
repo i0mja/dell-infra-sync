@@ -1806,13 +1806,24 @@ class IdracMixin:
                 "Prefer": "resolution=merge-duplicates,return=minimal"
             }
             
+            # Fetch existing drives for this server to preserve historical data
+            existing_drives = {}
+            try:
+                existing_url = f"{DSM_URL}/rest/v1/server_drives?server_id=eq.{server_id}&select=drive_identifier,serial_number,last_known_serial_number,health,status,failed_at"
+                existing_response = requests.get(existing_url, headers=headers, verify=VERIFY_SSL, timeout=15)
+                if existing_response.status_code == 200:
+                    for ex in existing_response.json():
+                        existing_drives[ex.get('drive_identifier')] = ex
+            except Exception as e:
+                self.log(f"  ⚠ Could not fetch existing drives for historical preservation: {e}", "WARN")
+            
             # Build list of drive records for bulk upsert
             drive_records = []
             for drive in drives:
                 # Generate unique identifier with fallbacks
-                serial = drive.get('serial_number')
-                if serial:
-                    drive_identifier = f"sn:{serial}"
+                new_serial = drive.get('serial_number')
+                if new_serial:
+                    drive_identifier = f"sn:{new_serial}"
                 else:
                     # Fallback to composite: controller + slot + name
                     controller = drive.get('controller', 'unknown')
@@ -1820,13 +1831,44 @@ class IdracMixin:
                     name = drive.get('name', 'drive')
                     drive_identifier = f"loc:{controller}:{slot}:{name}"
                 
+                # Check if we have existing data for this drive
+                existing = existing_drives.get(drive_identifier, {})
+                existing_serial = existing.get('serial_number')
+                existing_last_known = existing.get('last_known_serial_number')
+                existing_failed_at = existing.get('failed_at')
+                existing_health = existing.get('health')
+                existing_status = existing.get('status')
+                
+                # Preserve serial number: if new scan returns empty but we had one, keep it
+                final_serial = new_serial
+                last_known_serial = existing_last_known
+                if not new_serial and existing_serial:
+                    final_serial = existing_serial
+                    last_known_serial = existing_serial  # Also save as last_known for reference
+                
+                # Determine if drive is now faulty
+                new_health = drive.get('health')
+                new_status = drive.get('status')
+                is_now_faulty = new_health == 'Critical' or new_status in ['Disabled', 'UnavailableOffline']
+                was_faulty = existing_health == 'Critical' or existing_status in ['Disabled', 'UnavailableOffline']
+                
+                # Set failed_at timestamp when drive becomes faulty for the first time
+                failed_at = existing_failed_at
+                if is_now_faulty and not failed_at:
+                    failed_at = datetime.utcnow().isoformat() + 'Z'
+                elif not is_now_faulty:
+                    # Clear failed_at if drive is now healthy (recovered/replaced)
+                    failed_at = None
+                
                 drive_records.append({
                     'server_id': server_id,
                     'drive_identifier': drive_identifier,
                     'name': drive.get('name'),
                     'manufacturer': drive.get('manufacturer'),
                     'model': drive.get('model'),
-                    'serial_number': drive.get('serial_number'),
+                    'serial_number': final_serial,
+                    'last_known_serial_number': last_known_serial,
+                    'failed_at': failed_at,
                     'part_number': drive.get('part_number'),
                     'media_type': drive.get('media_type'),
                     'protocol': drive.get('protocol'),

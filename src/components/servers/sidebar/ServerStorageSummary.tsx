@@ -1,9 +1,10 @@
-import { HardDrive, CheckCircle2, AlertTriangle, ExternalLink, XCircle } from "lucide-react";
+import { HardDrive, CheckCircle2, AlertTriangle, ExternalLink, XCircle, Clock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { ServerDrive } from "@/hooks/useServerDrives";
 import { CollapsibleSection } from "./CollapsibleSection";
 import { isDriveCritical, getDriveFailureMessage } from "@/lib/driveHealth";
+import { formatDistanceToNow } from "date-fns";
 
 interface ServerStorageSummaryProps {
   drives: ServerDrive[];
@@ -146,10 +147,21 @@ export function ServerStorageSummary({
                   </span>
                 </div>
               )}
-              {/* Missing serial number warning for failed drives */}
+              {/* Missing serial number warning for failed drives - show last known if available */}
               {!drive.serial_number && isDriveCritical(drive) && (
                 <div className="text-[10px] text-muted-foreground mt-0.5">
-                  Serial number unavailable (drive may need replacement)
+                  {drive.last_known_serial_number ? (
+                    <span>Last known S/N: <span className="font-mono">{drive.last_known_serial_number}</span></span>
+                  ) : (
+                    <span>Serial number unavailable (drive may need replacement)</span>
+                  )}
+                </div>
+              )}
+              {/* Show when the drive failed */}
+              {drive.failed_at && isDriveCritical(drive) && (
+                <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1">
+                  <Clock className="h-2.5 w-2.5" />
+                  Failed {formatDistanceToNow(new Date(drive.failed_at))} ago
                 </div>
               )}
               {drive.predicted_failure && !isDriveCritical(drive) && (

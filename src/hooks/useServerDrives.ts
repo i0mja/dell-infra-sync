@@ -25,6 +25,10 @@ export interface ServerDrive {
   capable_speed_gbps: number | null;
   last_sync: string;
   created_at: string;
+  // Historical tracking
+  last_known_serial_number: string | null;
+  failed_at: string | null;
+  first_seen_at: string | null;
 }
 
 export function useServerDrives(serverId: string | null) {

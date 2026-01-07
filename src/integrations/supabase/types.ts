@@ -3049,9 +3049,12 @@ export type Database = {
           created_at: string | null
           drive_identifier: string
           enclosure: string | null
+          failed_at: string | null
           firmware_version: string | null
+          first_seen_at: string | null
           health: string | null
           id: string
+          last_known_serial_number: string | null
           last_sync: string | null
           life_remaining_percent: number | null
           manufacturer: string | null
@@ -3082,9 +3085,12 @@ export type Database = {
           created_at?: string | null
           drive_identifier: string
           enclosure?: string | null
+          failed_at?: string | null
           firmware_version?: string | null
+          first_seen_at?: string | null
           health?: string | null
           id?: string
+          last_known_serial_number?: string | null
           last_sync?: string | null
           life_remaining_percent?: number | null
           manufacturer?: string | null
@@ -3115,9 +3121,12 @@ export type Database = {
           created_at?: string | null
           drive_identifier?: string
           enclosure?: string | null
+          failed_at?: string | null
           firmware_version?: string | null
+          first_seen_at?: string | null
           health?: string | null
           id?: string
+          last_known_serial_number?: string | null
           last_sync?: string | null
           life_remaining_percent?: number | null
           manufacturer?: string | null
