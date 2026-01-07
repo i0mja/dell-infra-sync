@@ -257,10 +257,17 @@ class IdracMixin:
             
             # If full onboarding is requested, fetch additional data IN PARALLEL with session
             if full_onboarding:
-                # Detect capabilities if not cached or firmware changed
+                # Detect capabilities if not cached, firmware changed, or missing new capability flags
                 current_firmware = base_info.get('idrac_firmware')
-                if not capabilities or capabilities.get('idrac_version') != current_firmware:
-                    self.log(f"  Detecting iDRAC capabilities for {ip}...", "INFO")
+                needs_redetect = (
+                    not capabilities or 
+                    capabilities.get('idrac_version') != current_firmware or
+                    'expand_network_adapters' not in capabilities or
+                    'expand_storage' not in capabilities
+                )
+                if needs_redetect:
+                    reason = "missing" if not capabilities else "stale cache (missing new flags)" if 'expand_storage' not in capabilities else "firmware changed"
+                    self.log(f"  Detecting iDRAC capabilities for {ip} ({reason})...", "INFO")
                     capabilities = self._detect_idrac_capabilities(ip, username, password, session, server_id, job_id)
                     if server_id and capabilities:
                         self._store_idrac_capabilities(server_id, capabilities)
