@@ -1,20 +1,19 @@
 """
 Dell Redfish Adapter
 
-Wraps Dell Redfish API calls with custom throttling, logging, and error handling.
+Wraps Dell Redfish API calls with session management, logging, and error handling.
 
 All calls to Dell's Redfish API go through this adapter to ensure:
-- Rate limiting via IdracThrottler
-- Circuit breaker protection
+- Session reuse via SessionManager
 - Logging to idrac_commands table
 - Consistent error handling
 """
 
 import logging
-from typing import Callable, Any, Optional, Dict, Tuple
 import time
 import requests
-from .errors import DellRedfishError, CircuitBreakerOpenError, map_dell_error
+from typing import Callable, Any, Optional, Dict, Tuple
+from .errors import DellRedfishError, map_dell_error
 
 
 class DellRedfishAdapter:
@@ -23,30 +22,29 @@ class DellRedfishAdapter:
     
     This class provides a unified request method that wraps all Dell Redfish
     API calls with:
-    - IdracThrottler for rate limiting and circuit breakers
+    - SessionManager for session reuse and legacy TLS support
     - Supabase logging for all API calls
     - Enhanced error handling with Dell error code mapping
     """
     
-    def __init__(self, throttler, logger: logging.Logger, log_command_fn: Callable, verify_ssl: bool = False):
+    def __init__(self, session_manager, logger: logging.Logger, log_command_fn: Callable, verify_ssl: bool = False):
         """
-        Initialize the adapter with throttler, logger, and command logging function.
+        Initialize the adapter with session manager, logger, and command logging function.
         
         Args:
-            throttler: IdracThrottler instance for rate limiting and circuit breaking
+            session_manager: SessionManager instance for session management
             logger: Logger instance for operation logging
             log_command_fn: Function to log commands to idrac_commands table
             verify_ssl: Whether to verify SSL certificates (default False for self-signed)
         """
-        self.throttler = throttler
+        self.session_manager = session_manager
         self.logger = logger
         self.log_command = log_command_fn
         self.verify_ssl = verify_ssl
     
     def _log(self, message: str, level: str = "INFO"):
         """
-        Wrapper to use self.logger (logging.Logger) with the callable signature
-        expected by IdracThrottler: logger(message, level)
+        Wrapper to use self.logger (logging.Logger) with a callable signature.
         """
         level_map = {
             "DEBUG": self.logger.debug,
@@ -71,11 +69,12 @@ class DellRedfishAdapter:
         job_id: str = None,
         server_id: str = None,
         user_id: str = None,
-        return_response: bool = False
+        return_response: bool = False,
+        legacy_ssl: bool = False
     ):
         """
         Unified request method for all Dell Redfish API calls.
-        Integrates throttling, logging, circuit breaking, and error mapping.
+        Integrates session management, logging, and error mapping.
         
         Args:
             method: HTTP method (GET, POST, PATCH, DELETE)
@@ -90,151 +89,136 @@ class DellRedfishAdapter:
             server_id: Optional server ID for logging
             user_id: Optional user ID for logging
             return_response: If True, return raw Response object instead of parsed JSON
+            legacy_ssl: If True, use legacy TLS for iDRAC 8 compatibility
             
         Returns:
             Union[dict, requests.Response]: Response JSON data or raw Response if return_response=True
             
         Raises:
-            CircuitBreakerOpenError: If circuit breaker is open for this IP
             DellRedfishError: On API errors with Dell error code mapping
         """
-        # Check circuit breaker
-        if self.throttler.is_circuit_open(ip):
-            raise CircuitBreakerOpenError(ip)
-        
         url = f"https://{ip}{endpoint}"
         operation_name = operation_name or f"{method} {endpoint}"
         
-        # Get or create session for this IP
-        session = self.throttler.get_session(ip)
+        # Get session for this IP
+        session = self.session_manager.get_session(ip, legacy_ssl=legacy_ssl)
         
         # Prepare request
         request_kwargs = {
             'auth': (username, password),
             'verify': self.verify_ssl,
             'timeout': timeout,
-            'headers': {'Content-Type': 'application/json'}
+            'headers': {'Content-Type': 'application/json', 'Accept': 'application/json'}
         }
         
         if payload is not None:
             request_kwargs['json'] = payload
         
-        # Execute with throttler safety
-        with self.throttler.locks[ip]:
-            self.throttler.wait_for_rate_limit(ip, self._log)
+        start_time = time.time()
+        response = None
+        status_code = None
+        
+        try:
+            # Make the request
+            if method.upper() == 'GET':
+                response = session.get(url, **request_kwargs)
+            elif method.upper() == 'POST':
+                response = session.post(url, **request_kwargs)
+            elif method.upper() == 'PATCH':
+                response = session.patch(url, **request_kwargs)
+            elif method.upper() == 'DELETE':
+                response = session.delete(url, **request_kwargs)
+            else:
+                raise ValueError(f"Unsupported HTTP method: {method}")
             
-            with self.throttler.global_semaphore:
-                start_time = time.time()
-                response = None
-                status_code = None
-                
+            response_time_ms = int((time.time() - start_time) * 1000)
+            status_code = response.status_code
+            
+            # Parse response
+            content_type = response.headers.get('Content-Type', '') if response else ''
+            try:
+                response_data = response.json() if response.text else {}
+            except ValueError:
+                # Handle non-JSON responses (e.g., XML SCP exports)
+                response_data = self._handle_non_json_response(response.text, content_type)
+            
+            # CRITICAL: Include Location header for async operations (202 responses)
+            # Dell returns task URI in Location header, not body
+            if response.status_code == 202:
+                location = response.headers.get('Location')
+                if location:
+                    response_data['_location_header'] = location
+                    # Also set common field names that helpers check
+                    if '@odata.id' not in response_data:
+                        response_data['@odata.id'] = location
+            
+            # Check for HTTP errors
+            response.raise_for_status()
+            
+            # Log to idrac_commands
+            self._log_operation(
+                ip=ip,
+                endpoint=endpoint,
+                method=method,
+                operation_name=operation_name,
+                payload=payload,
+                response_data=response_data,
+                response_time_ms=response_time_ms,
+                status_code=status_code,
+                success=True,
+                job_id=job_id,
+                server_id=server_id,
+                user_id=user_id
+            )
+            
+            # Return raw response or parsed data
+            if return_response:
+                return response
+            return response_data
+            
+        except requests.exceptions.RequestException as e:
+            response_time_ms = int((time.time() - start_time) * 1000)
+            status_code = getattr(response, 'status_code', None) if response else None
+            
+            # Try to extract Dell error info
+            error_data = None
+            if response is not None:
                 try:
-                    # Make the request
-                    if method.upper() == 'GET':
-                        response = session.get(url, **request_kwargs)
-                    elif method.upper() == 'POST':
-                        response = session.post(url, **request_kwargs)
-                    elif method.upper() == 'PATCH':
-                        response = session.patch(url, **request_kwargs)
-                    elif method.upper() == 'DELETE':
-                        response = session.delete(url, **request_kwargs)
-                    else:
-                        raise ValueError(f"Unsupported HTTP method: {method}")
-                    
-                    response_time_ms = int((time.time() - start_time) * 1000)
-                    status_code = response.status_code
-                    
-                    # Parse response
-                    content_type = response.headers.get('Content-Type', '') if response else ''
-                    try:
-                        response_data = response.json() if response.text else {}
-                    except ValueError:
-                        # Handle non-JSON responses (e.g., XML SCP exports)
-                        response_data = self._handle_non_json_response(response.text, content_type)
-                    
-                    # CRITICAL: Include Location header for async operations (202 responses)
-                    # Dell returns task URI in Location header, not body
-                    if response.status_code == 202:
-                        location = response.headers.get('Location')
-                        if location:
-                            response_data['_location_header'] = location
-                            # Also set common field names that helpers check
-                            if '@odata.id' not in response_data:
-                                response_data['@odata.id'] = location
-                    
-                    # Check for HTTP errors
-                    response.raise_for_status()
-                    
-                    # Record success
-                    self.throttler.record_success(ip)
-                    
-                    # Log to idrac_commands
-                    self._log_operation(
-                        ip=ip,
-                        endpoint=endpoint,
-                        method=method,
-                        operation_name=operation_name,
-                        payload=payload,
-                        response_data=response_data,
-                        response_time_ms=response_time_ms,
-                        status_code=status_code,
-                        success=True,
-                        job_id=job_id,
-                        server_id=server_id,
-                        user_id=user_id
-                    )
-                    
-                    # Return raw response or parsed data
-                    if return_response:
-                        return response
-                    return response_data
-                    
-                except requests.exceptions.RequestException as e:
-                    response_time_ms = int((time.time() - start_time) * 1000)
-                    status_code = getattr(response, 'status_code', None) if response else None
-                    
-                    # Record failure
-                    self.throttler.record_failure(ip, status_code, self._log)
-                    
-                    # Try to extract Dell error info
-                    error_data = None
-                    if response is not None:
-                        try:
-                            error_data = response.json()
-                        except:
-                            error_data = {'error': str(e)}
-                    
-                    # Log failure
-                    self._log_operation(
-                        ip=ip,
-                        endpoint=endpoint,
-                        method=method,
-                        operation_name=operation_name,
-                        payload=payload,
-                        response_data=error_data,
-                        response_time_ms=response_time_ms,
-                        status_code=status_code,
-                        success=False,
-                        error_message=str(e),
-                        job_id=job_id,
-                        server_id=server_id,
-                        user_id=user_id
-                    )
-                    
-                    # Map Dell error if available
-                    if error_data:
-                        error_info = map_dell_error(error_data)
-                        raise DellRedfishError(
-                            message=error_info['message'],
-                            error_code=error_info['code'],
-                            status_code=status_code
-                        )
-                    
-                    raise DellRedfishError(
-                        message=str(e),
-                        error_code=None,
-                        status_code=status_code
-                    )
+                    error_data = response.json()
+                except:
+                    error_data = {'error': str(e)}
+            
+            # Log failure
+            self._log_operation(
+                ip=ip,
+                endpoint=endpoint,
+                method=method,
+                operation_name=operation_name,
+                payload=payload,
+                response_data=error_data,
+                response_time_ms=response_time_ms,
+                status_code=status_code,
+                success=False,
+                error_message=str(e),
+                job_id=job_id,
+                server_id=server_id,
+                user_id=user_id
+            )
+            
+            # Map Dell error if available
+            if error_data:
+                error_info = map_dell_error(error_data)
+                raise DellRedfishError(
+                    message=error_info['message'],
+                    error_code=error_info['code'],
+                    status_code=status_code
+                )
+            
+            raise DellRedfishError(
+                message=str(e),
+                error_code=None,
+                status_code=status_code
+            )
 
     def _handle_non_json_response(self, raw_text: str, content_type: str) -> Dict[str, Any]:
         """
@@ -278,7 +262,7 @@ class DellRedfishAdapter:
         **kwargs
     ) -> Any:
         """
-        Legacy method: Wrap any Dell function with throttling, logging, and error handling.
+        Legacy method: Wrap any Dell function with logging and error handling.
         
         NOTE: This method is deprecated. Use make_request() for all new operations.
         Kept for backward compatibility with existing code.
@@ -294,46 +278,26 @@ class DellRedfishAdapter:
             Result from the Dell library function
             
         Raises:
-            CircuitBreakerOpenError: If circuit breaker is open for this IP
             DellRedfishError: If Dell operation fails
         """
-        # Check circuit breaker
-        if self.throttler.is_circuit_open(ip):
-            error_msg = f"Circuit breaker open for {ip}. iDRAC may be unresponsive."
-            self.logger.error(error_msg)
-            raise CircuitBreakerOpenError(ip)
+        start_time = time.time()
         
-        # Acquire per-IP lock and wait for rate limit
-        with self.throttler.locks[ip]:
-            self.throttler.wait_for_rate_limit(ip, self._log)
+        try:
+            # Call Dell library function
+            self.logger.debug(f"Calling Dell operation: {operation_name} on {ip}")
+            result = func(*args, **kwargs)
+            return result
+        
+        except Exception as e:
+            response_time_ms = int((time.time() - start_time) * 1000)
+            status_code = getattr(e, "status_code", 500)
             
-            # Acquire global concurrency semaphore
-            with self.throttler.global_semaphore:
-                start_time = time.time()
-                
-                try:
-                    # Call Dell library function
-                    self.logger.debug(f"Calling Dell operation: {operation_name} on {ip}")
-                    result = func(*args, **kwargs)
-                    
-                    # Record success
-                    self.throttler.record_success(ip)
-                    
-                    return result
-                
-                except Exception as e:
-                    response_time_ms = int((time.time() - start_time) * 1000)
-                    status_code = getattr(e, "status_code", 500)
-                    
-                    # Record failure
-                    self.throttler.record_failure(ip, status_code, self._log)
-                    
-                    self.logger.error(f"Dell operation failed: {operation_name} on {ip}: {str(e)}")
-                    
-                    raise DellRedfishError(
-                        message=f"Operation failed: {str(e)}",
-                        status_code=status_code,
-                    )
+            self.logger.error(f"Dell operation failed: {operation_name} on {ip}: {str(e)}")
+            
+            raise DellRedfishError(
+                message=f"Operation failed: {str(e)}",
+                status_code=status_code,
+            )
     
     def _log_operation(
         self,
@@ -456,18 +420,10 @@ class DellRedfishAdapter:
                 if attempt < max_retries:
                     wait_seconds = error_info.get("wait_seconds", 30)
                     self.logger.warning(
-                        f"Dell operation {operation_name} failed (attempt {attempt + 1}/{max_retries + 1}). "
-                        f"Retrying in {wait_seconds} seconds. Error: {e.message}"
+                        f"Retrying {operation_name} on {ip} in {wait_seconds}s "
+                        f"(attempt {attempt + 1}/{max_retries})"
                     )
                     time.sleep(wait_seconds)
-                else:
-                    # Max retries exceeded
-                    self.logger.error(
-                        f"Dell operation {operation_name} failed after {max_retries + 1} attempts. "
-                        f"Last error: {e.message}"
-                    )
-                    raise
         
-        # Should never reach here, but just in case
-        if last_error:
-            raise last_error
+        # All retries exhausted
+        raise last_error

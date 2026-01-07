@@ -195,10 +195,6 @@ class APIHandler(BaseHTTPRequestHandler):
                 'media_server': {
                     'running': self.executor.media_server is not None,
                 },
-                'throttler': {
-                    'max_concurrent': self.executor.throttler.max_concurrent if self.executor.throttler else None,
-                    'request_delay_ms': self.executor.throttler.request_delay_ms if self.executor.throttler else None,
-                },
                 'operations_paused': self.executor.activity_settings.get('pause_idrac_operations', False),
             }
             
