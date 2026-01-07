@@ -70,17 +70,19 @@ class PowerHandler(BaseHandler):
                     continue
                 
                 try:
-                    # Get current power state using throttler
+                    # Get current power state
                     system_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
                     
-                    response, response_time_ms = self.executor.throttler.request_with_safety(
-                        'GET',
-                        system_url,
-                        ip,
-                        self.log,
+                    import time
+                    start_time = time.time()
+                    response = self.executor.session_manager.make_request(
+                        method='GET',
+                        url=system_url,
+                        ip=ip,
                         auth=(username, password),
                         timeout=(2, 10)
                     )
+                    response_time_ms = int((time.time() - start_time) * 1000)
                     
                     self.executor.log_idrac_command(
                         server_id=server['id'],
@@ -88,35 +90,31 @@ class PowerHandler(BaseHandler):
                         command_type='GET',
                         endpoint='/redfish/v1/Systems/System.Embedded.1',
                         full_url=system_url,
-                        status_code=response.status_code,
+                        status_code=response.status_code if response else None,
                         response_time_ms=response_time_ms,
-                        success=response.status_code == 200,
+                        success=response is not None and response.status_code == 200,
                         operation_type='idrac_api'
                     )
                     
-                    if response.status_code in [401, 403]:
-                        self.executor.throttler.record_failure(ip, response.status_code, self.log)
-                        if self.executor.throttler.is_circuit_open(ip):
-                            raise Exception(f"Circuit breaker OPEN for {ip} - Possible credential lockout")
-                    elif response.status_code == 200:
-                        self.executor.throttler.record_success(ip)
+                    if response and response.status_code == 200:
                         data = _safe_json_parse(response)
                         current_state = data.get('PowerState', 'Unknown')
                         self.log(f"  Current power state: {current_state}")
                         
-                        # Execute power action using throttler
+                        # Execute power action
                         action_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Actions/ComputerSystem.Reset"
                         action_payload = {"ResetType": action}
                         
-                        action_response, response_time_ms = self.executor.throttler.request_with_safety(
-                            'POST',
-                            action_url,
-                            ip,
-                            self.log,
+                        start_time = time.time()
+                        action_response = self.executor.session_manager.make_request(
+                            method='POST',
+                            url=action_url,
+                            ip=ip,
                             auth=(username, password),
                             json=action_payload,
                             timeout=(2, 30)
                         )
+                        response_time_ms = int((time.time() - start_time) * 1000)
                         
                         self.executor.log_idrac_command(
                             server_id=server['id'],
@@ -131,7 +129,7 @@ class PowerHandler(BaseHandler):
                             operation_type='idrac_api'
                         )
                         
-                        if action_response.status_code in [200, 202, 204]:
+                        if action_response and action_response.status_code in [200, 202, 204]:
                             self.log(f"  ✓ Power action {action} successful")
                             
                             # Update server power state in DB
@@ -141,10 +139,13 @@ class PowerHandler(BaseHandler):
                             
                             success_count += 1
                         else:
-                            self.log(f"  ✗ Power action failed: HTTP {action_response.status_code}", "ERROR")
+                            self.log(f"  ✗ Power action failed: HTTP {action_response.status_code if action_response else 'None'}", "ERROR")
                             failed_count += 1
+                    elif response and response.status_code in [401, 403]:
+                        self.log(f"  ✗ Authentication failed: HTTP {response.status_code}", "ERROR")
+                        failed_count += 1
                     else:
-                        self.log(f"  ✗ Failed to get power state: HTTP {response.status_code}", "ERROR")
+                        self.log(f"  ✗ Failed to get power state: HTTP {response.status_code if response else 'None'}", "ERROR")
                         failed_count += 1
                         
                 except Exception as e:

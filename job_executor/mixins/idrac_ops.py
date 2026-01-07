@@ -82,7 +82,7 @@ class IdracMixin:
     
     def get_comprehensive_server_info(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, max_retries: int = 3, full_onboarding: bool = True) -> Optional[Dict]:
         """
-        Get comprehensive server information from iDRAC Redfish API using throttler.
+        Get comprehensive server information from iDRAC Redfish API using SessionManager.
         
         OPTIMIZED: Uses session-based auth, capability detection, and aggressive $expand to minimize API calls.
         - First sync: Detects iDRAC capabilities (~2-4 test calls), caches in supported_endpoints
@@ -920,14 +920,15 @@ class IdracMixin:
         # Fetch SEL logs (System Event Log)
         try:
             url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1/Logs/Sel"
-            response, response_time = self.throttler.request_with_safety(
+            start_time = time.time()
+            response = self.session_manager.make_request(
                 method='GET',
                 url=url,
                 ip=ip,
-                logger=self.log,
                 auth=(username, password),
                 timeout=(2, 15)
             )
+            response_time = int((time.time() - start_time) * 1000)
             
             response_json = None
             if response and response.status_code == 200 and response.content:
@@ -958,7 +959,6 @@ class IdracMixin:
                 log_count = self._store_event_logs(response_json, server_id, log_type='SEL')
                 total_logs += log_count
                 self.log(f"  Fetched {log_count} SEL logs")
-                self.throttler.record_success(ip)
                 
         except Exception as e:
             self.log(f"  Could not fetch SEL logs: {e}", "WARN")
@@ -966,14 +966,15 @@ class IdracMixin:
         # Fetch Lifecycle logs
         try:
             url = f"https://{ip}/redfish/v1/Managers/iDRAC.Embedded.1/LogServices/Lclog/Entries"
-            response, response_time = self.throttler.request_with_safety(
+            start_time = time.time()
+            response = self.session_manager.make_request(
                 method='GET',
                 url=url,
                 ip=ip,
-                logger=self.log,
                 auth=(username, password),
                 timeout=(2, 15)
             )
+            response_time = int((time.time() - start_time) * 1000)
             
             response_json = None
             if response and response.status_code == 200 and response.content:
@@ -1004,7 +1005,6 @@ class IdracMixin:
                 log_count = self._store_event_logs(response_json, server_id, log_type='Lifecycle')
                 total_logs += log_count
                 self.log(f"  Fetched {log_count} Lifecycle logs")
-                self.throttler.record_success(ip)
                 
         except Exception as e:
             self.log(f"  Could not fetch Lifecycle logs: {e}", "WARN")
@@ -2309,14 +2309,15 @@ class IdracMixin:
                     ip, memory_url, session, username, password, timeout=(2, 30)
                 )
             else:
-                memory_response, memory_time = self.throttler.request_with_safety(
+                start_time = time.time()
+                memory_response = self.session_manager.make_request(
                     method='GET',
                     url=memory_url,
                     ip=ip,
-                    logger=self.log,
                     auth=(username, password),
                     timeout=(2, 30)
                 )
+                memory_time = int((time.time() - start_time) * 1000)
             
             # Log the API call
             expand_succeeded = memory_response is not None and memory_response.status_code == 200
@@ -2340,14 +2341,15 @@ class IdracMixin:
             # Fallback to non-expanded if needed
             if not memory_response or memory_response.status_code != 200:
                 memory_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Memory"
-                memory_response, memory_time = self.throttler.request_with_safety(
+                start_time = time.time()
+                memory_response = self.session_manager.make_request(
                     method='GET',
                     url=memory_url,
                     ip=ip,
-                    logger=self.log,
                     auth=(username, password),
                     timeout=(2, 15)
                 )
+                memory_time = int((time.time() - start_time) * 1000)
                 
                 # Log fallback
                 self.log_idrac_command(
@@ -2377,11 +2379,10 @@ class IdracMixin:
                     # If $expand worked, member has full data; else fetch individually
                     if '@odata.id' in member and 'Id' not in member:
                         dimm_url = f"https://{ip}{member['@odata.id']}"
-                        dimm_resp, _ = self.throttler.request_with_safety(
+                        dimm_resp = self.session_manager.make_request(
                             method='GET',
                             url=dimm_url,
                             ip=ip,
-                            logger=self.log,
                             auth=(username, password),
                             timeout=(2, 10)
                         )
@@ -2675,19 +2676,20 @@ class IdracMixin:
             return False
 
     def test_idrac_connection(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None) -> Optional[Dict]:
-        """Test iDRAC connection and get basic info (lightweight version using throttler)"""
+        """Test iDRAC connection and get basic info (lightweight version using SessionManager)"""
         url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
         
         try:
-            # Use throttler for safe request handling
-            response, response_time_ms = self.throttler.request_with_safety(
+            # Use session manager for request handling
+            start_time = time.time()
+            response = self.session_manager.make_request(
                 method='GET',
                 url=url,
                 ip=ip,
-                logger=self.log,
                 auth=(username, password),
                 timeout=(2, 10)  # 2s connect, 10s read
             )
+            response_time_ms = int((time.time() - start_time) * 1000)
             
             # Log the test connection request
             self.log_idrac_command(
@@ -2709,8 +2711,6 @@ class IdracMixin:
             
             if response and response.status_code == 200:
                 data = _safe_json_parse(response)
-                # Record success for circuit breaker
-                self.throttler.record_success(ip)
                 return {
                     "success": True,
                     "idrac_detected": True,
@@ -2724,7 +2724,6 @@ class IdracMixin:
                 }
             elif response and response.status_code in [401, 403]:
                 # Authentication failure BUT iDRAC exists - this is key!
-                self.throttler.record_failure(ip, response.status_code, self.log)
                 return {
                     "success": False,
                     "idrac_detected": True,  # iDRAC is present, just auth failed
@@ -2738,9 +2737,6 @@ class IdracMixin:
                     "auth_failed": False
                 }
         except Exception as e:
-            # Record failure for circuit breaker
-            self.throttler.record_failure(ip, None, self.log)
-            
             self.log_idrac_command(
                 server_id=server_id,
                 job_id=job_id,
@@ -2999,9 +2995,6 @@ class IdracMixin:
                 if not conn_result['reachable']:
                     error_msg = f'Host unreachable: {conn_result["message"]}'
                     cred_status = 'unknown'
-                elif self.throttler.is_circuit_open(ip):
-                    error_msg = 'Authentication temporarily paused - possible account lockout risk after multiple failures'
-                    cred_status = 'lockout_risk'
                 else:
                     error_msg = f'Authentication failed using {cred_source} credentials - verify username/password'
                     cred_status = 'invalid'
@@ -3018,7 +3011,7 @@ class IdracMixin:
                 
                 log_local(f'✗ {error_msg}: {ip}', 'ERROR')
                 result['error'] = error_msg
-                result['error_type'] = 'auth_failed' if cred_status == 'invalid' else ('lockout_risk' if cred_status == 'lockout_risk' else 'unreachable')
+                result['error_type'] = 'auth_failed' if cred_status == 'invalid' else 'unreachable'
                 
         except Exception as e:
             error_msg = f'Exception during sync: {str(e)}'
