@@ -41,13 +41,26 @@ class IdracThrottler:
             import urllib3
             urllib3.disable_warnings()
         
-    def get_session(self, ip: str) -> requests.Session:
-        """Get or create a requests.Session for an IP"""
-        if ip not in self.sessions:
+    def get_session(self, ip: str, legacy_ssl: bool = False) -> requests.Session:
+        """
+        Get or create a requests.Session for an IP.
+        
+        Args:
+            ip: The iDRAC IP address
+            legacy_ssl: If True, use legacy TLS adapter for iDRAC 8 compatibility
+        """
+        cache_key = f"{ip}:{'legacy' if legacy_ssl else 'modern'}"
+        if cache_key not in self.sessions:
             session = requests.Session()
             session.verify = self.verify_ssl
-            self.sessions[ip] = session
-        return self.sessions[ip]
+            
+            if legacy_ssl:
+                from job_executor.legacy_ssl_adapter import LegacySSLAdapter
+                adapter = LegacySSLAdapter()
+                session.mount('https://', adapter)
+            
+            self.sessions[cache_key] = session
+        return self.sessions[cache_key]
     
     def close_session(self, ip: str):
         """Close and cleanup session for an IP"""
@@ -121,7 +134,8 @@ class IdracThrottler:
         jitter = random.uniform(0, 0.3 * base_delay)
         return base_delay + jitter
 
-    def request_with_safety(self, method: str, url: str, ip: str, logger, **kwargs) -> Tuple:
+    def request_with_safety(self, method: str, url: str, ip: str, logger, 
+                            legacy_ssl: bool = False, **kwargs) -> Tuple:
         """
         Make a request with full safety measures:
         - Per-IP serialization
@@ -129,6 +143,14 @@ class IdracThrottler:
         - Circuit breaker
         - Rate limiting
         - Exponential backoff on errors
+        
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            url: Full URL to request
+            ip: iDRAC IP address (for throttling/locking)
+            logger: Logging function
+            legacy_ssl: If True, use legacy TLS for iDRAC 8 compatibility
+            **kwargs: Additional arguments for requests.request()
         
         Returns: (response, elapsed_ms)
         Raises: Exception on failures
@@ -145,7 +167,7 @@ class IdracThrottler:
             
             # Acquire global semaphore (limit total concurrent requests)
             with self.global_semaphore:
-                session = self.get_session(ip)
+                session = self.get_session(ip, legacy_ssl=legacy_ssl)
                 
                 # Set short timeouts
                 if 'timeout' not in kwargs:

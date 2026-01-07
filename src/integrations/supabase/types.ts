@@ -3722,6 +3722,7 @@ export type Database = {
           power_state: string | null
           product_name: string | null
           redfish_version: string | null
+          requires_legacy_ssl: boolean | null
           secure_boot: string | null
           service_tag: string | null
           supported_endpoints: Json | null
@@ -3775,6 +3776,7 @@ export type Database = {
           power_state?: string | null
           product_name?: string | null
           redfish_version?: string | null
+          requires_legacy_ssl?: boolean | null
           secure_boot?: string | null
           service_tag?: string | null
           supported_endpoints?: Json | null
@@ -3828,6 +3830,7 @@ export type Database = {
           power_state?: string | null
           product_name?: string | null
           redfish_version?: string | null
+          requires_legacy_ssl?: boolean | null
           secure_boot?: string | null
           service_tag?: string | null
           supported_endpoints?: Json | null
