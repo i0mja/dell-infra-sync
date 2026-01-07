@@ -48,9 +48,21 @@ export function useSignedInUsers(filters: SignedInUserFilters = {}) {
 
       if (rolesError) throw rolesError;
 
-      // Create a map of user_id -> role
+      // Role priority: admin > operator > viewer
+      const rolePriority: Record<AppRole, number> = {
+        admin: 3,
+        operator: 2,
+        viewer: 1,
+      };
+
+      // Create a map of user_id -> highest role
       const roleMap = new Map<string, AppRole>();
-      roles?.forEach(r => roleMap.set(r.user_id, r.role));
+      roles?.forEach(r => {
+        const existingRole = roleMap.get(r.user_id);
+        if (!existingRole || rolePriority[r.role] > rolePriority[existingRole]) {
+          roleMap.set(r.user_id, r.role);
+        }
+      });
 
       // Combine data
       let combinedUsers: SignedInUser[] = (profiles || []).map(profile => ({
@@ -95,29 +107,20 @@ export function useSignedInUsers(filters: SignedInUserFilters = {}) {
 
   const updateUserRole = async (userId: string, newRole: AppRole): Promise<boolean> => {
     try {
-      // Check if role exists
-      const { data: existingRole } = await supabase
+      // Delete all existing roles for this user (handles multi-role cleanup)
+      const { error: deleteError } = await supabase
         .from('user_roles')
-        .select('id')
-        .eq('user_id', userId)
-        .single();
+        .delete()
+        .eq('user_id', userId);
 
-      if (existingRole) {
-        // Update existing role
-        const { error } = await supabase
-          .from('user_roles')
-          .update({ role: newRole })
-          .eq('user_id', userId);
+      if (deleteError) throw deleteError;
 
-        if (error) throw error;
-      } else {
-        // Insert new role
-        const { error } = await supabase
-          .from('user_roles')
-          .insert({ user_id: userId, role: newRole });
+      // Insert the new single role
+      const { error: insertError } = await supabase
+        .from('user_roles')
+        .insert({ user_id: userId, role: newRole });
 
-        if (error) throw error;
-      }
+      if (insertError) throw insertError;
 
       toast.success('User role updated');
       await loadUsers();
