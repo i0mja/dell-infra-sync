@@ -36,17 +36,32 @@ const SYNC_PHASES: SyncPhase[] = [
 
 /**
  * Map backend sync_phase (0-9) to UI phase index (0-5)
+ * Backend phases:
+ * 0 = Clusters, 1 = Hosts, 2 = Datastores, 3 = Networks
+ * 4 = VMs, 5 = VM-Network links, 6 = VM-Datastore links
+ * 7 = VM Snapshots, 8 = VM Custom Attributes
+ * 9 = Complete
  */
 const mapSyncPhaseToUiPhase = (syncPhase: number): number => {
-  if (syncPhase <= 1) return -1; // Still connecting
-  if (syncPhase === 2) return 0; // Clusters
-  if (syncPhase === 3) return 1; // Hosts
-  if (syncPhase === 4) return 2; // Datastores
-  if (syncPhase === 5) return 3; // Networks
-  if (syncPhase >= 6 && syncPhase <= 7) return 4; // VMs
-  if (syncPhase === 8) return 5; // Alarms
-  if (syncPhase >= 9) return SYNC_PHASES.length; // Complete
+  if (syncPhase < 0) return -1; // Still connecting
+  if (syncPhase === 0) return 0; // Clusters
+  if (syncPhase === 1) return 1; // Hosts
+  if (syncPhase === 2) return 2; // Datastores
+  if (syncPhase === 3) return 3; // Networks
+  if (syncPhase >= 4 && syncPhase <= 8) return 4; // VMs (including sub-phases: relationships, snapshots, attributes)
+  if (syncPhase >= 9) return 5; // Alarms / Complete
   return -1;
+};
+
+/**
+ * Get detailed label for VM sub-phases
+ */
+const getVmSubPhaseLabel = (syncPhase: number): string | null => {
+  if (syncPhase === 5) return "Linking VMs to Networks";
+  if (syncPhase === 6) return "Linking VMs to Datastores";
+  if (syncPhase === 7) return "Syncing VM Snapshots";
+  if (syncPhase === 8) return "Syncing VM Custom Attributes";
+  return null;
 };
 
 export const VCenterSyncLiveProgress = ({ details, currentStep, syncPhase }: VCenterSyncLiveProgressProps) => {
@@ -156,7 +171,7 @@ export const VCenterSyncLiveProgress = ({ details, currentStep, syncPhase }: VCe
       </div>
 
       {/* Current Operation Panel */}
-      {currentStep && (
+      {(currentStep || getVmSubPhaseLabel(syncPhase)) && (
         <div className="rounded-lg bg-muted/50 p-4 space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium">Current Operation</span>
@@ -167,9 +182,18 @@ export const VCenterSyncLiveProgress = ({ details, currentStep, syncPhase }: VCe
             )}
           </div>
           
-          <p className="text-sm text-foreground font-mono truncate">
-            {currentStep}
-          </p>
+          {/* Show VM sub-phase label when in sub-phases 5-8 */}
+          {getVmSubPhaseLabel(syncPhase) && (
+            <p className="text-xs text-muted-foreground">
+              {getVmSubPhaseLabel(syncPhase)}
+            </p>
+          )}
+          
+          {currentStep && (
+            <p className="text-sm text-foreground font-mono truncate">
+              {currentStep}
+            </p>
+          )}
           
           {stepProgress && (
             <Progress 
