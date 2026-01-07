@@ -66,6 +66,16 @@ export function useZfsAgents() {
     return ['online', 'idle', 'busy'].includes(agent.status);
   };
 
+  // Get agents that are not linked to any target
+  const getUnlinkedAgents = (): ZfsAgent[] => {
+    return agents.filter(a => !a.target_id);
+  };
+
+  // Get online agents that are not linked to any target
+  const getAvailableAgents = (): ZfsAgent[] => {
+    return agents.filter(a => !a.target_id && isAgentOnline(a));
+  };
+
   return {
     agents,
     isLoading,
@@ -74,6 +84,8 @@ export function useZfsAgents() {
     markStaleAgents: markStaleMutation.mutateAsync,
     getAgentForTarget,
     isAgentOnline,
+    getUnlinkedAgents,
+    getAvailableAgents,
     onlineCount: agents.filter(isAgentOnline).length,
     totalCount: agents.length
   };
