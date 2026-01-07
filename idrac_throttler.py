@@ -173,8 +173,8 @@ class IdracThrottler:
                 if 'timeout' not in kwargs:
                     kwargs['timeout'] = (2, 10)  # 2s connect, 10s read
                 
-                # Ensure Accept header
-                if 'headers' not in kwargs:
+                # Ensure Accept header (defensive: handle None)
+                if 'headers' not in kwargs or kwargs['headers'] is None:
                     kwargs['headers'] = {}
                 if 'Accept' not in kwargs['headers']:
                     kwargs['headers']['Accept'] = 'application/json'

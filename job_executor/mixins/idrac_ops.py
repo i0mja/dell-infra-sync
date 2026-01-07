@@ -810,7 +810,7 @@ class IdracMixin:
             ip=ip,
             logger=self.log,
             auth=auth,
-            headers=headers if headers else None,
+            headers=headers,
             json=json_body,
             timeout=timeout
         )
