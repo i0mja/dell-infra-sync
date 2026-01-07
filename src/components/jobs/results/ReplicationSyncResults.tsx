@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Database, CheckCircle2, XCircle, HardDrive, ArrowRight, AlertCircle, Server } from "lucide-react";
+import { Database, CheckCircle2, XCircle, HardDrive, ArrowRight, AlertCircle, Server, Clock } from "lucide-react";
 
 interface ReplicationSyncResultsProps {
   details: any;
@@ -31,6 +31,11 @@ export const ReplicationSyncResults = ({ details, status }: ReplicationSyncResul
   const currentVm = details?.current_vm || details?.vm_name;
   const groupName = details?.protection_group_name || details?.group_name || 'Unknown Group';
   const errors = details?.errors || [];
+  
+  // Detect auto-recovered jobs
+  const isAutoRecovered = 
+    currentStep?.toLowerCase().includes('auto-recovered') || 
+    !!details?.recovery_reason;
 
   return (
     <div className="space-y-4">
@@ -47,16 +52,27 @@ export const ReplicationSyncResults = ({ details, status }: ReplicationSyncResul
             {/* VMs Synced */}
             <div className="space-y-1">
               <p className="text-xs text-muted-foreground uppercase tracking-wide">VMs Synced</p>
-              <div className="flex items-baseline gap-1">
-                <span className="text-2xl font-bold">{vmsSynced}</span>
-                <span className="text-muted-foreground">/ {vmsTotal}</span>
-              </div>
+              {isAutoRecovered ? (
+                <div className="flex items-baseline gap-1">
+                  <span className="text-lg font-medium text-amber-600 dark:text-amber-500">Unknown</span>
+                  <span className="text-muted-foreground text-sm">/ {vmsTotal}</span>
+                </div>
+              ) : (
+                <div className="flex items-baseline gap-1">
+                  <span className="text-2xl font-bold">{vmsSynced}</span>
+                  <span className="text-muted-foreground">/ {vmsTotal}</span>
+                </div>
+              )}
             </div>
             
             {/* Data Transferred */}
             <div className="space-y-1">
               <p className="text-xs text-muted-foreground uppercase tracking-wide">Data Transferred</p>
-              <p className="text-2xl font-bold">{formatBytes(bytesTransferred)}</p>
+              {isAutoRecovered ? (
+                <p className="text-lg font-medium text-amber-600 dark:text-amber-500">Unknown</p>
+              ) : (
+                <p className="text-2xl font-bold">{formatBytes(bytesTransferred)}</p>
+              )}
             </div>
             
             {/* Current Step */}
@@ -78,6 +94,21 @@ export const ReplicationSyncResults = ({ details, status }: ReplicationSyncResul
           </div>
         </CardContent>
       </Card>
+      
+      {/* Auto-Recovery Warning */}
+      {isAutoRecovered && isCompleted && (
+        <Alert className="border-amber-500/50 bg-amber-50 dark:bg-amber-950/20">
+          <Clock className="h-4 w-4 text-amber-600 dark:text-amber-500" />
+          <AlertTitle className="text-amber-700 dark:text-amber-400">
+            Job Auto-Recovered
+          </AlertTitle>
+          <AlertDescription className="text-amber-600 dark:text-amber-400">
+            This job was automatically marked complete because the final status update failed to arrive. 
+            The replication sync likely completed successfully, but the exact VM count and bytes transferred are unknown.
+            Check the target storage to verify all VMs were synchronized.
+          </AlertDescription>
+        </Alert>
+      )}
       
       {/* VM Progress List */}
       {vmsTotal > 0 && (
@@ -144,12 +175,22 @@ export const ReplicationSyncResults = ({ details, status }: ReplicationSyncResul
       )}
       
       {/* Success Message */}
-      {isCompleted && errors.length === 0 && (
+      {isCompleted && errors.length === 0 && !isAutoRecovered && (
         <Alert className="border-success/50 bg-success/5">
           <CheckCircle2 className="h-4 w-4 text-success" />
           <AlertTitle className="text-success">Sync Completed Successfully</AlertTitle>
           <AlertDescription>
             All {vmsSynced} VMs have been synchronized to the replication target.
+          </AlertDescription>
+        </Alert>
+      )}
+      
+      {isCompleted && errors.length === 0 && isAutoRecovered && (
+        <Alert className="border-success/50 bg-success/5">
+          <CheckCircle2 className="h-4 w-4 text-success" />
+          <AlertTitle className="text-success">Sync Likely Completed</AlertTitle>
+          <AlertDescription>
+            The replication sync was auto-recovered. Check the target storage to verify all VMs were synchronized.
           </AlertDescription>
         </Alert>
       )}
