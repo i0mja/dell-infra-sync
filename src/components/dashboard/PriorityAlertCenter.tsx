@@ -7,7 +7,8 @@ import {
   ChevronUp,
   ExternalLink,
   Check,
-  RotateCcw
+  RotateCcw,
+  HardDrive
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -90,6 +91,63 @@ export const PriorityAlertCenter = () => {
     }
   });
 
+  // Query for servers with hardware faults (drives, memory)
+  const { data: hardwareFaults } = useQuery({
+    queryKey: ['hardware-faults-alerts'],
+    queryFn: async () => {
+      // Get servers with critical/failed drives
+      const { data: driveIssues } = await supabase
+        .from('server_drives')
+        .select('server_id, slot, health, status, predicted_failure, servers!inner(id, hostname, ip_address)')
+        .or('health.eq.Critical,status.eq.Disabled,status.eq.UnavailableOffline,predicted_failure.eq.true');
+
+      // Get servers with critical memory
+      const { data: memoryIssues } = await supabase
+        .from('server_memory')
+        .select('server_id, slot_name, health, servers!inner(id, hostname, ip_address)')
+        .eq('health', 'Critical');
+
+      // Aggregate by server
+      const serverIssues: Record<string, { 
+        serverId: string; 
+        hostname: string; 
+        ipAddress: string;
+        driveCount: number; 
+        memoryCount: number;
+      }> = {};
+
+      driveIssues?.forEach(d => {
+        const server = d.servers as unknown as { id: string; hostname: string; ip_address: string };
+        if (!serverIssues[server.id]) {
+          serverIssues[server.id] = { 
+            serverId: server.id, 
+            hostname: server.hostname || server.ip_address || 'Unknown',
+            ipAddress: server.ip_address || '',
+            driveCount: 0, 
+            memoryCount: 0 
+          };
+        }
+        serverIssues[server.id].driveCount++;
+      });
+
+      memoryIssues?.forEach(m => {
+        const server = m.servers as unknown as { id: string; hostname: string; ip_address: string };
+        if (!serverIssues[server.id]) {
+          serverIssues[server.id] = { 
+            serverId: server.id, 
+            hostname: server.hostname || server.ip_address || 'Unknown',
+            ipAddress: server.ip_address || '',
+            driveCount: 0, 
+            memoryCount: 0 
+          };
+        }
+        serverIssues[server.id].memoryCount++;
+      });
+
+      return Object.values(serverIssues);
+    }
+  });
+
   const categories: AlertCategory[] = [];
 
   if (offlineServers && offlineServers.length > 0) {
@@ -137,6 +195,28 @@ export const PriorityAlertCenter = () => {
         label: s.hostname || s.ip_address || 'Unknown',
       })),
       actionLabel: 'Configure Credentials',
+      actionLink: '/servers'
+    });
+  }
+
+  if (hardwareFaults && hardwareFaults.length > 0) {
+    categories.push({
+      id: 'hardware',
+      icon: HardDrive,
+      title: 'Hardware Faults',
+      severity: 'critical',
+      count: hardwareFaults.length,
+      items: hardwareFaults.map(f => {
+        const parts: string[] = [];
+        if (f.driveCount > 0) parts.push(`${f.driveCount} drive${f.driveCount > 1 ? 's' : ''}`);
+        if (f.memoryCount > 0) parts.push(`${f.memoryCount} DIMM${f.memoryCount > 1 ? 's' : ''}`);
+        return {
+          id: f.serverId,
+          label: f.hostname,
+          sublabel: parts.join(', ')
+        };
+      }),
+      actionLabel: 'View Affected Servers',
       actionLink: '/servers'
     });
   }
