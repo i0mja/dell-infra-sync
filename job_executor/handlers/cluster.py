@@ -794,13 +794,13 @@ class ClusterHandler(BaseHandler):
                     try:
                         if firmware_source == 'dell_online_catalog':
                             # Use Dell catalog for update checking
-                        from job_executor.dell_redfish import DellOperations, DellRedfishAdapter
-                        adapter = DellRedfishAdapter(
-                            self.executor.session_manager, 
-                            self.executor._get_dell_logger(), 
-                            self.executor._log_dell_redfish_command
-                        )
-                        dell_ops = DellOperations(adapter)
+                            from job_executor.dell_redfish import DellOperations, DellRedfishAdapter
+                            adapter = DellRedfishAdapter(
+                                self.executor.session_manager, 
+                                self.executor._get_dell_logger(), 
+                                self.executor._log_dell_redfish_command
+                            )
+                            dell_ops = DellOperations(adapter)
                             
                             catalog_url = dell_catalog_url or 'https://downloads.dell.com/catalog/Catalog.xml'
                             check_result = dell_ops.check_available_catalog_updates(
