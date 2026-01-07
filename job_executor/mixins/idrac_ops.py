@@ -208,6 +208,11 @@ class IdracMixin:
         
         # Extract comprehensive info
         try:
+            # Guard against NoneType - old iDRAC firmwares may return None
+            if not isinstance(system_data, dict):
+                self.log(f"  Invalid system_data type for {ip}: {type(system_data).__name__}", "ERROR")
+                return None
+            
             processor_summary = system_data.get("ProcessorSummary", {})
             memory_summary = system_data.get("MemorySummary", {})
             
@@ -268,7 +273,7 @@ class IdracMixin:
                 if needs_redetect:
                     reason = "missing" if not capabilities else "stale cache (missing new flags)" if 'expand_storage' not in capabilities else "firmware changed"
                     self.log(f"  Detecting iDRAC capabilities for {ip} ({reason})...", "INFO")
-                    capabilities = self._detect_idrac_capabilities(ip, username, password, session, server_id, job_id)
+                    capabilities = self._detect_idrac_capabilities(ip, username, password, session, server_id, job_id, current_firmware)
                     if server_id and capabilities:
                         self._store_idrac_capabilities(server_id, capabilities)
                         self.log(f"  ✓ Cached iDRAC capabilities", "DEBUG")
@@ -575,7 +580,8 @@ class IdracMixin:
         password: str, 
         session: Dict = None,
         server_id: str = None,
-        job_id: str = None
+        job_id: str = None,
+        current_firmware: str = None
     ) -> Dict:
         """
         Detect which $expand levels this iDRAC supports.
@@ -603,7 +609,7 @@ class IdracMixin:
             'expand_network_adapters': False,  # Test separately - known to fail on some firmwares
             'expand_storage': False,  # Test separately for Storage endpoint
             'detected_at': datetime.now().isoformat(),
-            'idrac_version': None
+            'idrac_version': current_firmware
         }
         
         try:
