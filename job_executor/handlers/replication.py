@@ -2014,33 +2014,60 @@ class ReplicationHandler(BaseHandler):
             success = len(results['errors']) == 0
             final_status = 'completed' if success else 'failed'
             
-            # Retry final status update up to 3 times with exponential backoff
-            # Critical fix: check return value, not just exceptions
+            # Use atomic RPC function for reliable job completion
+            # This avoids the read-modify-write race condition that caused jobs to get stuck
             update_success = False
             for status_attempt in range(3):
                 try:
-                    result = self.update_job_status(
-                        job_id,
-                        final_status,
-                        completed_at=utc_now_iso(),
-                        details=results
+                    rpc_response = requests.post(
+                        f"{self.executor.dsm_url}/rest/v1/rpc/complete_replication_job",
+                        json={
+                            'p_job_id': job_id,
+                            'p_status': final_status,
+                            'p_vms_synced': results.get('vms_synced', 0),
+                            'p_total_vms': results.get('total_vms', 0),
+                            'p_bytes_transferred': results.get('bytes_transferred', 0),
+                            'p_current_step': 'Complete',
+                            'p_errors': results.get('errors', [])
+                        },
+                        headers={
+                            'apikey': self.executor.service_role_key,
+                            'Authorization': f'Bearer {self.executor.service_role_key}',
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=representation'
+                        },
+                        verify=self.executor.verify_ssl,
+                        timeout=15  # Longer timeout for reliability
                     )
-                    if result:
-                        update_success = True
-                        break
+                    if rpc_response.ok:
+                        rpc_result = rpc_response.json()
+                        if rpc_result is True:
+                            update_success = True
+                            self.executor.log(f"[{job_id}] Atomic completion RPC succeeded")
+                            break
+                        else:
+                            self.executor.log(f"[{job_id}] RPC returned False - job may already be completed (attempt {status_attempt+1}/3)", "WARN")
+                            update_success = True  # Job is in terminal state, consider it success
+                            break
                     else:
-                        self.executor.log(f"[{job_id}] Status update returned False (attempt {status_attempt+1}/3)", "WARN")
-                        time.sleep(0.5 * (status_attempt + 1))
-                except Exception as status_err:
-                    self.executor.log(f"[{job_id}] Status update exception (attempt {status_attempt+1}/3): {status_err}", "ERROR")
-                    time.sleep(0.5 * (status_attempt + 1))
+                        self.executor.log(f"[{job_id}] Atomic RPC failed: {rpc_response.status_code} (attempt {status_attempt+1}/3)", "WARN")
+                        time.sleep(1.0 * (status_attempt + 1))  # Longer backoff
+                except Exception as rpc_err:
+                    self.executor.log(f"[{job_id}] Atomic RPC exception (attempt {status_attempt+1}/3): {rpc_err}", "ERROR")
+                    time.sleep(1.0 * (status_attempt + 1))
             
             if not update_success:
-                self.executor.log(f"[{job_id}] Final status update failed after 3 attempts, trying minimal update", "ERROR")
+                self.executor.log(f"[{job_id}] Atomic RPC failed after 3 attempts, falling back to standard update", "ERROR")
                 try:
-                    self.update_job_status(job_id, final_status, completed_at=utc_now_iso())
+                    # Fallback to standard update with minimal payload
+                    self.update_job_status(job_id, final_status, completed_at=utc_now_iso(), details={
+                        'vms_synced': results.get('vms_synced', 0),
+                        'total_vms': results.get('total_vms', 0),
+                        'current_step': 'Complete (fallback)',
+                        'progress_percent': 100
+                    })
                 except:
-                    pass  # Will be caught by stale detection
+                    pass  # Will be caught by auto-recovery cron
             
             self.executor.log(f"[{job_id}] Replication sync complete: {results['vms_synced']} VMs synced")
             
