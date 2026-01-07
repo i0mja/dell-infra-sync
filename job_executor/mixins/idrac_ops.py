@@ -1107,7 +1107,7 @@ class IdracMixin:
             if not caps.get('expand_storage', False):
                 # No $expand support for Storage - go straight to legacy with session
                 self.log(f"  → Storage: skipping $expand (not supported by this iDRAC)", "DEBUG")
-                return self._fetch_storage_drives(ip, username, password, server_id, job_id, session=session)
+                return self._fetch_storage_drives(ip, username, password, server_id, job_id, session=session, capabilities=caps)
             
             # Choose best expansion level
             if caps.get('expand_levels_1', False):
@@ -1151,8 +1151,8 @@ class IdracMixin:
                     )
             
             if not storage_response or storage_response.status_code != 200:
-                # Ultimate fallback to legacy method with session
-                return self._fetch_storage_drives(ip, username, password, server_id, job_id, session=session)
+                # Ultimate fallback to legacy method with session and capabilities
+                return self._fetch_storage_drives(ip, username, password, server_id, job_id, session=session, capabilities=caps)
             
             storage_data = storage_response.json()
             controllers = storage_data.get('Members', [])
@@ -1217,8 +1217,9 @@ class IdracMixin:
             
         except Exception as e:
             self.log(f"  Could not fetch storage drives (optimized): {e}", "DEBUG")
-            # Fall back to legacy method
-            return self._fetch_storage_drives(ip, username, password, server_id, job_id)
+            # Fall back to legacy method with capabilities
+            caps = capabilities or {}
+            return self._fetch_storage_drives(ip, username, password, server_id, job_id, session=session, capabilities=caps)
     
     def _fetch_network_adapters_optimized(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, session: Dict = None, capabilities: Dict = None) -> List[Dict]:
         """
@@ -1461,41 +1462,36 @@ class IdracMixin:
             self.log(f"  Could not fetch memory (optimized): {e}", "DEBUG")
             return self._fetch_memory_dimms(ip, username, password, server_id, job_id, session=session)
     
-    def _fetch_storage_drives(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, session: Dict = None) -> List[Dict]:
+    def _fetch_storage_drives(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, session: Dict = None, capabilities: Dict = None) -> List[Dict]:
         """
-        Fetch drive inventory using Dell Redfish Storage API with $expand optimization.
+        Fetch drive inventory using Dell Redfish Storage API.
         
-        OPTIMIZED: Uses $expand to reduce N+1 queries to 1-2 calls per controller.
-        All API calls are logged to idrac_commands for visibility.
-        Session-aware: Uses session token if provided for auth efficiency.
+        CAPABILITY-AWARE: Only uses $expand when explicitly supported.
+        All API calls use session-based auth for efficiency when session is provided.
         
-        Dell Redfish Pattern:
-        1. GET /redfish/v1/Systems/System.Embedded.1/Storage?$expand=Members → controllers with data
-        2. For each controller, use $expand=Drives,Volumes to get all in one call
+        Args:
+            capabilities: Dict with 'expand_storage' flag - if False, skips ALL $expand attempts
         
         Returns drives with RAID/Volume info and WWN/NAA for ESXi correlation.
         """
         drives = []
         volumes_info = {}  # Map drive IDs to volume info
+        caps = capabilities or {}
+        use_expand = caps.get('expand_storage', False)  # Default FALSE - never expand if unknown
         
         try:
-            # OPTIMIZED: Get storage controllers with $expand
-            storage_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Storage?$expand=Members"
-            
-            # Use session-based request if available, otherwise basic auth
-            if session and session.get('token'):
-                storage_response, storage_time = self._make_session_request(
-                    ip, storage_url, session, username, password, timeout=(2, 30)
-                )
+            # Only use $expand if capability is confirmed
+            if use_expand:
+                storage_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Storage?$expand=Members"
+                endpoint_label = '/Storage?$expand=Members'
             else:
-                storage_response, storage_time = self.throttler.request_with_safety(
-                    method='GET',
-                    url=storage_url,
-                    ip=ip,
-                    logger=self.log,
-                    auth=(username, password),
-                    timeout=(2, 30)
-                )
+                storage_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Storage"
+                endpoint_label = '/Storage'
+            
+            # Always use session-based request when session is available
+            storage_response, storage_time = self._make_session_request(
+                ip, storage_url, session, username, password, timeout=(2, 30)
+            )
             
             # Log the storage controllers API call
             self.log_idrac_command(
@@ -1503,46 +1499,17 @@ class IdracMixin:
                 job_id=job_id,
                 task_id=None,
                 command_type='GET',
-                endpoint='/redfish/v1/Systems/System.Embedded.1/Storage?$expand=Members',
+                endpoint=endpoint_label,
                 full_url=storage_url,
                 request_headers=None,
                 request_body=None,
                 status_code=storage_response.status_code if storage_response else None,
                 response_time_ms=storage_time,
-                response_body=None,  # Don't log large response bodies
+                response_body=None,
                 success=storage_response is not None and storage_response.status_code == 200,
                 error_message=storage_response.text[:200] if storage_response and storage_response.status_code != 200 else None,
                 operation_type='idrac_api'
             )
-            
-            # Fallback to non-expanded if $expand not supported
-            if not storage_response or storage_response.status_code != 200:
-                storage_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Storage"
-                storage_response, storage_time = self.throttler.request_with_safety(
-                    method='GET',
-                    url=storage_url,
-                    ip=ip,
-                    logger=self.log,
-                    auth=(username, password),
-                    timeout=(2, 15)
-                )
-                
-                # Log fallback call
-                self.log_idrac_command(
-                    server_id=server_id,
-                    job_id=job_id,
-                    task_id=None,
-                    command_type='GET',
-                    endpoint='/redfish/v1/Systems/System.Embedded.1/Storage',
-                    full_url=storage_url,
-                    request_headers=None,
-                    request_body=None,
-                    status_code=storage_response.status_code if storage_response else None,
-                    response_time_ms=storage_time,
-                    response_body=None,
-                    success=storage_response is not None and storage_response.status_code == 200,
-                    operation_type='idrac_api'
-                )
             
             if not storage_response or storage_response.status_code != 200:
                 return drives
@@ -1554,68 +1521,38 @@ class IdracMixin:
                 try:
                     # If $expand worked, controller_item has full data; else it's a reference
                     if '@odata.id' in controller_item and 'Id' not in controller_item:
-                        # Need to fetch controller with $expand=Drives,Volumes
-                        controller_url = f"https://{ip}{controller_item['@odata.id']}?$expand=Drives,Volumes"
-                        ctrl_resp, ctrl_time = self.throttler.request_with_safety(
-                            method='GET',
-                            url=controller_url,
-                            ip=ip,
-                            logger=self.log,
-                            auth=(username, password),
-                            timeout=(2, 30)
+                        controller_id = controller_item['@odata.id'].split('/')[-1]
+                        
+                        # Only use $expand on controller if capability is confirmed
+                        if use_expand:
+                            controller_url = f"https://{ip}{controller_item['@odata.id']}?$expand=Drives,Volumes"
+                            endpoint_label = f'/Storage/{controller_id}?$expand'
+                        else:
+                            controller_url = f"https://{ip}{controller_item['@odata.id']}"
+                            endpoint_label = f'/Storage/{controller_id}'
+                        
+                        ctrl_resp, ctrl_time = self._make_session_request(
+                            ip, controller_url, session, username, password, timeout=(2, 30)
                         )
                         
-                        # Log controller fetch - mark as fallback_attempt if it failed (expected for some controllers)
-                        controller_id = controller_item['@odata.id'].split('/')[-1]
-                        expand_succeeded = ctrl_resp is not None and ctrl_resp.status_code == 200
                         self.log_idrac_command(
                             server_id=server_id,
                             job_id=job_id,
                             task_id=None,
                             command_type='GET',
-                            endpoint=f'/Storage/{controller_id}?$expand',
+                            endpoint=endpoint_label,
                             full_url=controller_url,
                             request_headers=None,
                             request_body=None,
                             status_code=ctrl_resp.status_code if ctrl_resp else None,
                             response_time_ms=ctrl_time,
                             response_body=None,
-                            success=expand_succeeded,
-                            # Use 'idrac_api_fallback' for expected $expand failures so they don't show as errors
-                            operation_type='idrac_api' if expand_succeeded else 'idrac_api_fallback'
+                            success=ctrl_resp is not None and ctrl_resp.status_code == 200,
+                            operation_type='idrac_api'
                         )
                         
                         if not ctrl_resp or ctrl_resp.status_code != 200:
-                            # Fallback without $expand
-                            controller_url = f"https://{ip}{controller_item['@odata.id']}"
-                            ctrl_resp, ctrl_time = self.throttler.request_with_safety(
-                                method='GET',
-                                url=controller_url,
-                                ip=ip,
-                                logger=self.log,
-                                auth=(username, password),
-                                timeout=(2, 15)
-                            )
-                            
-                            # Log fallback
-                            self.log_idrac_command(
-                                server_id=server_id,
-                                job_id=job_id,
-                                task_id=None,
-                                command_type='GET',
-                                endpoint=f'/Storage/{controller_id}',
-                                full_url=controller_url,
-                                request_headers=None,
-                                request_body=None,
-                                status_code=ctrl_resp.status_code if ctrl_resp else None,
-                                response_time_ms=ctrl_time,
-                                response_body=None,
-                                success=ctrl_resp is not None and ctrl_resp.status_code == 200,
-                                operation_type='idrac_api'
-                            )
-                            
-                            if not ctrl_resp or ctrl_resp.status_code != 200:
-                                continue
+                            continue
                         
                         ctrl_data = ctrl_resp.json()
                     else:
@@ -1632,41 +1569,49 @@ class IdracMixin:
                             if vol_data:
                                 self._map_volume_to_drives(vol_data, volumes_info, controller_name)
                     elif isinstance(volumes, dict) and '@odata.id' in volumes:
-                        # Need to fetch volumes separately with $expand
-                        volumes_url = f"https://{ip}{volumes['@odata.id']}?$expand=Members"
-                        vol_resp, vol_time = self.throttler.request_with_safety(
-                            method='GET',
-                            url=volumes_url,
-                            ip=ip,
-                            logger=self.log,
-                            auth=(username, password),
-                            timeout=(2, 20)
+                        # Need to fetch volumes separately - only use $expand if supported
+                        if use_expand:
+                            volumes_url = f"https://{ip}{volumes['@odata.id']}?$expand=Members"
+                            vol_endpoint = f'/Storage/{controller_name}/Volumes?$expand'
+                        else:
+                            volumes_url = f"https://{ip}{volumes['@odata.id']}"
+                            vol_endpoint = f'/Storage/{controller_name}/Volumes'
+                        
+                        vol_resp, vol_time = self._make_session_request(
+                            ip, volumes_url, session, username, password, timeout=(2, 20)
                         )
                         
-                        # Log volumes fetch - mark as fallback_attempt if it failed
-                        vol_succeeded = vol_resp is not None and vol_resp.status_code == 200
                         self.log_idrac_command(
                             server_id=server_id,
                             job_id=job_id,
                             task_id=None,
                             command_type='GET',
-                            endpoint=f'/Storage/{controller_name}/Volumes?$expand',
+                            endpoint=vol_endpoint,
                             full_url=volumes_url,
                             request_headers=None,
                             request_body=None,
                             status_code=vol_resp.status_code if vol_resp else None,
                             response_time_ms=vol_time,
                             response_body=None,
-                            success=vol_succeeded,
-                            operation_type='idrac_api' if vol_succeeded else 'idrac_api_fallback'
+                            success=vol_resp is not None and vol_resp.status_code == 200,
+                            operation_type='idrac_api'
                         )
                         
                         if vol_resp and vol_resp.status_code == 200:
                             vol_collection = vol_resp.json()
-                            for vol in vol_collection.get('Members', []):
-                                vol_data = vol if 'Id' in vol else None
-                                if vol_data:
-                                    self._map_volume_to_drives(vol_data, volumes_info, controller_name)
+                            # If expansion worked, Members contains full data
+                            vol_members = vol_collection.get('Members', [])
+                            for vol in vol_members:
+                                if 'Id' in vol:
+                                    self._map_volume_to_drives(vol, volumes_info, controller_name)
+                                elif '@odata.id' in vol and not use_expand:
+                                    # Need to fetch individual volume
+                                    vol_url = f"https://{ip}{vol['@odata.id']}"
+                                    vol_detail_resp, _ = self._make_session_request(
+                                        ip, vol_url, session, username, password, timeout=(2, 15)
+                                    )
+                                    if vol_detail_resp and vol_detail_resp.status_code == 200:
+                                        self._map_volume_to_drives(vol_detail_resp.json(), volumes_info, controller_name)
                     
                     # Process Drives
                     drives_data = ctrl_data.get('Drives', [])
@@ -1678,13 +1623,8 @@ class IdracMixin:
                             elif '@odata.id' in drive_item:
                                 # Need to fetch individual drive
                                 drive_url = f"https://{ip}{drive_item['@odata.id']}"
-                                drive_resp, drive_time = self.throttler.request_with_safety(
-                                    method='GET',
-                                    url=drive_url,
-                                    ip=ip,
-                                    logger=self.log,
-                                    auth=(username, password),
-                                    timeout=(2, 15)
+                                drive_resp, drive_time = self._make_session_request(
+                                    ip, drive_url, session, username, password, timeout=(2, 15)
                                 )
                                 
                                 # Log individual drive fetch
