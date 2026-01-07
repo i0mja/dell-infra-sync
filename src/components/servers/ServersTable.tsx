@@ -63,8 +63,10 @@ import {
   Key,
   Edit,
   Settings,
+  FolderPlus,
 } from "lucide-react";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
+import { BulkManageGroupsDialog } from "./BulkManageGroupsDialog";
 import { useColumnVisibility } from "@/hooks/useColumnVisibility";
 import { useSavedViews } from "@/hooks/useSavedViews";
 import { usePagination } from "@/hooks/usePagination";
@@ -180,6 +182,8 @@ export function ServersTable({
   const [selectedServers, setSelectedServers] = useState<Set<string>>(new Set());
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [viewName, setViewName] = useState("");
+  const [groupDialogOpen, setGroupDialogOpen] = useState(false);
+  const [groupTargetServers, setGroupTargetServers] = useState<string[]>([]);
   const { toast } = useToast();
 
   const { visibleColumns, isColumnVisible, toggleColumn } = useColumnVisibility(
@@ -497,6 +501,18 @@ export function ServersTable({
                 Update
               </Button>
             )}
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="h-7 text-xs px-2" 
+              onClick={() => {
+                setGroupTargetServers(Array.from(selectedServers));
+                setGroupDialogOpen(true);
+              }}
+            >
+              <FolderPlus className="h-3 w-3 mr-1" />
+              Group
+            </Button>
             {onBulkDelete && (
               <Button variant="ghost" size="sm" className="h-7 text-xs px-2 text-destructive hover:text-destructive" 
                 onClick={() => onBulkDelete(Array.from(selectedServers))}>
@@ -801,6 +817,23 @@ export function ServersTable({
                           </ContextMenuItem>
                         </>
                       )}
+                      <ContextMenuSeparator />
+                      <ContextMenuItem onClick={() => {
+                        setGroupTargetServers([server.id]);
+                        setGroupDialogOpen(true);
+                      }}>
+                        <FolderPlus className="mr-2 h-4 w-4" />
+                        Add to Group...
+                      </ContextMenuItem>
+                      {selectedServers.has(server.id) && selectedServers.size > 1 && (
+                        <ContextMenuItem onClick={() => {
+                          setGroupTargetServers(Array.from(selectedServers));
+                          setGroupDialogOpen(true);
+                        }}>
+                          <FolderPlus className="mr-2 h-4 w-4" />
+                          Add Selected to Group ({selectedServers.size})
+                        </ContextMenuItem>
+                      )}
                       {onServerDelete && (
                         <>
                           <ContextMenuSeparator />
@@ -1069,6 +1102,23 @@ export function ServersTable({
                                   </ContextMenuItem>
                                 </>
                               )}
+                              <ContextMenuSeparator />
+                              <ContextMenuItem onClick={() => {
+                                setGroupTargetServers([server.id]);
+                                setGroupDialogOpen(true);
+                              }}>
+                                <FolderPlus className="mr-2 h-4 w-4" />
+                                Add to Group...
+                              </ContextMenuItem>
+                              {selectedServers.has(server.id) && selectedServers.size > 1 && (
+                                <ContextMenuItem onClick={() => {
+                                  setGroupTargetServers(Array.from(selectedServers));
+                                  setGroupDialogOpen(true);
+                                }}>
+                                  <FolderPlus className="mr-2 h-4 w-4" />
+                                  Add Selected to Group ({selectedServers.size})
+                                </ContextMenuItem>
+                              )}
                               {onServerDelete && (
                                 <>
                                   <ContextMenuSeparator />
@@ -1134,6 +1184,13 @@ export function ServersTable({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Bulk Manage Groups Dialog */}
+      <BulkManageGroupsDialog
+        serverIds={groupTargetServers}
+        open={groupDialogOpen}
+        onOpenChange={setGroupDialogOpen}
+      />
     </div>
   );
 }
