@@ -4,6 +4,7 @@ SLA Monitoring Handler for Protection Groups
 Handles:
 - scheduled_replication_check: Auto-triggers syncs based on schedule
 - rpo_monitoring: Monitors RPO compliance and sends alerts
+- agent_health_check: Monitors ZFS agent connectivity and updates status
 """
 
 import re
@@ -808,3 +809,147 @@ class SLAMonitoringHandler(BaseHandler):
             )
         except Exception:
             pass
+    
+    # =========================================================================
+    # Agent Health Monitoring
+    # =========================================================================
+    
+    def execute_agent_health_check(self, job: Dict):
+        """
+        Check health of all registered ZFS agents and update their status.
+        
+        This job should run periodically (every 1-2 minutes) to:
+        - Poll /v1/health on each agent
+        - Update last_seen_at and status in zfs_agents table
+        - Mark agents as offline if unreachable
+        """
+        job_id = job['id']
+        self.update_job_status(job_id, 'running', started_at=utc_now_iso())
+        
+        try:
+            # Get all agents that should be checked (not already marked offline long-term)
+            agents = self._get_agents_for_health_check()
+            
+            checked = 0
+            online = 0
+            offline = 0
+            
+            for agent in agents:
+                agent_id = agent['id']
+                hostname = agent.get('hostname')
+                
+                if not hostname:
+                    continue
+                
+                # Try to call agent health endpoint
+                health = self._call_agent_health(agent)
+                
+                if health:
+                    # Agent is responding
+                    self._update_agent_status(
+                        agent_id,
+                        status='online',
+                        last_seen_at=utc_now_iso(),
+                        pool_health=health.get('pool_status', {}).get('health'),
+                        agent_version=health.get('version')
+                    )
+                    online += 1
+                else:
+                    # Agent not responding
+                    self._update_agent_status(agent_id, status='offline')
+                    offline += 1
+                
+                checked += 1
+            
+            self.executor.log(f"[Agent Health] Checked {checked} agents: {online} online, {offline} offline")
+            
+            self.update_job_status(
+                job_id, 'completed',
+                completed_at=utc_now_iso(),
+                details={
+                    'agents_checked': checked,
+                    'online': online,
+                    'offline': offline,
+                    'next_run_scheduled': True
+                }
+            )
+            
+            # Schedule next run (every 2 minutes)
+            self._schedule_next_sla_job('agent_health_check', 120)
+            
+        except Exception as e:
+            self.executor.log(f"[Agent Health] Check failed: {e}", "ERROR")
+            self.update_job_status(
+                job_id, 'failed',
+                completed_at=utc_now_iso(),
+                details={'error': str(e)}
+            )
+            # Still reschedule to maintain monitoring
+            self._schedule_next_sla_job('agent_health_check', 120)
+    
+    def _get_agents_for_health_check(self) -> List[Dict]:
+        """Get all ZFS agents that should be health checked"""
+        try:
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/zfs_agents",
+                params={'select': 'id,hostname,api_port,api_protocol,status,last_seen_at'},
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            if response.ok:
+                return response.json() or []
+        except Exception as e:
+            self.executor.log(f"Error fetching agents: {e}", "ERROR")
+        return []
+    
+    def _call_agent_health(self, agent: Dict) -> Optional[Dict]:
+        """Call agent /v1/health endpoint"""
+        protocol = agent.get('api_protocol', 'http')
+        port = agent.get('api_port', 8080)
+        hostname = agent.get('hostname')
+        
+        if not hostname:
+            return None
+        
+        url = f"{protocol}://{hostname}:{port}/v1/health"
+        
+        try:
+            response = requests.get(url, timeout=10, verify=False)
+            if response.ok:
+                return response.json()
+        except Exception:
+            pass
+        return None
+    
+    def _update_agent_status(self, agent_id: str, status: str, **kwargs) -> bool:
+        """Update ZFS agent status and optional fields"""
+        try:
+            data = {'status': status, 'updated_at': utc_now_iso()}
+            if kwargs.get('last_seen_at'):
+                data['last_seen_at'] = kwargs['last_seen_at']
+            if kwargs.get('pool_health'):
+                data['pool_health'] = kwargs['pool_health']
+            if kwargs.get('agent_version'):
+                data['agent_version'] = kwargs['agent_version']
+            
+            response = requests.patch(
+                f"{DSM_URL}/rest/v1/zfs_agents",
+                params={'id': f'eq.{agent_id}'},
+                json=data,
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=minimal'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            return response.ok
+        except Exception as e:
+            self.executor.log(f"Error updating agent status: {e}", "WARN")
+            return False

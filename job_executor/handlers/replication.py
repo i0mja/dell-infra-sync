@@ -48,6 +48,12 @@ class ReplicationHandler(BaseHandler):
     using the ZFSReplicationReal class for ZFS operations.
     """
     
+    # Agent API settings
+    AGENT_API_PORT = 8080
+    AGENT_API_PROTOCOL = 'http'
+    AGENT_API_TIMEOUT = 60
+    AGENT_STALE_MINUTES = 5
+    
     def __init__(self, executor):
         super().__init__(executor)
         self.zfs_replication = ZFSReplicationReal(executor) if ZFS_AVAILABLE else None
@@ -61,6 +67,222 @@ class ReplicationHandler(BaseHandler):
             from job_executor.ssh_utils import SSHCredentialManager
             self._ssh_manager = SSHCredentialManager(self.executor)
         return self._ssh_manager
+    
+    # =========================================================================
+    # Agent API Helper Methods (Agent-First Routing)
+    # =========================================================================
+    
+    def _get_agent_for_target(self, target: Dict) -> Optional[Dict]:
+        """
+        Check if target has a linked ZFS agent and if it's online.
+        
+        Returns agent dict if usable for API operations, None otherwise.
+        Used for agent-first routing - prefer agent API over SSH when available.
+        """
+        agent_id = target.get('agent_id')
+        if not agent_id:
+            return None
+        
+        try:
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/zfs_agents",
+                params={'id': f'eq.{agent_id}'},
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            if not response.ok:
+                return None
+            
+            agents = response.json()
+            if not agents:
+                return None
+            
+            agent = agents[0]
+            
+            # Check if online based on status field
+            status = agent.get('status', 'unknown')
+            if status not in ('online', 'idle', 'busy'):
+                self.executor.log(f"Agent {agent_id} not online (status: {status})")
+                return None
+            
+            # Check if last_seen_at is recent (within stale threshold)
+            last_seen = agent.get('last_seen_at')
+            if last_seen:
+                try:
+                    last_seen_dt = datetime.fromisoformat(last_seen.replace('Z', '+00:00'))
+                    now = datetime.now(timezone.utc)
+                    age_minutes = (now - last_seen_dt).total_seconds() / 60
+                    if age_minutes > self.AGENT_STALE_MINUTES:
+                        self.executor.log(f"Agent {agent_id} is stale (last seen {age_minutes:.1f}m ago)")
+                        return None
+                except Exception:
+                    pass  # If we can't parse, proceed anyway
+            
+            return agent
+            
+        except Exception as e:
+            self.executor.log(f"Error checking agent for target: {e}", "WARN")
+            return None
+    
+    def _call_agent_api(
+        self,
+        agent: Dict,
+        method: str,
+        path: str,
+        body: Dict = None,
+        timeout: int = None
+    ) -> Optional[Dict]:
+        """
+        Make HTTP request to ZFS Agent REST API.
+        
+        Args:
+            agent: Agent record from database
+            method: HTTP method (GET, POST, PUT, PATCH, DELETE)
+            path: API path (e.g., /v1/health, /v1/datasets/.../snapshots)
+            body: Request body for POST/PUT/PATCH
+            timeout: Request timeout in seconds
+            
+        Returns:
+            JSON response dict or None on error
+        """
+        if timeout is None:
+            timeout = self.AGENT_API_TIMEOUT
+        
+        protocol = agent.get('api_protocol', self.AGENT_API_PROTOCOL)
+        port = agent.get('api_port', self.AGENT_API_PORT)
+        hostname = agent.get('hostname')
+        
+        if not hostname:
+            self.executor.log("Agent has no hostname configured", "ERROR")
+            return None
+        
+        url = f"{protocol}://{hostname}:{port}{path}"
+        
+        try:
+            response = requests.request(
+                method,
+                url,
+                json=body if method in ('POST', 'PUT', 'PATCH') else None,
+                timeout=timeout,
+                verify=False  # Internal network, self-signed certs
+            )
+            
+            if response.ok:
+                return response.json()
+            else:
+                self.executor.log(
+                    f"Agent API error: {response.status_code} - {response.text[:200]}",
+                    "WARN"
+                )
+                return None
+                
+        except requests.exceptions.Timeout:
+            self.executor.log(f"Agent API timeout: {url}", "WARN")
+            return None
+        except requests.exceptions.ConnectionError as e:
+            self.executor.log(f"Agent API connection error: {url} - {e}", "WARN")
+            return None
+        except Exception as e:
+            self.executor.log(f"Agent API call failed: {url} - {e}", "ERROR")
+            return None
+    
+    def _create_snapshot_via_agent(
+        self,
+        agent: Dict,
+        dataset: str,
+        snapshot_name: str
+    ) -> Dict:
+        """
+        Create ZFS snapshot using agent API instead of SSH.
+        
+        Args:
+            agent: Agent record with hostname/port
+            dataset: Full dataset path (e.g., tank/vm-data/vm1)
+            snapshot_name: Snapshot name (e.g., zerfaux-20240101-120000)
+            
+        Returns:
+            Dict with success, full_snapshot, message
+        """
+        # URL-encode the dataset path for the API
+        encoded_dataset = dataset.replace('/', '%2F')
+        path = f"/v1/datasets/{encoded_dataset}/snapshots"
+        
+        result = self._call_agent_api(
+            agent, 'POST', path,
+            body={'name': snapshot_name}
+        )
+        
+        if result and result.get('success'):
+            return {
+                'success': True,
+                'full_snapshot': f"{dataset}@{snapshot_name}",
+                'message': result.get('message', 'Snapshot created via agent API')
+            }
+        
+        return {
+            'success': False,
+            'error': result.get('error', 'Agent API snapshot creation failed') if result else 'No response from agent'
+        }
+    
+    def _run_replication_via_agent(
+        self,
+        source_agent: Dict,
+        source_dataset: str,
+        target_host: str,
+        target_dataset: str,
+        snapshot_name: str,
+        incremental_from: str = None
+    ) -> Dict:
+        """
+        Run ZFS replication using agent API instead of SSH-based syncoid.
+        
+        Args:
+            source_agent: Agent record for source site
+            source_dataset: Source dataset path
+            target_host: Destination hostname
+            target_dataset: Destination dataset path
+            snapshot_name: Current snapshot to send
+            incremental_from: Previous snapshot for incremental send
+            
+        Returns:
+            Dict with success, bytes_transferred, duration_seconds, etc.
+        """
+        path = "/v1/replication/run"
+        
+        body = {
+            'source_dataset': source_dataset,
+            'target_host': target_host,
+            'target_dataset': target_dataset,
+            'snapshot': snapshot_name,
+            'incremental_from': incremental_from,
+            'force_full': incremental_from is None
+        }
+        
+        # Use longer timeout for replication
+        result = self._call_agent_api(
+            source_agent, 'POST', path,
+            body=body,
+            timeout=3600  # 1 hour max for large transfers
+        )
+        
+        if result and result.get('success'):
+            return {
+                'success': True,
+                'bytes_transferred': result.get('bytes_transferred', 0),
+                'duration_seconds': result.get('duration_seconds', 0),
+                'transfer_rate_mbps': result.get('transfer_rate_mbps', 0),
+                'message': result.get('message', 'Replication completed via agent API')
+            }
+        
+        return {
+            'success': False,
+            'bytes_transferred': 0,
+            'error': result.get('error', 'Agent API replication failed') if result else 'No response from agent'
+        }
     
     # =========================================================================
     # Database Helper Methods
@@ -1486,19 +1708,37 @@ class ReplicationHandler(BaseHandler):
             add_console_log(f"Starting replication sync for group: {group.get('name')}")
             add_console_log(f"Target: {target.get('hostname')} / Pool: {target.get('zfs_pool')}")
             
-            # Get SSH credentials for target using comprehensive lookup
+            # ===== AGENT-FIRST ROUTING =====
+            # Check if target has an online agent for API-based operations
+            source_agent = self._get_agent_for_target(target)
+            use_agent_api = source_agent is not None
+            
+            if use_agent_api:
+                add_console_log(f"🚀 Agent API mode: Using agent at {source_agent.get('hostname')}")
+                results['replication_mode'] = 'agent_api'
+            else:
+                add_console_log(f"📟 SSH mode: Using direct SSH commands")
+                results['replication_mode'] = 'ssh'
+            
+            # Get SSH credentials for target (fallback or primary depending on agent availability)
             ssh_creds = self._get_target_ssh_creds(target)
-            if not ssh_creds:
+            ssh_hostname = None
+            ssh_username = 'root'
+            ssh_port = 22
+            ssh_key_data = None
+            
+            if ssh_creds:
+                ssh_hostname = ssh_creds.get('hostname')
+                ssh_username = ssh_creds.get('username', 'root')
+                ssh_port = ssh_creds.get('port', 22)
+                ssh_key_data = ssh_creds.get('key_data') or ssh_creds.get('private_key')
+                add_console_log(f"SSH credentials: {ssh_username}@{ssh_hostname}:{ssh_port}")
+            elif not use_agent_api:
+                # No agent and no SSH - can't proceed
                 raise ValueError(f"No SSH credentials available for target '{target.get('name')}'. Configure an SSH key or run SSH Key Exchange first.")
-            ssh_hostname = ssh_creds.get('hostname')
-            ssh_username = ssh_creds.get('username', 'root')
-            ssh_port = ssh_creds.get('port', 22)
-            ssh_key_data = ssh_creds.get('key_data') or ssh_creds.get('private_key')
             
-            if not ssh_hostname:
-                raise ValueError(f"No SSH hostname configured for target {target.get('name')}")
-            
-            add_console_log(f"SSH credentials: {ssh_username}@{ssh_hostname}:{ssh_port}")
+            if not ssh_hostname and not use_agent_api:
+                raise ValueError(f"No hostname configured for target {target.get('name')}")
             
             snapshot_name = f"zerfaux-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"
             add_console_log(f"Using snapshot name: {snapshot_name}")
@@ -1569,20 +1809,31 @@ class ReplicationHandler(BaseHandler):
                         if dataset_result.get('created'):
                             add_console_log(f"Created new ZFS dataset: {source_dataset}")
                         
-                        # Now create snapshot
+                        # Now create snapshot - use agent API if available
                         results['current_step'] = f'Creating snapshot for {vm_name}'
                         self.update_job_status(job_id, 'running', details=results)
                         add_console_log(f"Creating ZFS snapshot for {vm_name}")
                         
                         step_start = time.time()
-                        snapshot_result = self.zfs_replication.create_snapshot(
-                            source_dataset,
-                            snapshot_name,
-                            ssh_hostname=ssh_hostname,
-                            ssh_username=ssh_username,
-                            ssh_port=ssh_port,
-                            ssh_key_data=ssh_key_data
-                        )
+                        
+                        if use_agent_api and source_agent:
+                            # Use agent API for snapshot creation
+                            add_console_log(f"Using agent API for snapshot")
+                            snapshot_result = self._create_snapshot_via_agent(
+                                source_agent,
+                                source_dataset,
+                                snapshot_name
+                            )
+                        else:
+                            # Fall back to SSH-based snapshot
+                            snapshot_result = self.zfs_replication.create_snapshot(
+                                source_dataset,
+                                snapshot_name,
+                                ssh_hostname=ssh_hostname,
+                                ssh_username=ssh_username,
+                                ssh_port=ssh_port,
+                                ssh_key_data=ssh_key_data
+                            )
                         
                         if snapshot_result.get('success'):
                             snapshot_duration = int((time.time() - step_start) * 1000)
@@ -1590,15 +1841,16 @@ class ReplicationHandler(BaseHandler):
                             self.executor.log(f"[{job_id}] Created snapshot: {full_snapshot}")
                             add_console_log(f"Snapshot created: {full_snapshot} ({snapshot_duration}ms)")
                             
-                            # Log SSH command to activity table
-                            self._log_ssh_command(
-                                job_id,
-                                command=f"zfs snapshot {source_dataset}@{snapshot_name}",
-                                hostname=ssh_hostname,
-                                output=snapshot_result.get('message', 'Snapshot created'),
-                                success=True,
-                                duration_ms=snapshot_duration
-                            )
+                            # Log command to activity table
+                            if not use_agent_api:
+                                self._log_ssh_command(
+                                    job_id,
+                                    command=f"zfs snapshot {source_dataset}@{snapshot_name}",
+                                    hostname=ssh_hostname,
+                                    output=snapshot_result.get('message', 'Snapshot created'),
+                                    success=True,
+                                    duration_ms=snapshot_duration
+                                )
                             
                             # Update step for ZFS send
                             results['current_step'] = f'ZFS send in progress for {vm_name}'
