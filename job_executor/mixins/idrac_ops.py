@@ -1085,7 +1085,8 @@ class IdracMixin:
                         )
                         if funcs_resp and funcs_resp.status_code == 200:
                             for func_item in funcs_resp.json().get('Members', []):
-                                if 'Id' in func_item and 'Ethernet' in func_item:
+                                # Relaxed condition: some iDRACs don't have 'Ethernet' at collection level
+                                if 'Id' in func_item:
                                     nic_info = self._extract_nic_info(func_item, manufacturer, model, serial, part_number)
                                     if nic_info:
                                         nics.append(nic_info)
@@ -1167,33 +1168,34 @@ class IdracMixin:
                     else:
                         continue
                     
-                    capacity_mib = dimm_data.get('CapacityMiB', 0)
+                    # Skip absent DIMMs (empty slots) - match non-optimized behavior
+                    status = dimm_data.get('Status', {})
+                    if status.get('State') == 'Absent':
+                        continue
+                    
                     dimm_id = dimm_data.get('Id', '')
                     
-                    # Parse slot info from ID (e.g., "DIMM.Socket.A1" -> socket=A, slot=1)
-                    socket_match = re.search(r'\.([A-Z])(\d+)$', dimm_id)
-                    socket = socket_match.group(1) if socket_match else None
-                    slot = socket_match.group(2) if socket_match else None
+                    # Extract slot name from Id (e.g., "DIMM.Socket.B2" -> "B2") - match non-optimized
+                    slot_match = re.search(r'DIMM\.Socket\.(\w+)', dimm_id)
+                    slot_name = slot_match.group(1) if slot_match else dimm_id
                     
+                    # Use correct field names matching _sync_server_memory expectations
                     dimm_info = {
-                        'dimm_id': dimm_id,
-                        'name': dimm_data.get('Name'),
+                        'dimm_identifier': dimm_id,
+                        'slot_name': slot_name,
                         'manufacturer': dimm_data.get('Manufacturer'),
                         'part_number': dimm_data.get('PartNumber'),
-                        'serial_number': dimm_data.get('SerialNumber'),
-                        'memory_type': dimm_data.get('MemoryDeviceType'),
-                        'capacity_mib': capacity_mib,
-                        'capacity_gb': round(capacity_mib / 1024, 1) if capacity_mib else None,
+                        'serial_number': dimm_data.get('SerialNumber') or None,
+                        'capacity_mb': dimm_data.get('CapacityMiB'),
                         'speed_mhz': dimm_data.get('OperatingSpeedMhz'),
-                        'configured_speed_mhz': dimm_data.get('ConfiguredSpeedMhz'),
-                        'data_width_bits': dimm_data.get('DataWidthBits'),
-                        'bus_width_bits': dimm_data.get('BusWidthBits'),
+                        'memory_type': dimm_data.get('MemoryDeviceType'),
                         'rank_count': dimm_data.get('RankCount'),
-                        'socket': socket,
-                        'slot': slot,
-                        'health': dimm_data.get('Status', {}).get('Health'),
-                        'status': dimm_data.get('Status', {}).get('State'),
-                        'ecc_enabled': dimm_data.get('ErrorCorrection') not in [None, 'NoECC'],
+                        'health': status.get('Health'),
+                        'status': status.get('State'),
+                        'operating_speed_mhz': dimm_data.get('OperatingSpeedMhz'),
+                        'error_correction': dimm_data.get('ErrorCorrection'),
+                        'volatile_size_mb': dimm_data.get('VolatileSizeMiB'),
+                        'non_volatile_size_mb': dimm_data.get('NonVolatileSizeMiB'),
                     }
                     dimms.append(dimm_info)
                     
