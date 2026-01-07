@@ -2268,7 +2268,14 @@ export function OnboardZfsTargetWizard({
             )}
             
             {currentPage === 6 && !hasStartedJob && (
-              <Button onClick={startOnboarding} disabled={!canProceedFromPage(1) || !canProceedFromPage(2)}>
+                <Button 
+                  onClick={startOnboarding} 
+                  disabled={
+                    sourceMode === 'agent' 
+                      ? !canProceedFromPage(1) // Agent: only page 1 (agent selection + target name)
+                      : !canProceedFromPage(1) || !canProceedFromPage(2) // SSH modes: pages 1 + 2 (SSH auth)
+                  }
+                >
                 <Play className="h-4 w-4 mr-2" />
                 Start Setup
               </Button>
