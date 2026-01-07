@@ -1,0 +1,47 @@
+[Unit]
+Description=ZFS Agent - REST API for ZFS Appliance Management
+Documentation=https://github.com/dell-infra-sync/zfs-agent
+After=network-online.target zfs.target
+Wants=network-online.target
+Requires=zfs.target
+
+[Service]
+Type=simple
+User=zfsagent
+Group=zfsagent
+
+# Working directory
+WorkingDirectory=/opt/zfs-agent
+
+# Environment
+Environment=ZFS_AGENT_HOST=0.0.0.0
+Environment=ZFS_AGENT_PORT=8000
+Environment=ZFS_AGENT_SSL_ENABLED=true
+Environment=ZFS_AGENT_SSL_CERT=/etc/zfs-agent/ssl/server.crt
+Environment=ZFS_AGENT_SSL_KEY=/etc/zfs-agent/ssl/server.key
+Environment=LOG_LEVEL=INFO
+
+# Load additional environment from file
+EnvironmentFile=-/etc/zfs-agent/agent.env
+
+# Start command
+ExecStart=/opt/zfs-agent/venv/bin/python -m zfs_agent.main
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/etc/exports /var/log/zfs-agent
+
+# Allow ZFS commands via sudo
+# Note: Configure sudoers for zfsagent user
+
+[Install]
+WantedBy=multi-user.target
