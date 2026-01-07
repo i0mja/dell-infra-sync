@@ -5315,6 +5315,18 @@ export type Database = {
       }
       cleanup_activity_logs: { Args: never; Returns: undefined }
       cleanup_old_jobs: { Args: never; Returns: undefined }
+      complete_replication_job: {
+        Args: {
+          p_bytes_transferred: number
+          p_current_step?: string
+          p_errors?: Json
+          p_job_id: string
+          p_status: string
+          p_total_vms: number
+          p_vms_synced: number
+        }
+        Returns: boolean
+      }
       decrypt_password: {
         Args: { encrypted: string; key: string }
         Returns: string
