@@ -386,7 +386,7 @@ class DiscoveryHandler(BaseHandler):
             )
     
     def execute_test_credentials(self, job: Dict):
-        """Test credentials against a single iDRAC - lightweight connection test"""
+        """Test credentials against a single iDRAC - lightweight connection test with iDRAC 8 fallback"""
         from job_executor.utils import _safe_json_parse
         
         self.log(f"Testing credentials for job {job['id']}")
@@ -416,6 +416,10 @@ class DiscoveryHandler(BaseHandler):
             url = f"https://{ip_address}/redfish/v1/"
             self.log(f"  Testing connection to {url}")
             
+            result = None
+            legacy_ssl_used = False
+            
+            # Attempt 1: Modern TLS (default)
             start_time = time.time()
             try:
                 response = requests.get(
@@ -451,7 +455,8 @@ class DiscoveryHandler(BaseHandler):
                         "message": "Connection successful",
                         "idrac_version": data.get("RedfishVersion"),
                         "product": data.get("Product"),
-                        "vendor": data.get("Vendor")
+                        "vendor": data.get("Vendor"),
+                        "legacy_ssl": False
                     }
                     self.log(f"  ✓ Connection successful - {data.get('Product', 'Unknown')}")
                 elif response.status_code == 401:
@@ -466,6 +471,95 @@ class DiscoveryHandler(BaseHandler):
                         "message": f"Connection failed: HTTP {response.status_code}"
                     }
                     self.log(f"  ✗ Connection failed: HTTP {response.status_code}", "ERROR")
+                    
+            except (requests.exceptions.SSLError, requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                modern_error = str(e)
+                response_time_ms = int((time.time() - start_time) * 1000)
+                
+                # Log the failed attempt
+                self.executor.log_idrac_command(
+                    server_id=None,
+                    job_id=job['id'],
+                    task_id=None,
+                    command_type='GET',
+                    endpoint='/redfish/v1/',
+                    full_url=url,
+                    request_headers={'Authorization': f'Basic {username}:***'},
+                    request_body=None,
+                    status_code=None,
+                    response_time_ms=response_time_ms,
+                    response_body=None,
+                    success=False,
+                    error_message=f"Modern TLS: {modern_error}",
+                    operation_type='idrac_api'
+                )
+                
+                # Attempt 2: Legacy TLS for iDRAC 8
+                self.log(f"  Modern TLS failed ({type(e).__name__}), trying legacy mode for iDRAC 8...")
+                
+                try:
+                    from job_executor.legacy_ssl_adapter import create_legacy_session
+                    legacy_session = create_legacy_session()
+                    
+                    start_time = time.time()
+                    response = legacy_session.get(
+                        url,
+                        auth=(username, password),
+                        timeout=15  # Slightly longer timeout for legacy
+                    )
+                    response_time_ms = int((time.time() - start_time) * 1000)
+                    
+                    # Log the legacy attempt
+                    self.executor.log_idrac_command(
+                        server_id=None,
+                        job_id=job['id'],
+                        task_id=None,
+                        command_type='GET',
+                        endpoint='/redfish/v1/',
+                        full_url=url,
+                        request_headers={'Authorization': f'Basic {username}:***', 'X-Legacy-TLS': 'true'},
+                        request_body=None,
+                        status_code=response.status_code,
+                        response_time_ms=response_time_ms,
+                        response_body=_safe_json_parse(response) if response.content else None,
+                        success=response.status_code == 200,
+                        error_message=None if response.status_code == 200 else f"HTTP {response.status_code}",
+                        operation_type='idrac_api'
+                    )
+                    
+                    if response.status_code == 200:
+                        data = _safe_json_parse(response)
+                        legacy_ssl_used = True
+                        result = {
+                            "success": True,
+                            "message": "Connection successful (Legacy TLS - iDRAC 8 mode)",
+                            "idrac_version": data.get("RedfishVersion"),
+                            "product": data.get("Product"),
+                            "vendor": data.get("Vendor"),
+                            "legacy_ssl": True
+                        }
+                        self.log(f"  ✓ Connected using legacy TLS (iDRAC 8 mode) - {data.get('Product', 'Unknown')}")
+                    elif response.status_code == 401:
+                        result = {
+                            "success": False,
+                            "message": "Authentication failed - invalid credentials"
+                        }
+                        self.log(f"  ✗ Authentication failed (legacy mode)", "ERROR")
+                    else:
+                        result = {
+                            "success": False,
+                            "message": f"Connection failed: HTTP {response.status_code}"
+                        }
+                        self.log(f"  ✗ Connection failed (legacy mode): HTTP {response.status_code}", "ERROR")
+                        
+                except Exception as legacy_error:
+                    # Both modern and legacy TLS failed
+                    self.log(f"  ✗ Legacy TLS also failed: {legacy_error}", "ERROR")
+                    result = {
+                        "success": False,
+                        "message": f"Connection failed - Modern TLS: {modern_error[:100]}; Legacy TLS: {str(legacy_error)[:100]}"
+                    }
+            
             except Exception as e:
                 response_time_ms = int((time.time() - start_time) * 1000)
                 self.executor.log_idrac_command(

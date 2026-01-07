@@ -260,12 +260,17 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
 
       // Step 1: Create server record using validated data
       const validatedData = serverValidation.data;
+      
+      // Check if test connection detected legacy SSL requirement
+      const requiresLegacySsl = testResult?.details?.legacy_ssl === true;
+      
       const serverData: any = {
         ip_address: validatedData.ip_address,
         hostname: validatedData.hostname || null,
         notes: validatedData.notes || null,
         last_seen: new Date().toISOString(),
         credential_set_id: credentialMode === "saved" ? selectedCredentialSetId : null,
+        requires_legacy_ssl: requiresLegacySsl,
       };
 
       const { data: newServer, error: serverError } = await supabase
@@ -742,9 +747,18 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
                     <Alert variant={testResult.status === 'success' ? 'default' : 'destructive'}>
                       <AlertDescription>
                         {testResult.status === 'success' ? '✓' : '✗'} {testResult.message}
+                        {testResult.details?.legacy_ssl && (
+                          <div className="mt-2 p-2 bg-muted/50 rounded text-xs">
+                            <span className="font-medium text-warning">⚠ Legacy TLS Mode (iDRAC 8)</span>
+                            <p className="mt-0.5 opacity-80">
+                              This iDRAC uses older TLS protocols. Compatibility mode enabled automatically.
+                            </p>
+                          </div>
+                        )}
                         {testResult.details?.idrac_version && (
                           <div className="mt-1 text-xs opacity-80">
                             iDRAC Version: {testResult.details.idrac_version}
+                            {testResult.details?.legacy_ssl && ' (iDRAC 8)'}
                           </div>
                         )}
                         {testResult.details?.product && (
