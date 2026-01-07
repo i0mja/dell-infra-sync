@@ -6,7 +6,7 @@ This platform is multi-surface:
 - **React/Vite UI** in `src/`
 - **Supabase Edge Functions** in `supabase/functions/`
 - **On‑prem Job Executor** in `job_executor/` (plus `job-executor.py` entrypoint)
-- **Sync scripts** (e.g. `openmanage-sync-script.py`, `vcenter-sync-script.py`, `idrac_throttler.py`)
+- **Sync scripts** (e.g. `openmanage-sync-script.py`, `vcenter-sync-script.py`)
 - **Deployment / offline packaging** in `scripts/`
 
 If you are using Codex:

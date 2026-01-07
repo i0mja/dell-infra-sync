@@ -2,12 +2,12 @@
 Dell iDRAC Redfish Integration Module
 
 This module provides an adapter layer between Dell's official iDRAC-Redfish-Scripting
-library and our custom throttling/logging infrastructure.
+library and our session management infrastructure.
 
 The adapter ensures all Dell library calls go through:
-- IdracThrottler for rate limiting and circuit breakers
+- SessionManager for session reuse and legacy TLS support
 - Supabase logging for idrac_commands table
-- Consistent error handling and retry logic
+- Consistent error handling
 """
 
 __version__ = "1.0.0"
