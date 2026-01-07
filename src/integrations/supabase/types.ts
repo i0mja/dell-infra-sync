@@ -125,6 +125,110 @@ export type Database = {
         }
         Relationships: []
       }
+      agent_events: {
+        Row: {
+          acknowledged_at: string | null
+          acknowledged_by: string | null
+          agent_id: string
+          created_at: string | null
+          details: Json | null
+          event_type: string
+          id: string
+          message: string
+          severity: string | null
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          agent_id: string
+          created_at?: string | null
+          details?: Json | null
+          event_type: string
+          id?: string
+          message: string
+          severity?: string | null
+        }
+        Update: {
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          agent_id?: string
+          created_at?: string | null
+          details?: Json | null
+          event_type?: string
+          id?: string
+          message?: string
+          severity?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_events_acknowledged_by_fkey"
+            columns: ["acknowledged_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_events_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "zfs_agents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_jobs: {
+        Row: {
+          agent_id: string
+          bytes_transferred: number | null
+          completed_at: string | null
+          created_at: string | null
+          details: Json | null
+          duration_seconds: number | null
+          error_message: string | null
+          id: string
+          job_type: string
+          logs: string[] | null
+          started_at: string | null
+          status: string
+        }
+        Insert: {
+          agent_id: string
+          bytes_transferred?: number | null
+          completed_at?: string | null
+          created_at?: string | null
+          details?: Json | null
+          duration_seconds?: number | null
+          error_message?: string | null
+          id?: string
+          job_type: string
+          logs?: string[] | null
+          started_at?: string | null
+          status?: string
+        }
+        Update: {
+          agent_id?: string
+          bytes_transferred?: number | null
+          completed_at?: string | null
+          created_at?: string | null
+          details?: Json | null
+          duration_seconds?: number | null
+          error_message?: string | null
+          id?: string
+          job_type?: string
+          logs?: string[] | null
+          started_at?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_jobs_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "zfs_agents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       api_tokens: {
         Row: {
           created_at: string
@@ -2552,6 +2656,7 @@ export type Database = {
       }
       replication_targets: {
         Row: {
+          agent_id: string | null
           archived_at: string | null
           created_at: string | null
           created_by: string | null
@@ -2561,6 +2666,7 @@ export type Database = {
           deployed_vm_moref: string | null
           description: string | null
           dr_vcenter_id: string | null
+          headroom_percent: number | null
           health_status: string | null
           hosting_vm_id: string | null
           hostname: string
@@ -2571,19 +2677,24 @@ export type Database = {
           nfs_export_path: string | null
           partner_target_id: string | null
           port: number | null
+          protection_group_id: string | null
+          provisioned_disk_gb: number | null
           site_location: string | null
           site_role: string | null
           source_template_id: string | null
+          source_vm_storage_bytes: number | null
           ssh_key_encrypted: string | null
           ssh_key_id: string | null
           ssh_trust_established: boolean | null
           ssh_username: string | null
           target_type: string
           updated_at: string | null
+          vm_count_at_provisioning: number | null
           zfs_dataset_prefix: string | null
           zfs_pool: string
         }
         Insert: {
+          agent_id?: string | null
           archived_at?: string | null
           created_at?: string | null
           created_by?: string | null
@@ -2593,6 +2704,7 @@ export type Database = {
           deployed_vm_moref?: string | null
           description?: string | null
           dr_vcenter_id?: string | null
+          headroom_percent?: number | null
           health_status?: string | null
           hosting_vm_id?: string | null
           hostname: string
@@ -2603,19 +2715,24 @@ export type Database = {
           nfs_export_path?: string | null
           partner_target_id?: string | null
           port?: number | null
+          protection_group_id?: string | null
+          provisioned_disk_gb?: number | null
           site_location?: string | null
           site_role?: string | null
           source_template_id?: string | null
+          source_vm_storage_bytes?: number | null
           ssh_key_encrypted?: string | null
           ssh_key_id?: string | null
           ssh_trust_established?: boolean | null
           ssh_username?: string | null
           target_type?: string
           updated_at?: string | null
+          vm_count_at_provisioning?: number | null
           zfs_dataset_prefix?: string | null
           zfs_pool: string
         }
         Update: {
+          agent_id?: string | null
           archived_at?: string | null
           created_at?: string | null
           created_by?: string | null
@@ -2625,6 +2742,7 @@ export type Database = {
           deployed_vm_moref?: string | null
           description?: string | null
           dr_vcenter_id?: string | null
+          headroom_percent?: number | null
           health_status?: string | null
           hosting_vm_id?: string | null
           hostname?: string
@@ -2635,19 +2753,30 @@ export type Database = {
           nfs_export_path?: string | null
           partner_target_id?: string | null
           port?: number | null
+          protection_group_id?: string | null
+          provisioned_disk_gb?: number | null
           site_location?: string | null
           site_role?: string | null
           source_template_id?: string | null
+          source_vm_storage_bytes?: number | null
           ssh_key_encrypted?: string | null
           ssh_key_id?: string | null
           ssh_trust_established?: boolean | null
           ssh_username?: string | null
           target_type?: string
           updated_at?: string | null
+          vm_count_at_provisioning?: number | null
           zfs_dataset_prefix?: string | null
           zfs_pool?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "replication_targets_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "zfs_agents"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "replication_targets_deployed_job_id_fkey"
             columns: ["deployed_job_id"]
@@ -2674,6 +2803,13 @@ export type Database = {
             columns: ["partner_target_id"]
             isOneToOne: false
             referencedRelation: "replication_targets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "replication_targets_protection_group_id_fkey"
+            columns: ["protection_group_id"]
+            isOneToOne: false
+            referencedRelation: "protection_groups"
             referencedColumns: ["id"]
           },
           {
@@ -5166,6 +5302,71 @@ export type Database = {
           },
         ]
       }
+      zfs_agents: {
+        Row: {
+          agent_version: string | null
+          api_port: number | null
+          api_protocol: string | null
+          api_url: string | null
+          capabilities: Json | null
+          created_at: string | null
+          hostname: string
+          id: string
+          last_seen_at: string | null
+          pool_free_bytes: number | null
+          pool_health: string | null
+          pool_name: string | null
+          pool_size_bytes: number | null
+          status: string | null
+          target_id: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          agent_version?: string | null
+          api_port?: number | null
+          api_protocol?: string | null
+          api_url?: string | null
+          capabilities?: Json | null
+          created_at?: string | null
+          hostname: string
+          id?: string
+          last_seen_at?: string | null
+          pool_free_bytes?: number | null
+          pool_health?: string | null
+          pool_name?: string | null
+          pool_size_bytes?: number | null
+          status?: string | null
+          target_id?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          agent_version?: string | null
+          api_port?: number | null
+          api_protocol?: string | null
+          api_url?: string | null
+          capabilities?: Json | null
+          created_at?: string | null
+          hostname?: string
+          id?: string
+          last_seen_at?: string | null
+          pool_free_bytes?: number | null
+          pool_health?: string | null
+          pool_name?: string | null
+          pool_size_bytes?: number | null
+          status?: string | null
+          target_id?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "zfs_agents_target_id_fkey"
+            columns: ["target_id"]
+            isOneToOne: false
+            referencedRelation: "replication_targets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       zfs_target_templates: {
         Row: {
           created_at: string | null
@@ -5184,9 +5385,12 @@ export type Database = {
           default_zfs_pool_name: string | null
           deployment_count: number | null
           description: string | null
+          headroom_percent: number | null
           id: string
           is_active: boolean | null
           last_deployed_at: string | null
+          max_disk_gb: number | null
+          min_disk_gb: number | null
           name: string
           preparation_job_id: string | null
           ssh_key_encrypted: string | null
@@ -5216,9 +5420,12 @@ export type Database = {
           default_zfs_pool_name?: string | null
           deployment_count?: number | null
           description?: string | null
+          headroom_percent?: number | null
           id?: string
           is_active?: boolean | null
           last_deployed_at?: string | null
+          max_disk_gb?: number | null
+          min_disk_gb?: number | null
           name: string
           preparation_job_id?: string | null
           ssh_key_encrypted?: string | null
@@ -5248,9 +5455,12 @@ export type Database = {
           default_zfs_pool_name?: string | null
           deployment_count?: number | null
           description?: string | null
+          headroom_percent?: number | null
           id?: string
           is_active?: boolean | null
           last_deployed_at?: string | null
+          max_disk_gb?: number | null
+          min_disk_gb?: number | null
           name?: string
           preparation_job_id?: string | null
           ssh_key_encrypted?: string | null
@@ -5358,6 +5568,7 @@ export type Database = {
         Args: { template_id: string }
         Returns: undefined
       }
+      mark_stale_agents_offline: { Args: never; Returns: number }
       record_auth_attempt: {
         Args: {
           p_identifier: string
@@ -5370,6 +5581,19 @@ export type Database = {
       }
       run_scheduled_cluster_safety_checks: { Args: never; Returns: undefined }
       send_maintenance_reminders: { Args: never; Returns: undefined }
+      upsert_agent_heartbeat: {
+        Args: {
+          p_agent_version: string
+          p_api_url: string
+          p_capabilities?: Json
+          p_hostname: string
+          p_pool_free_bytes?: number
+          p_pool_health?: string
+          p_pool_name?: string
+          p_pool_size_bytes?: number
+        }
+        Returns: string
+      }
       validate_api_token: { Args: { token_input: string }; Returns: string }
     }
     Enums: {
