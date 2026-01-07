@@ -38,7 +38,7 @@ import json
 import os
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from idrac_throttler import IdracThrottler
+from job_executor.session_manager import SessionManager
 
 # Ensure the supporting job_executor package is discoverable when this script is
 # executed directly by external tools that only know about job-executor.py.
@@ -160,7 +160,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
         self.vcenter_conn = None
         self.running = True
         self.encryption_key = None  # Will be fetched on first use
-        self.throttler = None  # Will be initialized on first use
+        self.session_manager = SessionManager(verify_ssl=False)  # Per-IP session management
         self.activity_settings = {}  # Cache settings
         self.last_settings_fetch = 0  # Timestamp for cache invalidation
         self.dell_operations = None  # Will be initialized on first use
@@ -380,19 +380,15 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
     
     def _get_dell_operations(self) -> DellOperations:
         """
-        Get or create Dell operations instance with current throttler and logging.
+        Get or create Dell operations instance with session manager and logging.
         
         Returns:
             DellOperations: Configured Dell operations instance
         """
         if self.dell_operations is None:
-            # Ensure throttler is initialized
-            if self.throttler is None:
-                self.initialize_throttler()
-
-            # Create adapter with our throttler and Supabase logging
+            # Create adapter with our session manager and Supabase logging
             adapter = DellRedfishAdapter(
-                throttler=self.throttler,
+                session_manager=self.session_manager,
                 logger=self._get_dell_logger(),
                 log_command_fn=self._log_dell_redfish_command,
                 verify_ssl=VERIFY_SSL,
@@ -438,33 +434,6 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
             error_message=log_entry.get("error_message"),
             operation_type=log_entry.get("operation_type", "idrac_api"),
         )
-    
-    def initialize_throttler(self):
-        """Initialize or update the iDRAC throttler with current settings"""
-        try:
-            settings = self.fetch_activity_settings()
-            
-            max_concurrent = settings.get('idrac_max_concurrent', 4)
-            request_delay_ms = settings.get('idrac_request_delay_ms', 500)
-            
-            if self.throttler is None:
-                self.throttler = IdracThrottler(
-                    max_concurrent=max_concurrent,
-                    request_delay_ms=request_delay_ms
-                )
-                self.log(f"Throttler initialized: max_concurrent={max_concurrent}, delay={request_delay_ms}ms")
-            else:
-                self.throttler.update_settings(
-                    max_concurrent=max_concurrent,
-                    request_delay_ms=request_delay_ms
-                )
-                self.log(f"Throttler settings updated: max_concurrent={max_concurrent}, delay={request_delay_ms}ms")
-        except Exception as e:
-            self.log(f"Error initializing throttler: {e}", "ERROR")
-            # Create throttler with safe defaults
-            if self.throttler is None:
-                self.throttler = IdracThrottler(max_concurrent=4, request_delay_ms=500)
-                self.log("Throttler initialized with safe defaults")
     
     def check_idrac_pause(self) -> bool:
         """Check if iDRAC operations are paused. Returns True if paused."""
@@ -965,10 +934,6 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
     def execute_job(self, job: Dict):
         """Execute a job based on its type"""
         job_type = job['job_type']
-        
-        # Initialize throttler if not already done
-        if self.throttler is None:
-            self.initialize_throttler()
         
         # Check if iDRAC operations are paused for iDRAC-related job types
         idrac_job_types = [
@@ -1667,21 +1632,13 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
         # Cancel any orphaned running jobs from previous executor instance
         self._cancel_orphaned_running_jobs()
         
-        # Initialize throttler and display configuration
-        try:
-            self.initialize_throttler()
-            self.log("=" * 70)
-            self.log("iDRAC THROTTLER CONFIGURATION")
-            self.log("=" * 70)
-            self.log(f"  Max Concurrent Requests: {self.throttler.max_concurrent}")
-            self.log(f"  Request Delay (per IP): {self.throttler.request_delay_ms}ms")
-            self.log(f"  Discovery Max Threads: {self.activity_settings.get('discovery_max_threads', 5)}")
-            self.log(f"  Circuit Breaker Threshold: {self.throttler.circuit_breaker_threshold} failures")
-            self.log(f"  Circuit Breaker Timeout: {self.throttler.circuit_breaker_timeout}s")
-            self.log(f"  Operations Paused: {self.activity_settings.get('pause_idrac_operations', False)}")
-            self.log("=" * 70)
-        except Exception as e:
-            self.log(f"Warning: Could not initialize throttler: {e}", "WARN")
+        # Log session manager settings
+        self.log("=" * 70)
+        self.log("SESSION MANAGER INITIALIZED")
+        self.log("=" * 70)
+        self.log(f"  Discovery Max Threads: {self.activity_settings.get('discovery_max_threads', 5)}")
+        self.log(f"  Operations Paused: {self.activity_settings.get('pause_idrac_operations', False)}")
+        self.log("=" * 70)
         
         self.log("Job executor started. Polling for jobs...")
         

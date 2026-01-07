@@ -143,15 +143,11 @@ class IdracMixin:
             
             if system_response and system_response.status_code == 200 and response_json is not None:
                 system_data = response_json
-                self.throttler.record_success(ip)
             else:
                 self.log(f"  Failed to get system info from {ip}", "ERROR")
-                if system_response and system_response.status_code in [401, 403]:
-                    self.throttler.record_failure(ip, system_response.status_code, self.log)
                 return None
                     
         except Exception as e:
-            self.throttler.record_failure(ip, None, self.log)
             self.log_idrac_command(
                 server_id=server_id, job_id=job_id, task_id=None,
                 command_type='GET', endpoint='/redfish/v1/Systems/System.Embedded.1',
@@ -198,12 +194,10 @@ class IdracMixin:
             
             if manager_response and manager_response.status_code == 200 and response_json is not None:
                 manager_data = response_json
-                self.throttler.record_success(ip)
             else:
                 self.log(f"  Warning: Could not get manager info from {ip}", "WARN")
                     
         except Exception as e:
-            self.throttler.record_failure(ip, None, self.log)
             self.log(f"  Warning: Error getting manager info from {ip}: {e}", "WARN")
         
         # Extract comprehensive info
@@ -401,15 +395,16 @@ class IdracMixin:
         }
         
         try:
-            response, response_time_ms = self.throttler.request_with_safety(
+            start_time = time.time()
+            response = self.session_manager.make_request(
                 method='POST',
                 url=url,
                 ip=ip,
-                logger=self.log,
                 json=payload,
                 timeout=(5, 15),
                 headers={'Content-Type': 'application/json'}
             )
+            response_time_ms = int((time.time() - start_time) * 1000)
             
             # Log to idrac_commands table
             if log_to_db:
@@ -443,7 +438,6 @@ class IdracMixin:
                 location = response.headers.get('Location')
                 
                 if token and location:
-                    self.throttler.record_success(ip)
                     self.log(f"  ✓ Redfish session created for {ip}", "INFO")
                     return {
                         'token': token,
@@ -457,13 +451,10 @@ class IdracMixin:
                     self.log(f"  Session created but missing token or location headers", "ERROR")
                     return None
             else:
-                if response and response.status_code in [401, 403]:
-                    self.throttler.record_failure(ip, response.status_code, self.log)
                 self.log(f"  Session creation failed: HTTP {response.status_code if response else 'no response'}", "ERROR")
                 return None
                 
         except Exception as e:
-            self.throttler.record_failure(ip, None, self.log)
             if log_to_db:
                 sanitized_payload = {
                     "UserName": username,
@@ -532,14 +523,15 @@ class IdracMixin:
             delete_url = f"https://{session_ip}{location}"
         
         try:
-            response, response_time_ms = self.throttler.request_with_safety(
+            start_time = time.time()
+            response = self.session_manager.make_request(
                 method='DELETE',
                 url=delete_url,
                 ip=session_ip,
-                logger=self.log,
                 headers={'X-Auth-Token': token},
                 timeout=(5, 10)
             )
+            response_time_ms = int((time.time() - start_time) * 1000)
             
             # Log to idrac_commands table
             self.log_idrac_command(
@@ -804,16 +796,18 @@ class IdracMixin:
         if json_body:
             headers['Content-Type'] = 'application/json'
         
-        return self.throttler.request_with_safety(
+        start_time = time.time()
+        response = self.session_manager.make_request(
             method=method,
             url=url,
             ip=ip,
-            logger=self.log,
             auth=auth,
             headers=headers,
             json=json_body,
             timeout=timeout
         )
+        response_time_ms = int((time.time() - start_time) * 1000)
+        return response, response_time_ms
 
     def _fetch_health_status(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, session: Dict = None) -> Optional[Dict]:
         """Fetch comprehensive health status from multiple Redfish endpoints (session-aware)"""
@@ -837,7 +831,6 @@ class IdracMixin:
             if system_response and system_response.status_code == 200:
                 system_json = system_response.json()
                 health['power_state'] = system_json.get('PowerState')
-                self.throttler.record_success(ip)
         except Exception as e:
             self.log(f"  Could not fetch power state: {e}", "WARN")
         
@@ -889,8 +882,6 @@ class IdracMixin:
                                 if f.get('Status', {}).get('Health')
                             )
                             health['fan_health'] = 'OK' if all_fans_ok else 'Warning'
-                    
-                    self.throttler.record_success(ip)
                     
             except Exception as e:
                 self.log(f"  Could not fetch {health_type} health: {e}", "WARN")
