@@ -727,9 +727,11 @@ class ClusterHandler(BaseHandler):
                     raise Exception("No credentials available")
                 
                 # Test iDRAC connectivity (quick session create/delete)
+                legacy_ssl = server.get('requires_legacy_ssl', False)
                 session = self.executor.create_idrac_session(
                     server['ip_address'], username, password,
-                    log_to_db=True, server_id=host['server_id'], job_id=job['id']
+                    log_to_db=True, server_id=host['server_id'], job_id=job['id'],
+                    legacy_ssl=legacy_ssl
                 )
                 
                 if not session:
@@ -822,7 +824,8 @@ class ClusterHandler(BaseHandler):
                                 password,
                                 server.get('model'),
                                 host['server_id'],
-                                job['id']
+                                job['id'],
+                                legacy_ssl=server.get('requires_legacy_ssl', False)
                             )
                         
                         host_creds['available_updates'] = available_updates
@@ -1405,7 +1408,8 @@ class ClusterHandler(BaseHandler):
         password: str,
         server_model: str,
         server_id: str,
-        job_id: str
+        job_id: str,
+        legacy_ssl: bool = False
     ) -> list:
         """
         Compare installed firmware against uploaded packages in firmware_packages table.
@@ -1418,6 +1422,7 @@ class ClusterHandler(BaseHandler):
             server_model: Server model string (e.g., 'PowerEdge R750')
             server_id: Server UUID for logging
             job_id: Job ID for session logging
+            legacy_ssl: Use Legacy TLS adapter for iDRAC 8 (TLS 1.0/1.1)
             
         Returns:
             List of available update dicts with component_name, available_version, etc.
@@ -1431,7 +1436,8 @@ class ClusterHandler(BaseHandler):
             # Get current firmware inventory from iDRAC
             session = self.executor.create_idrac_session(
                 ip, username, password,
-                log_to_db=True, server_id=server_id, job_id=job_id
+                log_to_db=True, server_id=server_id, job_id=job_id,
+                legacy_ssl=legacy_ssl
             )
             
             if not session:
@@ -1604,9 +1610,11 @@ class ClusterHandler(BaseHandler):
             self._log_workflow_step(job['id'], 'prepare', 2, 'Test iDRAC Connectivity', 'running', server_id=server_id)
             
             username, password = self.executor.get_credentials_for_server(server)
+            legacy_ssl = server.get('requires_legacy_ssl', False)
             session = self.executor.create_idrac_session(
                 server['ip_address'], username, password,
-                log_to_db=True, server_id=server_id, job_id=job['id']
+                log_to_db=True, server_id=server_id, job_id=job['id'],
+                legacy_ssl=legacy_ssl
             )
             
             if not session:
@@ -2549,9 +2557,11 @@ class ClusterHandler(BaseHandler):
                     })
                     
                     # Create iDRAC session for this host
+                    legacy_ssl = server.get('requires_legacy_ssl', False)
                     session = self.executor.create_idrac_session(
                         server['ip_address'], username, password,
-                        log_to_db=True, server_id=host['server_id'], job_id=job['id']
+                        log_to_db=True, server_id=host['server_id'], job_id=job['id'],
+                        legacy_ssl=legacy_ssl
                     )
                     
                     if not session:
@@ -3377,7 +3387,8 @@ class ClusterHandler(BaseHandler):
                                         try:
                                             test_session = self.executor.create_idrac_session(
                                                 server['ip_address'], username, password,
-                                                log_to_db=False
+                                                log_to_db=False,
+                                                legacy_ssl=server.get('requires_legacy_ssl', False)
                                             )
                                             if test_session:
                                                 self.executor.delete_idrac_session(
@@ -3537,7 +3548,8 @@ class ClusterHandler(BaseHandler):
                                 # Create new session for verification
                                 verify_session = self.executor.create_idrac_session(
                                     server['ip_address'], username, password,
-                                    log_to_db=True, server_id=host['server_id'], job_id=job['id']
+                                    log_to_db=True, server_id=host['server_id'], job_id=job['id'],
+                                    legacy_ssl=server.get('requires_legacy_ssl', False)
                                 )
                                 
                                 if verify_session:

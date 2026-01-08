@@ -96,21 +96,30 @@ class IdracMixin:
         capabilities = None
         
         try:
+            # Load cached capabilities FIRST to know if legacy_ssl is needed
+            legacy_ssl = False
+            if server_id:
+                capabilities = self._get_cached_idrac_capabilities(server_id)
+                legacy_ssl = (capabilities or {}).get('requires_legacy_ssl', False)
+            
             # OPTIMIZATION: Create Redfish session once for all requests
             if full_onboarding:
-                session = self.create_idrac_session(ip, username, password, server_id=server_id, job_id=job_id)
+                session = self.create_idrac_session(
+                    ip, username, password, 
+                    server_id=server_id, job_id=job_id,
+                    legacy_ssl=legacy_ssl  # Pass legacy_ssl for iDRAC 8
+                )
                 if session and session.get('token'):
-                    self.log(f"  ✓ Session created for {ip}", "DEBUG")
-                
-                # Load cached capabilities from server record
-                if server_id:
-                    capabilities = self._get_cached_idrac_capabilities(server_id)
+                    self.log(f"  ✓ Session created for {ip} (legacy_ssl={legacy_ssl})", "DEBUG")
             
             # Get system information - use session if available
+            # Use longer connect timeout for iDRAC 8
             system_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
             
             system_response, response_time_ms = self._make_session_request(
-                ip, system_url, session, username, password, timeout=(2, 15)
+                ip, system_url, session, username, password, 
+                timeout=(10 if legacy_ssl else 2, 15),
+                legacy_ssl=legacy_ssl
             )
             
             # Try to parse JSON, but handle parse errors gracefully
@@ -169,7 +178,9 @@ class IdracMixin:
         
         try:
             manager_response, response_time_ms = self._make_session_request(
-                ip, manager_url, session, username, password, timeout=(2, 15)
+                ip, manager_url, session, username, password, 
+                timeout=(10 if legacy_ssl else 2, 15),
+                legacy_ssl=legacy_ssl
             )
             
             response_json = None
@@ -404,12 +415,18 @@ class IdracMixin:
         password: str, 
         log_to_db: bool = True,
         server_id: str = None,
-        job_id: str = None
+        job_id: str = None,
+        legacy_ssl: bool = False,
+        timeout: tuple = None
     ) -> Optional[Dict]:
         """
         Create a Redfish session with iDRAC using Dell's official session endpoint.
         
         Uses: POST /redfish/v1/SessionService/Sessions
+        
+        Args:
+            legacy_ssl: Use Legacy TLS adapter for iDRAC 8 (TLS 1.0/1.1)
+            timeout: Custom (connect, read) timeout tuple. Defaults to (10,20) for legacy, (5,15) otherwise
         
         Returns session dict with:
         - token: X-Auth-Token for subsequent requests
@@ -427,6 +444,10 @@ class IdracMixin:
             "Password": password
         }
         
+        # Use longer timeout for iDRAC 8 (legacy TLS handshake is slower)
+        if timeout is None:
+            timeout = (10, 20) if legacy_ssl else (5, 15)
+        
         try:
             start_time = time.time()
             response = self.session_manager.make_request(
@@ -434,8 +455,9 @@ class IdracMixin:
                 url=url,
                 ip=ip,
                 json=payload,
-                timeout=(5, 15),
-                headers={'Content-Type': 'application/json'}
+                timeout=timeout,
+                headers={'Content-Type': 'application/json'},
+                legacy_ssl=legacy_ssl
             )
             response_time_ms = int((time.time() - start_time) * 1000)
             

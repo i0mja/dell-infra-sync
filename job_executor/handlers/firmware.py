@@ -88,8 +88,10 @@ class FirmwareHandler(BaseHandler):
                         raise Exception("No credentials configured for server")
 
                     # Step 2: Create iDRAC session
+                    legacy_ssl = server.get('requires_legacy_ssl', False)
                     session_token = self.executor.create_idrac_session(
-                        ip, username, password
+                        ip, username, password,
+                        legacy_ssl=legacy_ssl
                     )
                     
                     if not session_token:
@@ -365,7 +367,8 @@ class FirmwareHandler(BaseHandler):
                             try:
                                 test_session = self.executor.create_idrac_session(
                                     ip, username, password,
-                                    log_to_db=False, timeout=10
+                                    log_to_db=False, timeout=10,
+                                    legacy_ssl=server.get('requires_legacy_ssl', False)
                                 )
                                 if test_session:
                                     self.executor.delete_idrac_session(test_session, ip=ip)
