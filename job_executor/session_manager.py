@@ -5,14 +5,16 @@ Provides:
 - Per-IP requests.Session management
 - Legacy TLS adapter support for iDRAC 8
 - Session cleanup
+- Per-IP request serialization (thread-safety)
 
 Does NOT provide (intentionally removed):
 - Rate limiting
 - Circuit breakers
-- Concurrency limits
+- Global concurrency limits
 - Exponential backoff
 """
 
+import threading
 import requests
 from typing import Dict, Optional
 
@@ -21,8 +23,8 @@ class SessionManager:
     """
     Manages per-IP requests.Session objects with legacy TLS support.
     
-    This is a lightweight replacement for IdracThrottler that only handles
-    session management without any throttling or circuit breaker logic.
+    This is a lightweight replacement for IdracThrottler that handles
+    session management with per-IP request serialization for thread safety.
     """
     
     def __init__(self, verify_ssl: bool = False):
@@ -33,15 +35,35 @@ class SessionManager:
             verify_ssl: Whether to verify SSL certificates (default False for self-signed)
         """
         self.sessions: Dict[str, requests.Session] = {}
+        self.locks: Dict[str, threading.Lock] = {}  # Per-IP locks for serialization
+        self.lock_lock = threading.Lock()  # Lock for creating per-IP locks
         self.verify_ssl = verify_ssl
         
         if not verify_ssl:
             import urllib3
             urllib3.disable_warnings()
     
+    def _get_lock(self, ip: str) -> threading.Lock:
+        """
+        Get or create a lock for an IP (thread-safe).
+        
+        Args:
+            ip: The iDRAC IP address
+            
+        Returns:
+            threading.Lock for this IP
+        """
+        with self.lock_lock:
+            if ip not in self.locks:
+                self.locks[ip] = threading.Lock()
+            return self.locks[ip]
+    
     def get_session(self, ip: str, legacy_ssl: bool = False) -> requests.Session:
         """
         Get or create a requests.Session for an IP.
+        
+        Note: This method is NOT thread-safe for direct use.
+        Use make_request() for thread-safe requests.
         
         Args:
             ip: The iDRAC IP address
@@ -100,7 +122,11 @@ class SessionManager:
         **kwargs
     ) -> requests.Response:
         """
-        Make an HTTP request using the session for the given IP.
+        Make a thread-safe HTTP request with per-IP serialization.
+        
+        Requests to the same IP are serialized to:
+        1. Avoid thread-safety issues with requests.Session
+        2. Prevent overwhelming iDRAC with concurrent requests
         
         Args:
             method: HTTP method (GET, POST, PATCH, DELETE)
@@ -112,16 +138,19 @@ class SessionManager:
         Returns:
             requests.Response object
         """
-        session = self.get_session(ip, legacy_ssl=legacy_ssl)
+        lock = self._get_lock(ip)
         
-        # Set default timeout if not provided
-        if 'timeout' not in kwargs:
-            kwargs['timeout'] = (5, 30)  # 5s connect, 30s read
-        
-        # Ensure Accept header
-        if 'headers' not in kwargs or kwargs['headers'] is None:
-            kwargs['headers'] = {}
-        if 'Accept' not in kwargs['headers']:
-            kwargs['headers']['Accept'] = 'application/json'
-        
-        return session.request(method, url, **kwargs)
+        with lock:  # Serialize requests to this IP
+            session = self.get_session(ip, legacy_ssl=legacy_ssl)
+            
+            # Set default timeout if not provided
+            if 'timeout' not in kwargs:
+                kwargs['timeout'] = (5, 30)  # 5s connect, 30s read
+            
+            # Ensure Accept header
+            if 'headers' not in kwargs or kwargs['headers'] is None:
+                kwargs['headers'] = {}
+            if 'Accept' not in kwargs['headers']:
+                kwargs['headers']['Accept'] = 'application/json'
+            
+            return session.request(method, url, **kwargs)
