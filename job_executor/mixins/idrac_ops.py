@@ -2613,8 +2613,44 @@ class IdracMixin:
         The port_id (e.g., NIC.Integrated.1-1) maps to function FQDD prefix.
         """
         port_map = {}
-        ports_link = adapter_data.get('NetworkPorts', {}).get('@odata.id')
+        network_ports = adapter_data.get('NetworkPorts', {})
         
+        # Helper to parse port data into port_map
+        def _parse_port_item(port_item):
+            try:
+                if 'Id' in port_item:
+                    # Port is expanded, parse directly
+                    port_id = port_item.get('Id')
+                    if port_id:
+                        port_map[port_id] = {
+                            'current_speed_mbps': port_item.get('CurrentLinkSpeedMbps'),
+                            'link_status': port_item.get('LinkStatus'),
+                        }
+                elif '@odata.id' in port_item:
+                    # Port is a link, need to fetch individually
+                    port_url = f"https://{ip}{port_item['@odata.id']}"
+                    port_resp, _ = self._make_session_request(
+                        ip, port_url, session, username, password, timeout=(2, 10), legacy_ssl=legacy_ssl
+                    )
+                    if port_resp and port_resp.status_code == 200:
+                        port_data = port_resp.json()
+                        port_id = port_data.get('Id')
+                        if port_id:
+                            port_map[port_id] = {
+                                'current_speed_mbps': port_data.get('CurrentLinkSpeedMbps'),
+                                'link_status': port_data.get('LinkStatus'),
+                            }
+            except Exception:
+                pass
+        
+        # Case 1: NetworkPorts is already expanded inline with Members
+        if isinstance(network_ports, dict) and 'Members' in network_ports:
+            for port_item in network_ports.get('Members', []):
+                _parse_port_item(port_item)
+            return port_map
+        
+        # Case 2: NetworkPorts is a link object - fetch the collection
+        ports_link = network_ports.get('@odata.id') if isinstance(network_ports, dict) else None
         if not ports_link:
             return port_map
         
@@ -2638,28 +2674,7 @@ class IdracMixin:
             ports_data = ports_resp.json()
             
             for port_item in ports_data.get('Members', []):
-                try:
-                    if 'Id' in port_item:
-                        port_data = port_item
-                    elif '@odata.id' in port_item:
-                        port_url = f"https://{ip}{port_item['@odata.id']}"
-                        port_resp, _ = self._make_session_request(
-                            ip, port_url, session, username, password, timeout=(2, 10), legacy_ssl=legacy_ssl
-                        )
-                        if not port_resp or port_resp.status_code != 200:
-                            continue
-                        port_data = port_resp.json()
-                    else:
-                        continue
-                    
-                    port_id = port_data.get('Id')  # e.g., "NIC.Integrated.1-1"
-                    if port_id:
-                        port_map[port_id] = {
-                            'current_speed_mbps': port_data.get('CurrentLinkSpeedMbps'),
-                            'link_status': port_data.get('LinkStatus'),
-                        }
-                except Exception:
-                    continue
+                _parse_port_item(port_item)
                     
         except Exception as e:
             self.log(f"  Error fetching NetworkPorts: {e}", "DEBUG")
