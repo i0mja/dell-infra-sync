@@ -2705,7 +2705,7 @@ class IdracMixin:
                 elif state in ('disabled', 'standbyoffline', 'absent'):
                     link_status = 'LinkDown'
             
-            # Get speed with fallbacks:
+            # Get speed with fallbacks (treat 0 as "no data"):
             # 1. Dell OEM DellNIC.LinkSpeed
             # 2. Top-level SpeedMbps (standard DMTF)
             # 3. Ethernet.SpeedMbps
@@ -2714,24 +2714,33 @@ class IdracMixin:
             link_speed = dell_oem.get('LinkSpeed')
             if link_speed is not None:
                 try:
-                    current_speed = int(link_speed)
+                    parsed = int(link_speed)
+                    if parsed > 0:  # Only accept positive speeds
+                        current_speed = parsed
                 except (ValueError, TypeError):
                     pass
             
-            if current_speed is None:
-                current_speed = func_data.get('SpeedMbps')
+            # Check each fallback, treating 0 as "no data"
+            if not current_speed:  # None or 0
+                speed_val = func_data.get('SpeedMbps')
+                if speed_val and speed_val > 0:
+                    current_speed = speed_val
             
-            if current_speed is None:
-                current_speed = ethernet.get('SpeedMbps')
+            if not current_speed:  # None or 0
+                speed_val = ethernet.get('SpeedMbps')
+                if speed_val and speed_val > 0:
+                    current_speed = speed_val
             
             # Fallback to NetworkPorts data if available
-            if current_speed is None and port_map:
+            if not current_speed and port_map:  # None or 0
                 fqdd = func_data.get('Id', '')
                 # Map function FQDD to port ID: NIC.Integrated.1-2-1 → NIC.Integrated.1-2
                 if '-' in fqdd:
                     port_id = '-'.join(fqdd.rsplit('-', 1)[:-1])
                     port_data = port_map.get(port_id, {})
-                    current_speed = port_data.get('current_speed_mbps')
+                    speed_val = port_data.get('current_speed_mbps')
+                    if speed_val and speed_val > 0:
+                        current_speed = speed_val
                     # Also use port link status if we don't have one
                     if not link_status:
                         link_status = port_data.get('link_status')
