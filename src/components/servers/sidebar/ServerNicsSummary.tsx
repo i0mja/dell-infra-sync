@@ -29,10 +29,18 @@ function formatNicName(nic: ServerNic): string {
     return `FC Slot ${fcMatch[1]} Port ${fcMatch[2]}`;
   }
   
-  // Integrated/Embedded NICs: NIC.Integrated.1-2-1 → "Onboard Port 2"
-  const intMatch = fqdd.match(/NIC\.(Integrated|Embedded)\.(\d+)-(\d+)/);
+  // Embedded NICs: NIC.Embedded.1-1-1 → "Embedded 1 Port 1"
+  // These are typically dedicated management or secondary adapter NICs
+  const embMatch = fqdd.match(/NIC\.Embedded\.(\d+)-(\d+)-(\d+)/);
+  if (embMatch) {
+    return `Embedded ${embMatch[1]} Port ${embMatch[2]}`;
+  }
+  
+  // Integrated NICs: NIC.Integrated.1-2-1 → "LOM Port 2"
+  // These are the main LAN-on-Motherboard ports
+  const intMatch = fqdd.match(/NIC\.Integrated\.(\d+)-(\d+)-(\d+)/);
   if (intMatch) {
-    return `Onboard Port ${intMatch[3]}`;
+    return `LOM Port ${intMatch[2]}`;
   }
   
   // PCIe slot NICs: NIC.Slot.2-1-1 → "Slot 2 Port 1"
