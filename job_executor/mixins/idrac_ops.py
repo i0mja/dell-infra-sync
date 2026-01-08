@@ -2607,13 +2607,33 @@ class IdracMixin:
     
     def _fetch_network_ports(self, ip: str, adapter_data: Dict, session: Dict, username: str, password: str, legacy_ssl: bool = False) -> Dict[str, Dict]:
         """
-        Fetch NetworkPorts for an adapter and return a mapping of port_id -> port_data.
+        Fetch NetworkPorts or Ports for an adapter and return a mapping of port_id -> port_data.
         
-        Port data includes CurrentLinkSpeedMbps, LinkStatus, etc.
-        The port_id (e.g., NIC.Integrated.1-1) maps to function FQDD prefix.
+        Handles both deprecated NetworkPorts and newer Ports property (iDRAC 9 v1.5+).
+        Port data includes speed and link status.
         """
         port_map = {}
-        network_ports = adapter_data.get('NetworkPorts', {})
+        
+        # Helper to extract speed from port data (handles multiple property names)
+        def _extract_speed(port_data: Dict) -> Optional[int]:
+            # Try CurrentLinkSpeedMbps first (Dell OEM/newer NetworkPort)
+            speed = port_data.get('CurrentLinkSpeedMbps')
+            if speed and speed > 0:
+                return int(speed)
+            
+            # Try CurrentSpeedGbps (DMTF Port schema) - convert to Mbps
+            speed_gbps = port_data.get('CurrentSpeedGbps')
+            if speed_gbps and speed_gbps > 0:
+                return int(speed_gbps * 1000)
+            
+            # Try SupportedLinkCapabilities (older NetworkPort schema)
+            capabilities = port_data.get('SupportedLinkCapabilities', [])
+            if capabilities and len(capabilities) > 0:
+                speed = capabilities[0].get('LinkSpeedMbps')
+                if speed and speed > 0:
+                    return int(speed)
+            
+            return None
         
         # Helper to parse port data into port_map
         def _parse_port_item(port_item):
@@ -2623,7 +2643,7 @@ class IdracMixin:
                     port_id = port_item.get('Id')
                     if port_id:
                         port_map[port_id] = {
-                            'current_speed_mbps': port_item.get('CurrentLinkSpeedMbps'),
+                            'current_speed_mbps': _extract_speed(port_item),
                             'link_status': port_item.get('LinkStatus'),
                         }
                 elif '@odata.id' in port_item:
@@ -2637,21 +2657,49 @@ class IdracMixin:
                         port_id = port_data.get('Id')
                         if port_id:
                             port_map[port_id] = {
-                                'current_speed_mbps': port_data.get('CurrentLinkSpeedMbps'),
+                                'current_speed_mbps': _extract_speed(port_data),
                                 'link_status': port_data.get('LinkStatus'),
                             }
             except Exception:
                 pass
         
-        # Case 1: NetworkPorts is already expanded inline with Members
-        if isinstance(network_ports, dict) and 'Members' in network_ports:
-            for port_item in network_ports.get('Members', []):
-                _parse_port_item(port_item)
-            return port_map
+        # Try Ports first (newer iDRAC 9 with v1.5+ NetworkAdapter schema)
+        ports_data = adapter_data.get('Ports', {})
+        network_ports_data = adapter_data.get('NetworkPorts', {})
         
-        # Case 2: NetworkPorts is a link object - fetch the collection
-        ports_link = network_ports.get('@odata.id') if isinstance(network_ports, dict) else None
+        # Determine which collection to use
+        ports_link = None
+        
+        # Check Ports first (newer schema)
+        if isinstance(ports_data, dict):
+            if 'Members' in ports_data:
+                # Ports is already expanded inline
+                self.log(f"  → Ports expanded inline with {len(ports_data.get('Members', []))} members", "DEBUG")
+                for port_item in ports_data.get('Members', []):
+                    _parse_port_item(port_item)
+                if port_map:
+                    self.log(f"  → Port map: {list(port_map.keys())}", "DEBUG")
+                return port_map
+            elif '@odata.id' in ports_data:
+                ports_link = ports_data['@odata.id']
+                self.log(f"  → Found Ports link: {ports_link}", "DEBUG")
+        
+        # Fallback to NetworkPorts (deprecated but still common)
+        if not ports_link and isinstance(network_ports_data, dict):
+            if 'Members' in network_ports_data:
+                # NetworkPorts is already expanded inline
+                self.log(f"  → NetworkPorts expanded inline with {len(network_ports_data.get('Members', []))} members", "DEBUG")
+                for port_item in network_ports_data.get('Members', []):
+                    _parse_port_item(port_item)
+                if port_map:
+                    self.log(f"  → Port map: {list(port_map.keys())}", "DEBUG")
+                return port_map
+            elif '@odata.id' in network_ports_data:
+                ports_link = network_ports_data['@odata.id']
+                self.log(f"  → Found NetworkPorts link: {ports_link}", "DEBUG")
+        
         if not ports_link:
+            self.log(f"  → No Ports or NetworkPorts link found in adapter", "DEBUG")
             return port_map
         
         try:
@@ -2669,15 +2717,20 @@ class IdracMixin:
                 )
             
             if not ports_resp or ports_resp.status_code != 200:
+                self.log(f"  → Failed to fetch ports: status={ports_resp.status_code if ports_resp else 'None'}", "DEBUG")
                 return port_map
             
-            ports_data = ports_resp.json()
+            ports_collection = ports_resp.json()
+            self.log(f"  → Fetched {len(ports_collection.get('Members', []))} port members", "DEBUG")
             
-            for port_item in ports_data.get('Members', []):
+            for port_item in ports_collection.get('Members', []):
                 _parse_port_item(port_item)
+            
+            if port_map:
+                self.log(f"  → Port map: {list(port_map.keys())}", "DEBUG")
                     
         except Exception as e:
-            self.log(f"  Error fetching NetworkPorts: {e}", "DEBUG")
+            self.log(f"  Error fetching ports: {e}", "DEBUG")
         
         return port_map
     
