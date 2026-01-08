@@ -256,21 +256,28 @@ class IdracMixin:
             
             # If full onboarding is requested, fetch additional data IN PARALLEL with session
             if full_onboarding:
+                # Extract legacy_ssl BEFORE capability detection so it's available for all requests
+                legacy_ssl = (capabilities or {}).get('requires_legacy_ssl', False)
+                
                 # Detect capabilities if not cached, firmware changed, or missing new capability flags
                 current_firmware = base_info.get('idrac_firmware')
                 needs_redetect = (
                     not capabilities or 
                     capabilities.get('idrac_version') != current_firmware or
                     'expand_network_adapters' not in capabilities or
-                    'expand_storage' not in capabilities
+                    'expand_storage' not in capabilities or
+                    'supports_ethernet_interfaces' not in capabilities
                 )
                 if needs_redetect:
                     reason = "missing" if not capabilities else "stale cache (missing new flags)" if 'expand_storage' not in capabilities else "firmware changed"
                     self.log(f"  Detecting iDRAC capabilities for {ip} ({reason})...", "INFO")
-                    capabilities = self._detect_idrac_capabilities(ip, username, password, session, server_id, job_id, current_firmware)
+                    # Pass legacy_ssl to capability detection for TLS 1.0/1.1 iDRAC 8 devices
+                    capabilities = self._detect_idrac_capabilities(ip, username, password, session, server_id, job_id, current_firmware, legacy_ssl=legacy_ssl)
                     if server_id and capabilities:
                         self._store_idrac_capabilities(server_id, capabilities)
                         self.log(f"  ✓ Cached iDRAC capabilities", "DEBUG")
+                    # Update legacy_ssl from detected capabilities (may have been set during detection)
+                    legacy_ssl = (capabilities or {}).get('requires_legacy_ssl', legacy_ssl)
                 
                 self.log(f"  Starting full onboarding for {ip} (capability-aware parallel fetch)...", "INFO")
                 
@@ -287,8 +294,7 @@ class IdracMixin:
                     future_drives = executor.submit(
                         self._fetch_storage_drives_optimized, ip, username, password, server_id, job_id, session, capabilities
                     )
-                    # Extract legacy_ssl from capabilities for iDRAC 8 support
-                    legacy_ssl = (capabilities or {}).get('requires_legacy_ssl', False)
+                    # legacy_ssl already extracted above before capability detection
                     future_nics = executor.submit(
                         self._fetch_network_adapters_optimized, ip, username, password, server_id, job_id, session, capabilities, legacy_ssl
                     )
@@ -568,14 +574,15 @@ class IdracMixin:
             return True
 
     def _detect_idrac_capabilities(
-        self, 
-        ip: str, 
-        username: str, 
-        password: str, 
+        self,
+        ip: str,
+        username: str,
+        password: str,
         session: Dict = None,
         server_id: str = None,
         job_id: str = None,
-        current_firmware: str = None
+        current_firmware: str = None,
+        legacy_ssl: bool = False
     ) -> Dict:
         """
         Detect which $expand levels this iDRAC supports.
@@ -587,12 +594,16 @@ class IdracMixin:
         for $expand on specific endpoints (especially NetworkAdapters). We test each
         endpoint type separately to handle this.
         
+        Args:
+            legacy_ssl: Use Legacy TLS adapter for iDRAC 8 (TLS 1.0/1.1)
+        
         Returns capability flags dict with:
         - expand_levels_1: Supports $expand=*($levels=1) on Memory/Storage
         - expand_levels_2: Supports $expand=*($levels=2) on Memory/Storage
         - expand_members: General $expand=Members support
         - expand_network_adapters: NetworkAdapters specifically supports $expand
         - expand_storage: Storage specifically supports $expand
+        - supports_ethernet_interfaces: iDRAC 8 EthernetInterfaces fallback
         - detected_at: ISO timestamp
         - idrac_version: Current firmware for cache invalidation
         """
@@ -602,14 +613,16 @@ class IdracMixin:
             'expand_members': False,
             'expand_network_adapters': False,  # Test separately - known to fail on some firmwares
             'expand_storage': False,  # Test separately for Storage endpoint
+            'supports_ethernet_interfaces': False,  # iDRAC 8 fallback endpoint
             'detected_at': datetime.now().isoformat(),
-            'idrac_version': current_firmware
+            'idrac_version': current_firmware,
+            'requires_legacy_ssl': legacy_ssl  # Preserve for subsequent calls
         }
         
         try:
             # Test 1: $expand=*($levels=1) on Memory (generally reliable)
             memory_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Memory?$expand=*($levels=1)"
-            resp, resp_time = self._make_session_request(ip, memory_url, session, username, password, timeout=(2, 15))
+            resp, resp_time = self._make_session_request(ip, memory_url, session, username, password, timeout=(2, 15), legacy_ssl=legacy_ssl)
             
             # Only mark as supported if we get HTTP 200 (not connection errors)
             if resp and resp.status_code == 200:
@@ -633,18 +646,18 @@ class IdracMixin:
             # Test 2: NetworkAdapters $expand SEPARATELY (known to cause connection errors on some firmwares)
             # Also detects iDRAC 8 which returns 404 for this endpoint
             adapters_url = f"https://{ip}/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters?$expand=Members"
-            resp, resp_time = self._make_session_request(ip, adapters_url, session, username, password, timeout=(2, 15))
+            resp, resp_time = self._make_session_request(ip, adapters_url, session, username, password, timeout=(2, 15), legacy_ssl=legacy_ssl)
             
             if resp and resp.status_code == 200:
                 caps['expand_network_adapters'] = True
                 caps['supports_ethernet_interfaces'] = False  # Uses NetworkAdapters (iDRAC 9+)
                 self.log(f"  ✓ NetworkAdapters supports $expand=Members", "DEBUG")
-            elif resp and resp.status_code == 404:
-                # iDRAC 8 - NetworkAdapters doesn't exist, test EthernetInterfaces instead
+            elif (resp and resp.status_code == 404) or (resp is None and legacy_ssl):
+                # iDRAC 8 - NetworkAdapters doesn't exist (404) or TLS timeout on legacy device
                 caps['expand_network_adapters'] = False
                 self.log(f"  → NetworkAdapters not found (iDRAC 8), testing EthernetInterfaces...", "DEBUG")
                 eth_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/EthernetInterfaces"
-                eth_resp, eth_time = self._make_session_request(ip, eth_url, session, username, password, timeout=(2, 15))
+                eth_resp, eth_time = self._make_session_request(ip, eth_url, session, username, password, timeout=(2, 15), legacy_ssl=legacy_ssl)
                 if eth_resp and eth_resp.status_code == 200:
                     caps['supports_ethernet_interfaces'] = True
                     self.log(f"  ✓ EthernetInterfaces available (iDRAC 8 fallback)", "DEBUG")
@@ -667,7 +680,7 @@ class IdracMixin:
             
             # Test 3: Storage $expand SEPARATELY
             storage_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Storage?$expand=Members"
-            resp, resp_time = self._make_session_request(ip, storage_url, session, username, password, timeout=(2, 15))
+            resp, resp_time = self._make_session_request(ip, storage_url, session, username, password, timeout=(2, 15), legacy_ssl=legacy_ssl)
             
             if resp and resp.status_code == 200:
                 caps['expand_storage'] = True
@@ -689,7 +702,7 @@ class IdracMixin:
             # Test 4: If NetworkAdapters $expand works, test deeper levels
             if caps['expand_network_adapters']:
                 nics_url = f"https://{ip}/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters?$expand=*($levels=2)"
-                resp, resp_time = self._make_session_request(ip, nics_url, session, username, password, timeout=(2, 20))
+                resp, resp_time = self._make_session_request(ip, nics_url, session, username, password, timeout=(2, 20), legacy_ssl=legacy_ssl)
                 
                 if resp and resp.status_code == 200:
                     caps['expand_levels_2'] = True
@@ -1266,6 +1279,12 @@ class IdracMixin:
         caps = capabilities or {}
         
         try:
+            # Check for iDRAC 8 EthernetInterfaces support first
+            # This takes priority because it's explicitly detected during capability scan
+            if caps.get('supports_ethernet_interfaces', False):
+                self.log(f"  → NICs: using EthernetInterfaces (iDRAC 8 mode)", "DEBUG")
+                return self._fetch_ethernet_interfaces(ip, username, password, server_id, job_id, session, legacy_ssl)
+            
             # Check if NetworkAdapters $expand is supported (tested separately from Memory/Storage)
             # Default to FALSE if not detected - safer to skip $expand than waste API calls
             if not caps.get('expand_network_adapters', False):
@@ -1295,9 +1314,9 @@ class IdracMixin:
                 operation_type='idrac_api' if (adapters_response and adapters_response.status_code == 200) else 'idrac_api_fallback'
             )
             
-            # iDRAC 8 fallback: NetworkAdapters endpoint doesn't exist (404)
-            if adapters_response and adapters_response.status_code == 404:
-                self.log(f"  → NetworkAdapters not found (iDRAC 8), using EthernetInterfaces fallback", "DEBUG")
+            # iDRAC 8 fallback: NetworkAdapters endpoint doesn't exist (404) OR TLS/connection failure (None)
+            if adapters_response is None or adapters_response.status_code == 404:
+                self.log(f"  → NetworkAdapters unavailable, trying EthernetInterfaces (iDRAC 8 fallback)", "DEBUG")
                 return self._fetch_ethernet_interfaces(ip, username, password, server_id, job_id, session, legacy_ssl)
             
             # If expansion failed unexpectedly, fall back once
@@ -1993,10 +2012,12 @@ class IdracMixin:
 
     def _fetch_ethernet_interfaces(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, session: Dict = None, legacy_ssl: bool = False) -> List[Dict]:
         """
-        Fetch NIC info using iDRAC 8 EthernetInterfaces API.
+        Fetch NIC info using iDRAC 8 EthernetInterfaces API (Dell official pattern).
+        
+        Based on: dell/iDRAC-Redfish-Scripting/GetEthernetInterfacesREDFISH.py
         
         iDRAC 8 does NOT support /Chassis/System.Embedded.1/NetworkAdapters.
-        Instead, use /Systems/System.Embedded.1/EthernetInterfaces.
+        Instead, use /Systems/System.Embedded.1/EthernetInterfaces with $expand.
         
         Response schema differs from iDRAC 9:
         - Id: "NIC.Integrated.1-1-1"
@@ -2008,54 +2029,78 @@ class IdracMixin:
         nics = []
         
         try:
-            interfaces_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/EthernetInterfaces"
+            # Try with $expand first (official Dell pattern from GetEthernetInterfacesREDFISH.py)
+            interfaces_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/EthernetInterfaces?$expand=*($levels=1)"
+            expand_worked = False
             
             interfaces_response, interfaces_time = self._make_session_request(
                 ip, interfaces_url, session, username, password, timeout=(2, 30), legacy_ssl=legacy_ssl
             )
             
+            expand_worked = interfaces_response is not None and interfaces_response.status_code == 200
+            
             # Log the API call
             self.log_idrac_command(
                 server_id=server_id, job_id=job_id, task_id=None,
-                command_type='GET', endpoint='/EthernetInterfaces',
+                command_type='GET', endpoint='/EthernetInterfaces?$expand=*($levels=1)',
                 full_url=interfaces_url, request_headers=None, request_body=None,
                 status_code=interfaces_response.status_code if interfaces_response else None,
                 response_time_ms=interfaces_time, response_body=None,
-                success=interfaces_response is not None and interfaces_response.status_code == 200,
-                operation_type='idrac_api'
+                success=expand_worked,
+                operation_type='idrac_api' if expand_worked else 'idrac_api_fallback'
             )
+            
+            # If $expand failed, fall back to collection without expand
+            if not expand_worked:
+                interfaces_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/EthernetInterfaces"
+                interfaces_response, interfaces_time = self._make_session_request(
+                    ip, interfaces_url, session, username, password, timeout=(2, 30), legacy_ssl=legacy_ssl
+                )
+                
+                self.log_idrac_command(
+                    server_id=server_id, job_id=job_id, task_id=None,
+                    command_type='GET', endpoint='/EthernetInterfaces',
+                    full_url=interfaces_url, request_headers=None, request_body=None,
+                    status_code=interfaces_response.status_code if interfaces_response else None,
+                    response_time_ms=interfaces_time, response_body=None,
+                    success=interfaces_response is not None and interfaces_response.status_code == 200,
+                    operation_type='idrac_api'
+                )
             
             if not interfaces_response or interfaces_response.status_code != 200:
                 return nics
             
             interfaces_data = interfaces_response.json()
             
+            # Process Members - check if expanded inline
             for member in interfaces_data.get('Members', []):
-                if '@odata.id' not in member:
-                    continue
-                
                 try:
-                    # Fetch individual interface
-                    interface_url = f"https://{ip}{member['@odata.id']}"
-                    iface_resp, iface_time = self._make_session_request(
-                        ip, interface_url, session, username, password, timeout=(2, 15), legacy_ssl=legacy_ssl
-                    )
-                    
-                    iface_id = member['@odata.id'].split('/')[-1]
-                    self.log_idrac_command(
-                        server_id=server_id, job_id=job_id, task_id=None,
-                        command_type='GET', endpoint=f'/EthernetInterfaces/{iface_id}',
-                        full_url=interface_url, request_headers=None, request_body=None,
-                        status_code=iface_resp.status_code if iface_resp else None,
-                        response_time_ms=iface_time, response_body=None,
-                        success=iface_resp is not None and iface_resp.status_code == 200,
-                        operation_type='idrac_api'
-                    )
-                    
-                    if not iface_resp or iface_resp.status_code != 200:
+                    # If $expand worked, member has full data
+                    if 'Id' in member and ('MACAddress' in member or 'Status' in member):
+                        iface_data = member
+                    elif '@odata.id' in member:
+                        # Need to fetch individually (fallback for non-expanded)
+                        interface_url = f"https://{ip}{member['@odata.id']}"
+                        iface_resp, iface_time = self._make_session_request(
+                            ip, interface_url, session, username, password, timeout=(2, 15), legacy_ssl=legacy_ssl
+                        )
+                        
+                        iface_id = member['@odata.id'].split('/')[-1]
+                        self.log_idrac_command(
+                            server_id=server_id, job_id=job_id, task_id=None,
+                            command_type='GET', endpoint=f'/EthernetInterfaces/{iface_id}',
+                            full_url=interface_url, request_headers=None, request_body=None,
+                            status_code=iface_resp.status_code if iface_resp else None,
+                            response_time_ms=iface_time, response_body=None,
+                            success=iface_resp is not None and iface_resp.status_code == 200,
+                            operation_type='idrac_api'
+                        )
+                        
+                        if not iface_resp or iface_resp.status_code != 200:
+                            continue
+                        iface_data = iface_resp.json()
+                    else:
                         continue
-                    
-                    iface_data = iface_resp.json()
                     
                     # Map iDRAC 8 EthernetInterface schema to our NIC format
                     status = iface_data.get('Status', {})
