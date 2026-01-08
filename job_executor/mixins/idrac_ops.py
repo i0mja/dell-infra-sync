@@ -259,8 +259,16 @@ class IdracMixin:
                 # Extract legacy_ssl BEFORE capability detection so it's available for all requests
                 legacy_ssl = (capabilities or {}).get('requires_legacy_ssl', False)
                 
-                # Detect capabilities if not cached, firmware changed, or missing new capability flags
+                # Detect iDRAC 8 by firmware version (starts with "2.") and force legacy TLS
                 current_firmware = base_info.get('idrac_firmware')
+                if current_firmware and current_firmware.startswith('2.') and not legacy_ssl:
+                    legacy_ssl = True
+                    self.log(f"  → Detected iDRAC 8 firmware ({current_firmware}), using Legacy TLS", "INFO")
+                    # Persist the flag to database for future syncs
+                    if server_id:
+                        self._update_server_legacy_ssl(server_id, True)
+                
+                # Detect capabilities if not cached, firmware changed, or missing new capability flags
                 needs_redetect = (
                     not capabilities or 
                     capabilities.get('idrac_version') != current_firmware or
@@ -676,6 +684,17 @@ class IdracMixin:
                 self.log(f"  → NetworkAdapters unavailable (404/timeout), testing EthernetInterfaces...", "DEBUG")
                 eth_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/EthernetInterfaces"
                 eth_resp, eth_time = self._make_session_request(ip, eth_url, session, username, password, timeout=(2, 15), legacy_ssl=legacy_ssl)
+                
+                # If EthernetInterfaces also fails AND we're not using legacy TLS, try with legacy TLS
+                if (eth_resp is None or (eth_resp and eth_resp.status_code != 200)) and not legacy_ssl:
+                    self.log(f"  → EthernetInterfaces failed, retrying with Legacy TLS (iDRAC 8 auto-detection)...", "DEBUG")
+                    eth_resp, eth_time = self._make_session_request(ip, eth_url, session, username, password, timeout=(2, 20), legacy_ssl=True)
+                    if eth_resp and eth_resp.status_code == 200:
+                        caps['requires_legacy_ssl'] = True
+                        self.log(f"  ✓ Legacy TLS required - auto-detected", "INFO")
+                        if server_id:
+                            self._update_server_legacy_ssl(server_id, True)
+                
                 if eth_resp and eth_resp.status_code == 200:
                     caps['supports_ethernet_interfaces'] = True
                     self.log(f"  ✓ EthernetInterfaces available (iDRAC 8 fallback)", "DEBUG")
@@ -1367,7 +1386,12 @@ class IdracMixin:
             # iDRAC 8 fallback: NetworkAdapters endpoint doesn't exist (404) OR TLS/connection failure (None)
             if adapters_response is None or adapters_response.status_code == 404:
                 self.log(f"  → NetworkAdapters unavailable, trying EthernetInterfaces (iDRAC 8 fallback)", "DEBUG")
-                return self._fetch_ethernet_interfaces(ip, username, password, server_id, job_id, session, legacy_ssl)
+                result = self._fetch_ethernet_interfaces(ip, username, password, server_id, job_id, session, legacy_ssl)
+                # If EthernetInterfaces also failed and we're not using legacy TLS, retry with legacy TLS
+                if not result and not legacy_ssl:
+                    self.log(f"  → EthernetInterfaces failed, retrying with Legacy TLS...", "DEBUG")
+                    result = self._fetch_ethernet_interfaces(ip, username, password, server_id, job_id, session, legacy_ssl=True)
+                return result
             
             # If expansion failed unexpectedly, fall back once
             if not adapters_response or adapters_response.status_code != 200:
