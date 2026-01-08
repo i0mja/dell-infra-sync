@@ -891,6 +891,48 @@ class IdracMixin:
         except Exception as e:
             self.log(f"  Could not update legacy SSL flag: {e}", "DEBUG")
 
+    def _update_ethernet_interface_capability(self, server_id: str, supports_ethernet: bool):
+        """
+        Update the supports_ethernet_interfaces capability in server's supported_endpoints.
+        
+        Called when EthernetInterfaces succeeds on an iDRAC 8 that had stale cached capabilities.
+        This self-heals the cache so future syncs use the correct path immediately.
+        """
+        try:
+            headers = {
+                "apikey": SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal"
+            }
+            
+            # First get current supported_endpoints
+            get_response = requests.get(
+                f"{DSM_URL}/rest/v1/servers?id=eq.{server_id}&select=supported_endpoints",
+                headers=headers,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if get_response.status_code == 200:
+                data = get_response.json()
+                if data:
+                    endpoints = data[0].get('supported_endpoints') or {}
+                    endpoints['supports_ethernet_interfaces'] = supports_ethernet
+                    
+                    response = requests.patch(
+                        f"{DSM_URL}/rest/v1/servers?id=eq.{server_id}",
+                        headers=headers,
+                        json={'supported_endpoints': endpoints},
+                        verify=VERIFY_SSL,
+                        timeout=10
+                    )
+                    
+                    if response.status_code in [200, 204]:
+                        self.log(f"  ✓ Self-healed: Updated supports_ethernet_interfaces={supports_ethernet}", "INFO")
+        except Exception as e:
+            self.log(f"  Could not update ethernet interface capability: {e}", "DEBUG")
+
 
     def _make_session_request(
         self,
@@ -1384,8 +1426,21 @@ class IdracMixin:
             # Check for iDRAC 8 EthernetInterfaces support first
             # This takes priority because it's explicitly detected during capability scan
             if caps.get('supports_ethernet_interfaces', False):
-                self.log(f"  → NICs: using EthernetInterfaces (iDRAC 8 mode)", "DEBUG")
+                self.log(f"  → NICs: using EthernetInterfaces (cached iDRAC 8 mode)", "DEBUG")
                 return self._fetch_ethernet_interfaces(ip, username, password, server_id, job_id, session, legacy_ssl)
+            
+            # If legacy_ssl is True (iDRAC 8), force EthernetInterfaces even if cache says otherwise
+            # This handles stale cache from failed capability detection
+            if legacy_ssl and not caps.get('expand_network_adapters', False):
+                self.log(f"  → NICs: forcing EthernetInterfaces (iDRAC 8 legacy TLS detected)", "DEBUG")
+                result = self._fetch_ethernet_interfaces(ip, username, password, server_id, job_id, session, legacy_ssl=True)
+                # Update capability cache if successful (self-healing)
+                if result and server_id:
+                    try:
+                        self._update_ethernet_interface_capability(server_id, True)
+                    except Exception:
+                        pass
+                return result
             
             # Check if NetworkAdapters $expand is supported (tested separately from Memory/Storage)
             # Default to FALSE if not detected - safer to skip $expand than waste API calls
@@ -2299,12 +2354,18 @@ class IdracMixin:
                 operation_type='idrac_api'
             )
             
-            # iDRAC 8 fallback: NetworkAdapters endpoint doesn't exist (404)
-            if adapters_response and adapters_response.status_code == 404:
-                self.log(f"  → NetworkAdapters not found (iDRAC 8), using EthernetInterfaces fallback", "DEBUG")
-                return self._fetch_ethernet_interfaces(ip, username, password, server_id, job_id, session, legacy_ssl)
+            # iDRAC 8 fallback: NetworkAdapters endpoint doesn't exist (404) OR connection timeout (None)
+            # iDRAC 8 may timeout on NetworkAdapters instead of returning 404
+            if adapters_response is None or (adapters_response and adapters_response.status_code == 404):
+                self.log(f"  → NetworkAdapters unavailable (iDRAC 8), using EthernetInterfaces fallback", "DEBUG")
+                result = self._fetch_ethernet_interfaces(ip, username, password, server_id, job_id, session, legacy_ssl)
+                # If EthernetInterfaces also failed and not using legacy TLS, retry with legacy TLS
+                if not result and not legacy_ssl:
+                    self.log(f"  → EthernetInterfaces failed, retrying with Legacy TLS...", "DEBUG")
+                    result = self._fetch_ethernet_interfaces(ip, username, password, server_id, job_id, session, legacy_ssl=True)
+                return result
             
-            if not adapters_response or adapters_response.status_code != 200:
+            if adapters_response.status_code != 200:
                 return nics
             
             adapters_data = adapters_response.json()
