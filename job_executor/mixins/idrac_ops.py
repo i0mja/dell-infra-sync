@@ -2381,7 +2381,7 @@ class IdracMixin:
                         'link_status': raw_link_status,
                         'auto_neg': iface_data.get('AutoNeg'),
                         'health': status.get('Health', 'Unknown'),
-                        'status_state': status.get('State'),
+                        'status': status.get('State'),
                         # Fill in adapter-level fields with defaults for iDRAC 8
                         'manufacturer': 'Dell',
                         'serial_number': None,
