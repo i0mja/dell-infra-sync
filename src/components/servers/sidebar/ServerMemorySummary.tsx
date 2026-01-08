@@ -31,6 +31,29 @@ function formatCapacity(capacityMb: number): string {
   return `${capacityMb} MB`;
 }
 
+function formatSlotName(dimm: ServerMemory): string {
+  const slot = dimm.slot_name || dimm.dimm_identifier || "";
+  
+  // Already clean format: "A1", "B12" → "DIMM A1"
+  if (/^[A-Z]\d+$/.test(slot)) {
+    return `DIMM ${slot}`;
+  }
+  
+  // iDRAC 8 format: "iDRAC.Embedded.1#DIMMSLOTA1" → "DIMM A1"
+  const idracMatch = slot.match(/DIMMSLOT([A-Z]\d+)/);
+  if (idracMatch) {
+    return `DIMM ${idracMatch[1]}`;
+  }
+  
+  // DIMM.Socket.A1 format → "DIMM A1"
+  const socketMatch = slot.match(/DIMM\.Socket\.([A-Z]\d+)/);
+  if (socketMatch) {
+    return `DIMM ${socketMatch[1]}`;
+  }
+  
+  return slot || "Unknown";
+}
+
 export function ServerMemorySummary({ server }: ServerMemorySummaryProps) {
   const { data: dimms, isLoading, error } = useServerMemory(server.id);
 
@@ -124,8 +147,8 @@ export function ServerMemorySummary({ server }: ServerMemorySummaryProps) {
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5">
-                <span className="font-medium truncate">
-                  {dimm.slot_name ? `Slot ${dimm.slot_name}` : dimm.dimm_identifier}
+                <span className="font-medium truncate" title={dimm.slot_name || dimm.dimm_identifier}>
+                  {formatSlotName(dimm)}
                 </span>
                 {dimm.memory_type && (
                   <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">
