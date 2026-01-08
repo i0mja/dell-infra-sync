@@ -686,89 +686,109 @@ class IdracMixin:
                 operation_type='idrac_api'
             )
             
-            # Test 2: NetworkAdapters $expand SEPARATELY (known to cause connection errors on some firmwares)
-            # Also detects iDRAC 8 which returns 404 for this endpoint
-            adapters_url = f"https://{ip}/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters?$expand=Members"
-            resp, resp_time = self._make_session_request(ip, adapters_url, session, username, password, timeout=(2, 15), legacy_ssl=legacy_ssl)
-            
-            if resp and resp.status_code == 200:
-                caps['expand_network_adapters'] = True
-                caps['supports_ethernet_interfaces'] = False  # Uses NetworkAdapters (iDRAC 9+)
-                self.log(f"  ✓ NetworkAdapters supports $expand=Members", "DEBUG")
-            elif resp is None or (resp and resp.status_code == 404):
-                # iDRAC 8 - NetworkAdapters doesn't exist (404) or TLS/connection failure
+            # Test 2: NetworkAdapters $expand - SKIP for iDRAC 8 (known to timeout after 15-40 seconds)
+            # iDRAC 8 cannot process $expand queries - the device hangs trying to build the response
+            if legacy_ssl:
+                # iDRAC 8 detected: Skip $expand tests entirely to avoid wasting 30+ seconds on guaranteed timeouts
+                self.log(f"  → Skipping NetworkAdapters $expand test (iDRAC 8 cannot handle $expand)", "DEBUG")
                 caps['expand_network_adapters'] = False
-                self.log(f"  → NetworkAdapters unavailable (404/timeout), testing EthernetInterfaces...", "DEBUG")
+                caps['supports_ethernet_interfaces'] = True  # iDRAC 8 uses EthernetInterfaces
+                caps['supports_ethernet_expand'] = False  # iDRAC 8 cannot handle $expand
+                resp = None
+                resp_time = 0
+                adapters_url = "skipped"
+            else:
+                # iDRAC 9+: Test NetworkAdapters $expand
+                adapters_url = f"https://{ip}/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters?$expand=Members"
+                resp, resp_time = self._make_session_request(ip, adapters_url, session, username, password, timeout=(2, 15), legacy_ssl=legacy_ssl)
                 
-                # Dell official pattern: simple GET first to confirm endpoint exists
-                eth_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/EthernetInterfaces"
-                eth_resp, eth_time = self._make_session_request(ip, eth_url, session, username, password, timeout=(2, 20), legacy_ssl=legacy_ssl)
-                
-                # If EthernetInterfaces also fails AND we're not using legacy TLS, try with legacy TLS
-                if (eth_resp is None or (eth_resp and eth_resp.status_code != 200)) and not legacy_ssl:
-                    self.log(f"  → EthernetInterfaces failed, retrying with Legacy TLS (iDRAC 8 auto-detection)...", "DEBUG")
-                    eth_resp, eth_time = self._make_session_request(ip, eth_url, session, username, password, timeout=(2, 25), legacy_ssl=True)
-                    if eth_resp and eth_resp.status_code == 200:
-                        caps['requires_legacy_ssl'] = True
-                        legacy_ssl = True  # Update for subsequent tests
-                        self.log(f"  ✓ Legacy TLS required - auto-detected", "INFO")
-                        if server_id:
-                            self._update_server_legacy_ssl(server_id, True)
-                
-                if eth_resp and eth_resp.status_code == 200:
-                    caps['supports_ethernet_interfaces'] = True
-                    self.log(f"  ✓ EthernetInterfaces available (iDRAC 8 fallback)", "DEBUG")
+                if resp and resp.status_code == 200:
+                    caps['expand_network_adapters'] = True
+                    caps['supports_ethernet_interfaces'] = False  # Uses NetworkAdapters (iDRAC 9+)
+                    self.log(f"  ✓ NetworkAdapters supports $expand=Members", "DEBUG")
+                elif resp is None or (resp and resp.status_code == 404):
+                    # iDRAC 8 - NetworkAdapters doesn't exist (404) or TLS/connection failure
+                    caps['expand_network_adapters'] = False
+                    self.log(f"  → NetworkAdapters unavailable (404/timeout), testing EthernetInterfaces...", "DEBUG")
                     
-                    # Dell official pattern: test $expand support for bulk fetch optimization
-                    expand_url = f"{eth_url}?$expand=*($levels=1)"
-                    expand_resp, _ = self._make_session_request(
-                        ip, expand_url, session, username, password, 
-                        timeout=(2, 30), legacy_ssl=legacy_ssl
-                    )
-                    caps['supports_ethernet_expand'] = (expand_resp is not None and expand_resp.status_code == 200)
-                    if caps['supports_ethernet_expand']:
-                        self.log(f"  ✓ EthernetInterfaces supports $expand=*($levels=1)", "DEBUG")
+                    # Dell official pattern: simple GET first to confirm endpoint exists
+                    eth_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/EthernetInterfaces"
+                    eth_resp, eth_time = self._make_session_request(ip, eth_url, session, username, password, timeout=(2, 20), legacy_ssl=legacy_ssl)
+                    
+                    # If EthernetInterfaces also fails AND we're not using legacy TLS, try with legacy TLS
+                    if (eth_resp is None or (eth_resp and eth_resp.status_code != 200)) and not legacy_ssl:
+                        self.log(f"  → EthernetInterfaces failed, retrying with Legacy TLS (iDRAC 8 auto-detection)...", "DEBUG")
+                        eth_resp, eth_time = self._make_session_request(ip, eth_url, session, username, password, timeout=(2, 25), legacy_ssl=True)
+                        if eth_resp and eth_resp.status_code == 200:
+                            caps['requires_legacy_ssl'] = True
+                            legacy_ssl = True  # Update for subsequent tests
+                            self.log(f"  ✓ Legacy TLS required - auto-detected", "INFO")
+                            if server_id:
+                                self._update_server_legacy_ssl(server_id, True)
+                    
+                    if eth_resp and eth_resp.status_code == 200:
+                        caps['supports_ethernet_interfaces'] = True
+                        self.log(f"  ✓ EthernetInterfaces available (iDRAC 8 fallback)", "DEBUG")
+                        
+                        # Dell official pattern: test $expand support for bulk fetch optimization
+                        expand_url = f"{eth_url}?$expand=*($levels=1)"
+                        expand_resp, _ = self._make_session_request(
+                            ip, expand_url, session, username, password, 
+                            timeout=(2, 30), legacy_ssl=legacy_ssl
+                        )
+                        caps['supports_ethernet_expand'] = (expand_resp is not None and expand_resp.status_code == 200)
+                        if caps['supports_ethernet_expand']:
+                            self.log(f"  ✓ EthernetInterfaces supports $expand=*($levels=1)", "DEBUG")
+                        else:
+                            self.log(f"  → EthernetInterfaces $expand failed, will use individual fetches", "DEBUG")
                     else:
-                        self.log(f"  → EthernetInterfaces $expand failed, will use individual fetches", "DEBUG")
+                        caps['supports_ethernet_interfaces'] = False
+                        caps['supports_ethernet_expand'] = False
+                        eth_status = f"HTTP {eth_resp.status_code}" if eth_resp else "connection error"
+                        self.log(f"  ✗ EthernetInterfaces not available: {eth_status}", "DEBUG")
                 else:
-                    caps['supports_ethernet_interfaces'] = False
-                    caps['supports_ethernet_expand'] = False
-                    eth_status = f"HTTP {eth_resp.status_code}" if eth_resp else "connection error"
-                    self.log(f"  ✗ EthernetInterfaces not available: {eth_status}", "DEBUG")
+                    status_info = f"HTTP {resp.status_code}" if resp else "connection error"
+                    self.log(f"  ✗ NetworkAdapters $expand=Members failed: {status_info}", "DEBUG")
+            
+            if adapters_url != "skipped":
+                self.log_idrac_command(
+                    server_id=server_id, job_id=job_id, task_id=None,
+                    command_type='GET', endpoint='/NetworkAdapters?$expand=Members [capability test]',
+                    full_url=adapters_url, request_headers=None, request_body=None,
+                    status_code=resp.status_code if resp else None,
+                    response_time_ms=resp_time, response_body=None,
+                    success=resp is not None and resp.status_code == 200,
+                    operation_type='idrac_api'
+                )
+            
+            # Test 3: Storage $expand - SKIP for iDRAC 8 (known to timeout after 10+ seconds)
+            if legacy_ssl:
+                self.log(f"  → Skipping Storage $expand test (iDRAC 8 cannot handle $expand)", "DEBUG")
+                caps['expand_storage'] = False
+                resp = None
+                resp_time = 0
+                storage_url = "skipped"
             else:
-                status_info = f"HTTP {resp.status_code}" if resp else "connection error"
-                self.log(f"  ✗ NetworkAdapters $expand=Members failed: {status_info}", "DEBUG")
+                storage_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Storage?$expand=Members"
+                resp, resp_time = self._make_session_request(ip, storage_url, session, username, password, timeout=(2, 15), legacy_ssl=legacy_ssl)
             
-            self.log_idrac_command(
-                server_id=server_id, job_id=job_id, task_id=None,
-                command_type='GET', endpoint='/NetworkAdapters?$expand=Members [capability test]',
-                full_url=adapters_url, request_headers=None, request_body=None,
-                status_code=resp.status_code if resp else None,
-                response_time_ms=resp_time, response_body=None,
-                success=resp is not None and resp.status_code == 200,
-                operation_type='idrac_api'
-            )
-            
-            # Test 3: Storage $expand SEPARATELY
-            storage_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Storage?$expand=Members"
-            resp, resp_time = self._make_session_request(ip, storage_url, session, username, password, timeout=(2, 15), legacy_ssl=legacy_ssl)
-            
-            if resp and resp.status_code == 200:
-                caps['expand_storage'] = True
-                self.log(f"  ✓ Storage supports $expand=Members", "DEBUG")
-            else:
-                status_info = f"HTTP {resp.status_code}" if resp else "connection error"
-                self.log(f"  ✗ Storage $expand=Members failed: {status_info}", "DEBUG")
-            
-            self.log_idrac_command(
-                server_id=server_id, job_id=job_id, task_id=None,
-                command_type='GET', endpoint='/Storage?$expand=Members [capability test]',
-                full_url=storage_url, request_headers=None, request_body=None,
-                status_code=resp.status_code if resp else None,
-                response_time_ms=resp_time, response_body=None,
-                success=resp is not None and resp.status_code == 200,
-                operation_type='idrac_api'
-            )
+            if storage_url != "skipped":
+                if resp and resp.status_code == 200:
+                    caps['expand_storage'] = True
+                    self.log(f"  ✓ Storage supports $expand=Members", "DEBUG")
+                else:
+                    status_info = f"HTTP {resp.status_code}" if resp else "connection error"
+                    self.log(f"  ✗ Storage $expand=Members failed: {status_info}", "DEBUG")
+                
+                self.log_idrac_command(
+                    server_id=server_id, job_id=job_id, task_id=None,
+                    command_type='GET', endpoint='/Storage?$expand=Members [capability test]',
+                    full_url=storage_url, request_headers=None, request_body=None,
+                    status_code=resp.status_code if resp else None,
+                    response_time_ms=resp_time, response_body=None,
+                    success=resp is not None and resp.status_code == 200,
+                    operation_type='idrac_api'
+                )
             
             # Test 4: If NetworkAdapters $expand works, test deeper levels
             if caps['expand_network_adapters']:
@@ -2213,46 +2233,20 @@ class IdracMixin:
         
         try:
             # Dell official pattern from GetEthernetInterfacesREDFISH.py:
-            # 1. Try $expand=*($levels=1) for bulk fetch (most efficient)
+            # 1. Try $expand=*($levels=1) for bulk fetch (most efficient) - iDRAC 9+ only
             # 2. If that fails, GET collection then fetch each member individually
+            # 
+            # CRITICAL: iDRAC 8 CANNOT handle $expand queries - the device hangs for 40+ seconds
+            # trying to build the response. Skip $expand entirely for legacy_ssl devices.
             
-            interfaces_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/EthernetInterfaces?$expand=*($levels=1)"
-            expand_worked = False
-            
-            interfaces_response, interfaces_time = self._make_session_request(
-                ip, interfaces_url, session, username, password, timeout=(2, 30), legacy_ssl=legacy_ssl
-            )
-            
-            expand_worked = interfaces_response is not None and interfaces_response.status_code == 200
-            
-            # Log the API call
-            self.log_idrac_command(
-                server_id=server_id, job_id=job_id, task_id=None,
-                command_type='GET', endpoint='/EthernetInterfaces?$expand=*($levels=1)',
-                full_url=interfaces_url, request_headers=None, request_body=None,
-                status_code=interfaces_response.status_code if interfaces_response else None,
-                response_time_ms=interfaces_time, response_body=None,
-                success=expand_worked,
-                operation_type='idrac_api' if expand_worked else 'idrac_api_fallback'
-            )
-            
-            # If $expand failed, try with legacy TLS auto-retry (iDRAC 8 auto-detection)
-            if not expand_worked and not legacy_ssl:
-                self.log(f"  → EthernetInterfaces $expand failed, retrying with Legacy TLS...", "DEBUG")
-                interfaces_response, interfaces_time = self._make_session_request(
-                    ip, interfaces_url, session, username, password, timeout=(2, 35), legacy_ssl=True
-                )
-                expand_worked = interfaces_response is not None and interfaces_response.status_code == 200
-                if expand_worked:
-                    legacy_ssl = True  # Use for subsequent requests
-                    self.log(f"  ✓ EthernetInterfaces succeeded with Legacy TLS", "DEBUG")
-            
-            # If $expand still failed, fall back to simple collection GET (Dell fallback pattern)
-            if not expand_worked:
-                self.log(f"  → EthernetInterfaces $expand failed, using individual fetch pattern", "DEBUG")
+            if legacy_ssl:
+                # iDRAC 8: Skip $expand entirely - go directly to collection + individual fetch
+                self.log(f"  → NICs: iDRAC 8 detected (legacy TLS), skipping $expand", "DEBUG")
                 interfaces_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/EthernetInterfaces"
+                expand_worked = False  # Force individual fetch pattern
+                
                 interfaces_response, interfaces_time = self._make_session_request(
-                    ip, interfaces_url, session, username, password, timeout=(2, 30), legacy_ssl=legacy_ssl
+                    ip, interfaces_url, session, username, password, timeout=(10, 30), legacy_ssl=True
                 )
                 
                 self.log_idrac_command(
@@ -2264,6 +2258,48 @@ class IdracMixin:
                     success=interfaces_response is not None and interfaces_response.status_code == 200,
                     operation_type='idrac_api'
                 )
+            else:
+                # iDRAC 9+: Try $expand first for efficiency
+                interfaces_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/EthernetInterfaces?$expand=*($levels=1)"
+                
+                interfaces_response, interfaces_time = self._make_session_request(
+                    ip, interfaces_url, session, username, password, timeout=(2, 30), legacy_ssl=False
+                )
+                
+                expand_worked = interfaces_response is not None and interfaces_response.status_code == 200
+                
+                # Log the API call
+                self.log_idrac_command(
+                    server_id=server_id, job_id=job_id, task_id=None,
+                    command_type='GET', endpoint='/EthernetInterfaces?$expand=*($levels=1)',
+                    full_url=interfaces_url, request_headers=None, request_body=None,
+                    status_code=interfaces_response.status_code if interfaces_response else None,
+                    response_time_ms=interfaces_time, response_body=None,
+                    success=expand_worked,
+                    operation_type='idrac_api' if expand_worked else 'idrac_api_fallback'
+                )
+                
+                # If $expand failed, try with legacy TLS auto-retry (iDRAC 8 auto-detection)
+                if not expand_worked:
+                    self.log(f"  → EthernetInterfaces $expand failed, retrying with Legacy TLS...", "DEBUG")
+                    # Try legacy TLS with simple collection GET (not $expand)
+                    interfaces_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/EthernetInterfaces"
+                    interfaces_response, interfaces_time = self._make_session_request(
+                        ip, interfaces_url, session, username, password, timeout=(10, 30), legacy_ssl=True
+                    )
+                    if interfaces_response and interfaces_response.status_code == 200:
+                        legacy_ssl = True  # Use for subsequent requests
+                        self.log(f"  ✓ EthernetInterfaces succeeded with Legacy TLS", "DEBUG")
+                    
+                    self.log_idrac_command(
+                        server_id=server_id, job_id=job_id, task_id=None,
+                        command_type='GET', endpoint='/EthernetInterfaces',
+                        full_url=interfaces_url, request_headers=None, request_body=None,
+                        status_code=interfaces_response.status_code if interfaces_response else None,
+                        response_time_ms=interfaces_time, response_body=None,
+                        success=interfaces_response is not None and interfaces_response.status_code == 200,
+                        operation_type='idrac_api'
+                    )
             
             if not interfaces_response or interfaces_response.status_code != 200:
                 return nics
