@@ -20,6 +20,31 @@ function formatSpeed(mbps: number | null): string {
   return `${mbps}M`;
 }
 
+function formatNicName(nic: ServerNic): string {
+  const fqdd = nic.fqdd;
+  
+  // FC adapters: FC.Slot.1-1 → "FC Slot 1 Port 1"
+  const fcMatch = fqdd.match(/FC\.Slot\.(\d+)-(\d+)/);
+  if (fcMatch) {
+    return `FC Slot ${fcMatch[1]} Port ${fcMatch[2]}`;
+  }
+  
+  // Integrated/Embedded NICs: NIC.Integrated.1-2-1 → "Onboard Port 2"
+  const intMatch = fqdd.match(/NIC\.(Integrated|Embedded)\.(\d+)-(\d+)/);
+  if (intMatch) {
+    return `Onboard Port ${intMatch[3]}`;
+  }
+  
+  // PCIe slot NICs: NIC.Slot.2-1-1 → "Slot 2 Port 1"
+  const slotMatch = fqdd.match(/NIC\.Slot\.(\d+)-(\d+)/);
+  if (slotMatch) {
+    return `Slot ${slotMatch[1]} Port ${slotMatch[2]}`;
+  }
+  
+  // Fallback to model or cleaned FQDD
+  return nic.model || fqdd.split(".").pop() || fqdd;
+}
+
 export function ServerNicsSummary({ nics, isLoading, onViewAll }: ServerNicsSummaryProps) {
   const [copiedMac, setCopiedMac] = useState<string | null>(null);
 
@@ -71,8 +96,8 @@ export function ServerNicsSummary({ nics, isLoading, onViewAll }: ServerNicsSumm
           >
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <span className="font-medium truncate" title={nic.fqdd}>
-                  {nic.fqdd.split(".").pop() || nic.fqdd}
+                <span className="font-medium truncate" title={nic.model || nic.fqdd}>
+                  {formatNicName(nic)}
                 </span>
                 <Badge 
                   variant={nic.link_status?.toLowerCase() === "up" ? "default" : "secondary"}
