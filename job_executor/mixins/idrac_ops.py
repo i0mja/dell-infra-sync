@@ -2360,6 +2360,17 @@ class IdracMixin:
                     
                     # Map iDRAC 8 EthernetInterface schema to our NIC format
                     status = iface_data.get('Status', {})
+                    
+                    # Derive link_status - iDRAC 8 may not have LinkStatus at top level
+                    # Fall back to Status.State mapping: Enabled → LinkUp, Disabled → LinkDown
+                    raw_link_status = iface_data.get('LinkStatus')
+                    if not raw_link_status:
+                        state = status.get('State', '').lower()
+                        if state == 'enabled':
+                            raw_link_status = 'LinkUp'
+                        elif state in ('disabled', 'standbyoffline', 'absent'):
+                            raw_link_status = 'LinkDown'
+                    
                     nic_info = {
                         'nic_id': iface_data.get('Id'),
                         'fqdd': iface_data.get('Id'),  # e.g., "NIC.Integrated.1-1-1"
@@ -2367,7 +2378,7 @@ class IdracMixin:
                         'permanent_mac_address': iface_data.get('PermanentMACAddress'),
                         'model': iface_data.get('Description') or 'Unknown',
                         'current_speed_mbps': iface_data.get('SpeedMbps'),
-                        'link_status': iface_data.get('LinkStatus'),
+                        'link_status': raw_link_status,
                         'auto_neg': iface_data.get('AutoNeg'),
                         'health': status.get('Health', 'Unknown'),
                         'status_state': status.get('State'),
