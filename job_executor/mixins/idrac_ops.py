@@ -1588,13 +1588,16 @@ class IdracMixin:
                     serial = adapter_data.get('SerialNumber')
                     part_number = adapter_data.get('PartNumber')
                     
+                    # Fetch NetworkPorts for speed data (iDRAC 9 stores speed here)
+                    port_map = self._fetch_network_ports(ip, adapter_data, session, username, password, legacy_ssl)
+                    
                     # Get NetworkDeviceFunctions
                     functions = adapter_data.get('NetworkDeviceFunctions', {})
                     if isinstance(functions, dict) and 'Members' in functions:
                         # Functions are expanded inline
                         for func_item in functions.get('Members', []):
                             if 'Id' in func_item:
-                                nic_info = self._extract_nic_info(func_item, manufacturer, model, serial, part_number)
+                                nic_info = self._extract_nic_info(func_item, manufacturer, model, serial, part_number, port_map)
                                 if nic_info:
                                     nics.append(nic_info)
                     elif isinstance(functions, dict) and '@odata.id' in functions:
@@ -1607,7 +1610,7 @@ class IdracMixin:
                             for func_item in funcs_resp.json().get('Members', []):
                                 # Relaxed condition: some iDRACs don't have 'Ethernet' at collection level
                                 if 'Id' in func_item:
-                                    nic_info = self._extract_nic_info(func_item, manufacturer, model, serial, part_number)
+                                    nic_info = self._extract_nic_info(func_item, manufacturer, model, serial, part_number, port_map)
                                     if nic_info:
                                         nics.append(nic_info)
                                         
@@ -2502,6 +2505,9 @@ class IdracMixin:
                     serial = adapter_data.get('SerialNumber')
                     part_number = adapter_data.get('PartNumber')
                     
+                    # Fetch NetworkPorts for speed data (iDRAC 9 stores speed here)
+                    port_map = self._fetch_network_ports(ip, adapter_data, session, username, password, legacy_ssl)
+                    
                     # Get NetworkDeviceFunctions - NO $expand in legacy method
                     functions_link = adapter_data.get('NetworkDeviceFunctions', {}).get('@odata.id')
                     if functions_link:
@@ -2565,7 +2571,7 @@ class IdracMixin:
                                 
                                 func_data = func_resp.json()
                                 
-                                nic_info = self._extract_nic_info(func_data, manufacturer, model, serial, part_number)
+                                nic_info = self._extract_nic_info(func_data, manufacturer, model, serial, part_number, port_map)
                                 if nic_info:
                                     nics.append(nic_info)
                                     
@@ -2599,7 +2605,68 @@ class IdracMixin:
             )
             return []
     
-    def _extract_nic_info(self, func_data: Dict, manufacturer: str, model: str, serial: str, part_number: str) -> Optional[Dict]:
+    def _fetch_network_ports(self, ip: str, adapter_data: Dict, session: Dict, username: str, password: str, legacy_ssl: bool = False) -> Dict[str, Dict]:
+        """
+        Fetch NetworkPorts for an adapter and return a mapping of port_id -> port_data.
+        
+        Port data includes CurrentLinkSpeedMbps, LinkStatus, etc.
+        The port_id (e.g., NIC.Integrated.1-1) maps to function FQDD prefix.
+        """
+        port_map = {}
+        ports_link = adapter_data.get('NetworkPorts', {}).get('@odata.id')
+        
+        if not ports_link:
+            return port_map
+        
+        try:
+            # Try with $expand first
+            ports_url = f"https://{ip}{ports_link}?$expand=Members"
+            ports_resp, _ = self._make_session_request(
+                ip, ports_url, session, username, password, timeout=(2, 15), legacy_ssl=legacy_ssl
+            )
+            
+            if not ports_resp or ports_resp.status_code != 200:
+                # Fallback without $expand
+                ports_url = f"https://{ip}{ports_link}"
+                ports_resp, _ = self._make_session_request(
+                    ip, ports_url, session, username, password, timeout=(2, 15), legacy_ssl=legacy_ssl
+                )
+            
+            if not ports_resp or ports_resp.status_code != 200:
+                return port_map
+            
+            ports_data = ports_resp.json()
+            
+            for port_item in ports_data.get('Members', []):
+                try:
+                    if 'Id' in port_item:
+                        port_data = port_item
+                    elif '@odata.id' in port_item:
+                        port_url = f"https://{ip}{port_item['@odata.id']}"
+                        port_resp, _ = self._make_session_request(
+                            ip, port_url, session, username, password, timeout=(2, 10), legacy_ssl=legacy_ssl
+                        )
+                        if not port_resp or port_resp.status_code != 200:
+                            continue
+                        port_data = port_resp.json()
+                    else:
+                        continue
+                    
+                    port_id = port_data.get('Id')  # e.g., "NIC.Integrated.1-1"
+                    if port_id:
+                        port_map[port_id] = {
+                            'current_speed_mbps': port_data.get('CurrentLinkSpeedMbps'),
+                            'link_status': port_data.get('LinkStatus'),
+                        }
+                except Exception:
+                    continue
+                    
+        except Exception as e:
+            self.log(f"  Error fetching NetworkPorts: {e}", "DEBUG")
+        
+        return port_map
+    
+    def _extract_nic_info(self, func_data: Dict, manufacturer: str, model: str, serial: str, part_number: str, port_map: Dict = None) -> Optional[Dict]:
         """Extract NIC information from Redfish NetworkDeviceFunction response"""
         try:
             # Extract ethernet info (contains MAC addresses)
@@ -2627,6 +2694,7 @@ class IdracMixin:
             # 1. Dell OEM DellNIC.LinkSpeed
             # 2. Top-level SpeedMbps (standard DMTF)
             # 3. Ethernet.SpeedMbps
+            # 4. NetworkPorts data (port_map lookup)
             current_speed = None
             link_speed = dell_oem.get('LinkSpeed')
             if link_speed is not None:
@@ -2640,6 +2708,18 @@ class IdracMixin:
             
             if current_speed is None:
                 current_speed = ethernet.get('SpeedMbps')
+            
+            # Fallback to NetworkPorts data if available
+            if current_speed is None and port_map:
+                fqdd = func_data.get('Id', '')
+                # Map function FQDD to port ID: NIC.Integrated.1-2-1 → NIC.Integrated.1-2
+                if '-' in fqdd:
+                    port_id = '-'.join(fqdd.rsplit('-', 1)[:-1])
+                    port_data = port_map.get(port_id, {})
+                    current_speed = port_data.get('current_speed_mbps')
+                    # Also use port link status if we don't have one
+                    if not link_status:
+                        link_status = port_data.get('link_status')
             
             # Get switch connection info from LLDP if available
             switch_connection_id = dell_oem.get('SwitchConnectionID')
