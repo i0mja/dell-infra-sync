@@ -99,10 +99,10 @@ export function ServerNicsSummary({ nics, isLoading, onViewAll }: ServerNicsSumm
                 <span className="font-medium truncate" title={nic.model || nic.fqdd}>
                   {formatNicName(nic)}
                 </span>
-                {nic.current_speed_mbps && (
-                  <span className="text-muted-foreground">
+                {nic.current_speed_mbps != null && nic.current_speed_mbps > 0 && (
+                  <Badge variant="outline" className="text-[10px] px-1 py-0 h-4 font-normal">
                     {formatSpeed(nic.current_speed_mbps)}
-                  </span>
+                  </Badge>
                 )}
                 <Badge 
                   variant={
