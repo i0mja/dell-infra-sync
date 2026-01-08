@@ -99,11 +99,24 @@ export function ServerNicsSummary({ nics, isLoading, onViewAll }: ServerNicsSumm
                 <span className="font-medium truncate" title={nic.model || nic.fqdd}>
                   {formatNicName(nic)}
                 </span>
+                {nic.current_speed_mbps && (
+                  <span className="text-muted-foreground">
+                    {formatSpeed(nic.current_speed_mbps)}
+                  </span>
+                )}
                 <Badge 
-                  variant={nic.link_status?.toLowerCase() === "up" ? "default" : "secondary"}
+                  variant={
+                    nic.link_status?.toLowerCase() === "up" || nic.link_status?.toLowerCase() === "linkup"
+                      ? "default" 
+                      : nic.link_status?.toLowerCase() === "down" || nic.link_status?.toLowerCase() === "linkdown"
+                        ? "destructive"
+                        : "secondary"
+                  }
                   className="text-[10px] px-1 py-0 h-4"
                 >
-                  {nic.link_status || "—"}
+                  {nic.link_status === "LinkUp" || nic.link_status?.toLowerCase() === "up" ? "Up" : 
+                   nic.link_status === "LinkDown" || nic.link_status?.toLowerCase() === "down" ? "Down" : 
+                   nic.link_status || "Unknown"}
                 </Badge>
               </div>
               {nic.mac_address && (
@@ -124,9 +137,6 @@ export function ServerNicsSummary({ nics, isLoading, onViewAll }: ServerNicsSumm
                   </button>
                 </div>
               )}
-            </div>
-            <div className="text-muted-foreground text-right flex-shrink-0">
-              {nic.current_speed_mbps && formatSpeed(nic.current_speed_mbps)}
             </div>
           </div>
         ))}

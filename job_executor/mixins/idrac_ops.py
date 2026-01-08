@@ -2366,7 +2366,7 @@ class IdracMixin:
                         'mac_address': iface_data.get('MACAddress'),
                         'permanent_mac_address': iface_data.get('PermanentMACAddress'),
                         'model': iface_data.get('Description') or 'Unknown',
-                        'speed_mbps': iface_data.get('SpeedMbps'),
+                        'current_speed_mbps': iface_data.get('SpeedMbps'),
                         'link_status': iface_data.get('LinkStatus'),
                         'auto_neg': iface_data.get('AutoNeg'),
                         'health': status.get('Health', 'Unknown'),
