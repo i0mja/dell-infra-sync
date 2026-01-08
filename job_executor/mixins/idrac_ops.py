@@ -2604,17 +2604,42 @@ class IdracMixin:
         try:
             # Extract ethernet info (contains MAC addresses)
             ethernet = func_data.get('Ethernet', {})
+            status = func_data.get('Status', {})
             
             # Get Dell OEM data for link status and speed
             dell_oem = func_data.get('Oem', {}).get('Dell', {}).get('DellNIC', {})
             
-            # Parse speed - Dell returns it as string like "25000" or integer
-            current_speed = dell_oem.get('LinkSpeed')
-            if current_speed is not None:
+            # Get link status with fallbacks:
+            # 1. Dell OEM DellNIC.LinkStatus
+            # 2. Top-level LinkStatus (standard DMTF)
+            # 3. Derive from Status.State
+            link_status = dell_oem.get('LinkStatus')
+            if not link_status:
+                link_status = func_data.get('LinkStatus')
+            if not link_status:
+                state = status.get('State', '').lower()
+                if state == 'enabled':
+                    link_status = 'LinkUp'
+                elif state in ('disabled', 'standbyoffline', 'absent'):
+                    link_status = 'LinkDown'
+            
+            # Get speed with fallbacks:
+            # 1. Dell OEM DellNIC.LinkSpeed
+            # 2. Top-level SpeedMbps (standard DMTF)
+            # 3. Ethernet.SpeedMbps
+            current_speed = None
+            link_speed = dell_oem.get('LinkSpeed')
+            if link_speed is not None:
                 try:
-                    current_speed = int(current_speed)
+                    current_speed = int(link_speed)
                 except (ValueError, TypeError):
-                    current_speed = None
+                    pass
+            
+            if current_speed is None:
+                current_speed = func_data.get('SpeedMbps')
+            
+            if current_speed is None:
+                current_speed = ethernet.get('SpeedMbps')
             
             # Get switch connection info from LLDP if available
             switch_connection_id = dell_oem.get('SwitchConnectionID')
@@ -2629,14 +2654,15 @@ class IdracMixin:
                 'model': model,
                 'serial_number': serial,
                 'part_number': part_number,
-                'link_status': dell_oem.get('LinkStatus'),
+                'link_status': link_status,
                 'current_speed_mbps': current_speed,
-                'health': func_data.get('Status', {}).get('Health'),
-                'status': func_data.get('Status', {}).get('State'),
+                'health': status.get('Health'),
+                'status': status.get('State'),
                 'switch_connection_id': switch_connection_id,
                 'switch_port_description': switch_port_desc,
             }
         except Exception as e:
+            self.logger.warning(f"Failed to extract NIC info: {e}")
             return None
     
     def _sync_server_nics(self, server_id: str, nics: List[Dict], log_fn=None, job_id: str = None):
