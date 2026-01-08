@@ -594,6 +594,10 @@ class IdracMixin:
         for $expand on specific endpoints (especially NetworkAdapters). We test each
         endpoint type separately to handle this.
         
+        AUTO-RETRY: If initial request fails with connection error and legacy_ssl=False,
+        this method recursively calls itself with legacy_ssl=True to support iDRAC 8
+        devices that were not flagged correctly in the database.
+        
         Args:
             legacy_ssl: Use Legacy TLS adapter for iDRAC 8 (TLS 1.0/1.1)
         
@@ -624,6 +628,20 @@ class IdracMixin:
             memory_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Memory?$expand=*($levels=1)"
             resp, resp_time = self._make_session_request(ip, memory_url, session, username, password, timeout=(2, 15), legacy_ssl=legacy_ssl)
             
+            # AUTO-DETECT LEGACY TLS NEED
+            # If first request fails with connection error (resp=None) AND we haven't tried legacy TLS yet,
+            # retry entire detection with legacy_ssl=True (iDRAC 8 auto-detection)
+            if resp is None and not legacy_ssl:
+                self.log(f"  → Connection failed, retrying with Legacy TLS (iDRAC 8 auto-detection)...", "INFO")
+                caps = self._detect_idrac_capabilities(
+                    ip, username, password, session, server_id, job_id, 
+                    current_firmware, legacy_ssl=True  # Recursive call with legacy TLS
+                )
+                # Update server record with correct legacy_ssl flag
+                if server_id:
+                    self._update_server_legacy_ssl(server_id, True)
+                return caps
+            
             # Only mark as supported if we get HTTP 200 (not connection errors)
             if resp and resp.status_code == 200:
                 caps['expand_levels_1'] = True
@@ -652,10 +670,10 @@ class IdracMixin:
                 caps['expand_network_adapters'] = True
                 caps['supports_ethernet_interfaces'] = False  # Uses NetworkAdapters (iDRAC 9+)
                 self.log(f"  ✓ NetworkAdapters supports $expand=Members", "DEBUG")
-            elif (resp and resp.status_code == 404) or (resp is None and legacy_ssl):
-                # iDRAC 8 - NetworkAdapters doesn't exist (404) or TLS timeout on legacy device
+            elif resp is None or (resp and resp.status_code == 404):
+                # iDRAC 8 - NetworkAdapters doesn't exist (404) or TLS/connection failure
                 caps['expand_network_adapters'] = False
-                self.log(f"  → NetworkAdapters not found (iDRAC 8), testing EthernetInterfaces...", "DEBUG")
+                self.log(f"  → NetworkAdapters unavailable (404/timeout), testing EthernetInterfaces...", "DEBUG")
                 eth_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/EthernetInterfaces"
                 eth_resp, eth_time = self._make_session_request(ip, eth_url, session, username, password, timeout=(2, 15), legacy_ssl=legacy_ssl)
                 if eth_resp and eth_resp.status_code == 200:
@@ -663,7 +681,8 @@ class IdracMixin:
                     self.log(f"  ✓ EthernetInterfaces available (iDRAC 8 fallback)", "DEBUG")
                 else:
                     caps['supports_ethernet_interfaces'] = False
-                    self.log(f"  ✗ EthernetInterfaces not available", "DEBUG")
+                    eth_status = f"HTTP {eth_resp.status_code}" if eth_resp else "connection error"
+                    self.log(f"  ✗ EthernetInterfaces not available: {eth_status}", "DEBUG")
             else:
                 status_info = f"HTTP {resp.status_code}" if resp else "connection error"
                 self.log(f"  ✗ NetworkAdapters $expand=Members failed: {status_info}", "DEBUG")
@@ -788,6 +807,37 @@ class IdracMixin:
                 
         except Exception as e:
             self.log(f"  Could not store capabilities: {e}", "DEBUG")
+    
+    def _update_server_legacy_ssl(self, server_id: str, requires_legacy_ssl: bool):
+        """
+        Update the requires_legacy_ssl flag on server record.
+        
+        Called when TLS auto-detection discovers an iDRAC 8 that was not
+        correctly flagged in the database.
+        """
+        try:
+            headers = {
+                "apikey": SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal"
+            }
+            
+            response = requests.patch(
+                f"{DSM_URL}/rest/v1/servers?id=eq.{server_id}",
+                headers=headers,
+                json={'requires_legacy_ssl': requires_legacy_ssl},
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.status_code in [200, 204]:
+                self.log(f"  ✓ Auto-detected iDRAC 8: Updated requires_legacy_ssl={requires_legacy_ssl}", "INFO")
+            else:
+                self.log(f"  Could not update legacy SSL flag: HTTP {response.status_code}", "DEBUG")
+                
+        except Exception as e:
+            self.log(f"  Could not update legacy SSL flag: {e}", "DEBUG")
 
 
     def _make_session_request(
