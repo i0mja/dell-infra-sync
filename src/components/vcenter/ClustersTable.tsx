@@ -49,6 +49,31 @@ interface ClustersTableProps {
   onClusterUpdate?: (clusterName: string) => void;
 }
 
+// Helper functions - defined outside component to avoid hoisting issues
+const getUsagePercent = (used: number | null, total: number | null): number => {
+  if (!used || !total) return 0;
+  return Math.round((used / total) * 100);
+};
+
+const formatBytes = (bytes: number | null): string => {
+  if (!bytes) return "0 TB";
+  const tb = bytes / 1024 ** 4;
+  return `${tb.toFixed(1)} TB`;
+};
+
+const getStatusColor = (status: string | null): string => {
+  switch (status?.toLowerCase()) {
+    case "green":
+      return "bg-success text-success-foreground";
+    case "yellow":
+      return "bg-warning text-warning-foreground";
+    case "red":
+      return "bg-destructive text-destructive-foreground";
+    default:
+      return "bg-muted text-muted-foreground";
+  }
+};
+
 export function ClustersTable({
   clusters,
   selectedClusterId,
@@ -199,29 +224,6 @@ export function ClustersTable({
     toast.success(`Exported ${clustersToExport.length} clusters`);
   };
 
-  const getStatusColor = (status: string | null) => {
-    switch (status?.toLowerCase()) {
-      case "green":
-        return "bg-success text-success-foreground";
-      case "yellow":
-        return "bg-warning text-warning-foreground";
-      case "red":
-        return "bg-destructive text-destructive-foreground";
-      default:
-        return "bg-muted text-muted-foreground";
-    }
-  };
-
-  const formatBytes = (bytes: number | null) => {
-    if (!bytes) return "0 TB";
-    const tb = bytes / 1024 ** 4;
-    return `${tb.toFixed(1)} TB`;
-  };
-
-  const getUsagePercent = (used: number | null, total: number | null) => {
-    if (!used || !total) return 0;
-    return Math.round((used / total) * 100);
-  };
 
   if (loading) {
     return (
