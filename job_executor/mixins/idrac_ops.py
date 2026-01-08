@@ -2734,16 +2734,37 @@ class IdracMixin:
             # Fallback to NetworkPorts data if available
             if not current_speed and port_map:  # None or 0
                 fqdd = func_data.get('Id', '')
-                # Map function FQDD to port ID: NIC.Integrated.1-2-1 → NIC.Integrated.1-2
+                port_data = {}
+                
+                # Try multiple port ID patterns:
+                # Pattern 1: Full FQDD prefix (NIC.Integrated.1-2-1 → NIC.Integrated.1-2)
                 if '-' in fqdd:
-                    port_id = '-'.join(fqdd.rsplit('-', 1)[:-1])
-                    port_data = port_map.get(port_id, {})
-                    speed_val = port_data.get('current_speed_mbps')
-                    if speed_val and speed_val > 0:
-                        current_speed = speed_val
-                    # Also use port link status if we don't have one
-                    if not link_status:
-                        link_status = port_data.get('link_status')
+                    port_id_full = '-'.join(fqdd.rsplit('-', 1)[:-1])
+                    port_data = port_map.get(port_id_full, {})
+                
+                # Pattern 2: Extract port number and try ordinal matches
+                if not port_data and '-' in fqdd:
+                    # Parse: NIC.Integrated.1-2-1 → adapter=NIC.Integrated.1, port=2, partition=1
+                    parts = fqdd.rsplit('-', 2)
+                    if len(parts) >= 2:
+                        port_num = parts[-2] if len(parts) == 3 else parts[-1]
+                        # Try: "2", "Port2", "<adapter>-<port_num>"
+                        for pattern in [port_num, f"Port{port_num}", f"{parts[0]}-{port_num}"]:
+                            port_data = port_map.get(pattern, {})
+                            if port_data:
+                                break
+                
+                # Pattern 3: If port_map only has one entry, use it as fallback
+                if not port_data and len(port_map) == 1:
+                    port_data = list(port_map.values())[0]
+                
+                speed_val = port_data.get('current_speed_mbps')
+                if speed_val and speed_val > 0:
+                    current_speed = speed_val
+                
+                # Also use port link status if we don't have one
+                if not link_status:
+                    link_status = port_data.get('link_status')
             
             # Get switch connection info from LLDP if available
             switch_connection_id = dell_oem.get('SwitchConnectionID')
