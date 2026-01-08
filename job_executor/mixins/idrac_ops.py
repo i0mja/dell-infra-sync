@@ -307,24 +307,24 @@ class IdracMixin:
                 self.log(f"  Starting full onboarding for {ip} (capability-aware parallel fetch)...", "INFO")
                 
                 # Use ThreadPoolExecutor to fetch independent endpoints in parallel
-                # Pass session AND capabilities to all workers for efficient fetching
+                # Pass session, capabilities, AND legacy_ssl to all workers for efficient fetching
                 with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-                    # Submit all independent tasks with session and capabilities
+                    # Submit all independent tasks with session, capabilities, and legacy_ssl
                     future_health = executor.submit(
-                        self._fetch_health_status, ip, username, password, server_id, job_id, session
+                        self._fetch_health_status, ip, username, password, server_id, job_id, session, legacy_ssl
                     )
                     future_bios = executor.submit(
-                        self._fetch_bios_attributes, ip, username, password, server_id, job_id, session
+                        self._fetch_bios_attributes, ip, username, password, server_id, job_id, session, legacy_ssl
                     )
                     future_drives = executor.submit(
-                        self._fetch_storage_drives_optimized, ip, username, password, server_id, job_id, session, capabilities
+                        self._fetch_storage_drives_optimized, ip, username, password, server_id, job_id, session, capabilities, legacy_ssl
                     )
                     # legacy_ssl already extracted above before capability detection
                     future_nics = executor.submit(
                         self._fetch_network_adapters_optimized, ip, username, password, server_id, job_id, session, capabilities, legacy_ssl
                     )
                     future_memory = executor.submit(
-                        self._fetch_memory_dimms_optimized, ip, username, password, server_id, job_id, session, capabilities
+                        self._fetch_memory_dimms_optimized, ip, username, password, server_id, job_id, session, capabilities, legacy_ssl
                     )
                     
                     # Collect results with timeouts
@@ -951,6 +951,9 @@ class IdracMixin:
         
         OPTIMIZATION: Reduces auth overhead by reusing session tokens.
         
+        TIMEOUT ADJUSTMENT: Legacy TLS (iDRAC 8) requires longer connect timeouts
+        due to slower TLS 1.0/1.1 handshakes.
+        
         Args:
             ip: iDRAC IP address
             url: Full URL to request
@@ -976,22 +979,39 @@ class IdracMixin:
         if json_body:
             headers['Content-Type'] = 'application/json'
         
+        # Increase connect timeout for iDRAC 8 Legacy TLS (slow TLS 1.0/1.1 handshakes)
+        # Standard iDRAC 9+: 2s connect is fine
+        # iDRAC 8 Legacy TLS: needs 10s connect to avoid timeouts during handshake
+        actual_timeout = timeout
+        if legacy_ssl and timeout[0] < 10:
+            actual_timeout = (10, timeout[1])
+        
         start_time = time.time()
-        response = self.session_manager.make_request(
-            method=method,
-            url=url,
-            ip=ip,
-            auth=auth,
-            headers=headers,
-            json=json_body,
-            timeout=timeout,
-            legacy_ssl=legacy_ssl
-        )
-        response_time_ms = int((time.time() - start_time) * 1000)
-        return response, response_time_ms
+        try:
+            response = self.session_manager.make_request(
+                method=method,
+                url=url,
+                ip=ip,
+                auth=auth,
+                headers=headers,
+                json=json_body,
+                timeout=actual_timeout,
+                legacy_ssl=legacy_ssl
+            )
+            response_time_ms = int((time.time() - start_time) * 1000)
+            return response, response_time_ms
+        except requests.exceptions.Timeout as e:
+            self.log(f"  Timeout connecting to {ip}: {e}", "DEBUG")
+            return None, int((time.time() - start_time) * 1000)
+        except requests.exceptions.SSLError as e:
+            self.log(f"  SSL error connecting to {ip}: {e}", "DEBUG")
+            return None, int((time.time() - start_time) * 1000)
+        except Exception as e:
+            self.log(f"  Connection error to {ip}: {e}", "DEBUG")
+            return None, int((time.time() - start_time) * 1000)
 
-    def _fetch_health_status(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, session: Dict = None) -> Optional[Dict]:
-        """Fetch comprehensive health status from multiple Redfish endpoints (session-aware)"""
+    def _fetch_health_status(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, session: Dict = None, legacy_ssl: bool = False) -> Optional[Dict]:
+        """Fetch comprehensive health status from multiple Redfish endpoints (session-aware, legacy TLS aware)"""
         health = {
             'overall_status': 'Unknown',
             'storage_healthy': None,
@@ -1006,7 +1026,7 @@ class IdracMixin:
         try:
             system_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1"
             system_response, system_time = self._make_session_request(
-                ip, system_url, session, username, password, timeout=(2, 15)
+                ip, system_url, session, username, password, timeout=(2, 15), legacy_ssl=legacy_ssl
             )
             
             if system_response and system_response.status_code == 200:
@@ -1024,7 +1044,7 @@ class IdracMixin:
             try:
                 url = f"https://{ip}{endpoint}"
                 response, response_time = self._make_session_request(
-                    ip, url, session, username, password, timeout=(2, 15)
+                    ip, url, session, username, password, timeout=(2, 15), legacy_ssl=legacy_ssl
                 )
                 
                 response_json = None
@@ -1238,12 +1258,12 @@ class IdracMixin:
             self.log(f"  Error parsing event logs: {e}", "WARN")
             return 0
 
-    def _fetch_bios_attributes(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, session: Dict = None) -> Optional[Dict]:
-        """Fetch BIOS attributes for initial snapshot (session-aware)"""
+    def _fetch_bios_attributes(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, session: Dict = None, legacy_ssl: bool = False) -> Optional[Dict]:
+        """Fetch BIOS attributes for initial snapshot (session-aware, legacy TLS aware)"""
         try:
             url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Bios"
             response, response_time = self._make_session_request(
-                ip, url, session, username, password, timeout=(2, 15)
+                ip, url, session, username, password, timeout=(2, 15), legacy_ssl=legacy_ssl
             )
             
             response_json = None
@@ -1274,7 +1294,7 @@ class IdracMixin:
             self.log(f"  Could not fetch BIOS attributes: {e}", "DEBUG")
             return None
     
-    def _fetch_storage_drives_optimized(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, session: Dict = None, capabilities: Dict = None) -> List[Dict]:
+    def _fetch_storage_drives_optimized(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, session: Dict = None, capabilities: Dict = None, legacy_ssl: bool = False) -> List[Dict]:
         """
         OPTIMIZED: Fetch drive inventory using capability-aware $expand.
         
@@ -1292,7 +1312,7 @@ class IdracMixin:
             if not caps.get('expand_storage', False):
                 # No $expand support for Storage - go straight to legacy with session
                 self.log(f"  → Storage: skipping $expand (not supported by this iDRAC)", "DEBUG")
-                return self._fetch_storage_drives(ip, username, password, server_id, job_id, session=session, capabilities=caps)
+                return self._fetch_storage_drives(ip, username, password, server_id, job_id, session=session, capabilities=caps, legacy_ssl=legacy_ssl)
             
             # Choose best expansion level
             if caps.get('expand_levels_1', False):
@@ -1303,7 +1323,7 @@ class IdracMixin:
                 endpoint_label = '/Storage?$expand=Members'
             
             storage_response, storage_time = self._make_session_request(
-                ip, storage_url, session, username, password, timeout=(2, 45)
+                ip, storage_url, session, username, password, timeout=(2, 45), legacy_ssl=legacy_ssl
             )
             
             self.log_idrac_command(
@@ -1322,7 +1342,7 @@ class IdracMixin:
                     # Try simpler expansion
                     storage_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Storage?$expand=Members"
                     storage_response, storage_time = self._make_session_request(
-                        ip, storage_url, session, username, password, timeout=(2, 30)
+                        ip, storage_url, session, username, password, timeout=(2, 30), legacy_ssl=legacy_ssl
                     )
                     
                     self.log_idrac_command(
@@ -1337,7 +1357,7 @@ class IdracMixin:
             
             if not storage_response or storage_response.status_code != 200:
                 # Ultimate fallback to legacy method with session and capabilities
-                return self._fetch_storage_drives(ip, username, password, server_id, job_id, session=session, capabilities=caps)
+                return self._fetch_storage_drives(ip, username, password, server_id, job_id, session=session, capabilities=caps, legacy_ssl=legacy_ssl)
             
             storage_data = storage_response.json()
             controllers = storage_data.get('Members', [])
@@ -1352,7 +1372,7 @@ class IdracMixin:
                         # Need to fetch controller with expansion
                         controller_url = f"https://{ip}{controller_item['@odata.id']}?$expand=Drives,Volumes"
                         ctrl_resp, ctrl_time = self._make_session_request(
-                            ip, controller_url, session, username, password, timeout=(2, 20)
+                            ip, controller_url, session, username, password, timeout=(2, 20), legacy_ssl=legacy_ssl
                         )
                         
                         if not ctrl_resp or ctrl_resp.status_code != 200:
@@ -1381,7 +1401,7 @@ class IdracMixin:
                                 # Need individual fetch (fallback)
                                 drive_url = f"https://{ip}{drive_item['@odata.id']}"
                                 drive_resp, _ = self._make_session_request(
-                                    ip, drive_url, session, username, password, timeout=(2, 10)
+                                    ip, drive_url, session, username, password, timeout=(2, 10), legacy_ssl=legacy_ssl
                                 )
                                 if drive_resp and drive_resp.status_code == 200:
                                     drive_info = self._extract_drive_info(drive_resp.json(), controller_name, volumes_info)
@@ -1558,7 +1578,7 @@ class IdracMixin:
             self.log(f"  Could not fetch NICs (optimized): {e}", "DEBUG")
             return self._fetch_network_adapters(ip, username, password, server_id, job_id, session=session, legacy_ssl=legacy_ssl)
     
-    def _fetch_memory_dimms_optimized(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, session: Dict = None, capabilities: Dict = None) -> List[Dict]:
+    def _fetch_memory_dimms_optimized(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, session: Dict = None, capabilities: Dict = None, legacy_ssl: bool = False) -> List[Dict]:
         """
         OPTIMIZED: Fetch memory/DIMM inventory using capability-aware $expand.
         
@@ -1578,13 +1598,13 @@ class IdracMixin:
             if not caps.get('expand_levels_1', False):
                 # No $expand support - go straight to legacy with session
                 self.log(f"  → Memory: skipping $expand (not supported by this iDRAC)", "DEBUG")
-                return self._fetch_memory_dimms(ip, username, password, server_id, job_id, session=session)
+                return self._fetch_memory_dimms(ip, username, password, server_id, job_id, session=session, legacy_ssl=legacy_ssl)
             
             memory_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Memory?$expand=*($levels=1)"
             endpoint_label = '/Memory?$expand=*($levels=1)'
             
             memory_response, memory_time = self._make_session_request(
-                ip, memory_url, session, username, password, timeout=(2, 45)
+                ip, memory_url, session, username, password, timeout=(2, 45), legacy_ssl=legacy_ssl
             )
             
             self.log_idrac_command(
@@ -1602,7 +1622,7 @@ class IdracMixin:
                 if '$expand=*' in memory_url:
                     memory_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Memory?$expand=Members"
                     memory_response, memory_time = self._make_session_request(
-                        ip, memory_url, session, username, password, timeout=(2, 30)
+                        ip, memory_url, session, username, password, timeout=(2, 30), legacy_ssl=legacy_ssl
                     )
                     
                     self.log_idrac_command(
@@ -1617,7 +1637,7 @@ class IdracMixin:
             
             if not memory_response or memory_response.status_code != 200:
                 # Ultimate fallback with session
-                return self._fetch_memory_dimms(ip, username, password, server_id, job_id, session=session)
+                return self._fetch_memory_dimms(ip, username, password, server_id, job_id, session=session, legacy_ssl=legacy_ssl)
             
             memory_data = memory_response.json()
             
@@ -1630,7 +1650,7 @@ class IdracMixin:
                         # Need individual fetch (rare with proper expansion)
                         dimm_url = f"https://{ip}{dimm_item['@odata.id']}"
                         dimm_resp, _ = self._make_session_request(
-                            ip, dimm_url, session, username, password, timeout=(2, 10)
+                            ip, dimm_url, session, username, password, timeout=(2, 10), legacy_ssl=legacy_ssl
                         )
                         if not dimm_resp or dimm_resp.status_code != 200:
                             continue
@@ -1676,9 +1696,9 @@ class IdracMixin:
             
         except Exception as e:
             self.log(f"  Could not fetch memory (optimized): {e}", "DEBUG")
-            return self._fetch_memory_dimms(ip, username, password, server_id, job_id, session=session)
+            return self._fetch_memory_dimms(ip, username, password, server_id, job_id, session=session, legacy_ssl=legacy_ssl)
     
-    def _fetch_storage_drives(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, session: Dict = None, capabilities: Dict = None) -> List[Dict]:
+    def _fetch_storage_drives(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, session: Dict = None, capabilities: Dict = None, legacy_ssl: bool = False) -> List[Dict]:
         """
         Fetch drive inventory using Dell Redfish Storage API.
         
@@ -1687,6 +1707,7 @@ class IdracMixin:
         
         Args:
             capabilities: Dict with 'expand_storage' flag - if False, skips ALL $expand attempts
+            legacy_ssl: Use Legacy TLS adapter for iDRAC 8
         
         Returns drives with RAID/Volume info and WWN/NAA for ESXi correlation.
         """
@@ -1706,7 +1727,7 @@ class IdracMixin:
             
             # Always use session-based request when session is available
             storage_response, storage_time = self._make_session_request(
-                ip, storage_url, session, username, password, timeout=(2, 30)
+                ip, storage_url, session, username, password, timeout=(2, 30), legacy_ssl=legacy_ssl
             )
             
             # Log the storage controllers API call
@@ -1748,7 +1769,7 @@ class IdracMixin:
                             endpoint_label = f'/Storage/{controller_id}'
                         
                         ctrl_resp, ctrl_time = self._make_session_request(
-                            ip, controller_url, session, username, password, timeout=(2, 30)
+                            ip, controller_url, session, username, password, timeout=(2, 30), legacy_ssl=legacy_ssl
                         )
                         
                         self.log_idrac_command(
@@ -1794,7 +1815,7 @@ class IdracMixin:
                             vol_endpoint = f'/Storage/{controller_name}/Volumes'
                         
                         vol_resp, vol_time = self._make_session_request(
-                            ip, volumes_url, session, username, password, timeout=(2, 20)
+                            ip, volumes_url, session, username, password, timeout=(2, 20), legacy_ssl=legacy_ssl
                         )
                         
                         self.log_idrac_command(
@@ -1824,7 +1845,7 @@ class IdracMixin:
                                     # Need to fetch individual volume
                                     vol_url = f"https://{ip}{vol['@odata.id']}"
                                     vol_detail_resp, _ = self._make_session_request(
-                                        ip, vol_url, session, username, password, timeout=(2, 15)
+                                        ip, vol_url, session, username, password, timeout=(2, 15), legacy_ssl=legacy_ssl
                                     )
                                     if vol_detail_resp and vol_detail_resp.status_code == 200:
                                         self._map_volume_to_drives(vol_detail_resp.json(), volumes_info, controller_name)
@@ -1840,7 +1861,7 @@ class IdracMixin:
                                 # Need to fetch individual drive
                                 drive_url = f"https://{ip}{drive_item['@odata.id']}"
                                 drive_resp, drive_time = self._make_session_request(
-                                    ip, drive_url, session, username, password, timeout=(2, 15)
+                                    ip, drive_url, session, username, password, timeout=(2, 15), legacy_ssl=legacy_ssl
                                 )
                                 
                                 # Log individual drive fetch
@@ -2647,10 +2668,11 @@ class IdracMixin:
             self.log(f"  Error syncing NICs for server {server_id}: {e}", "WARN")
             return 0
 
-    def _fetch_memory_dimms(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, session: Dict = None) -> List[Dict]:
+    def _fetch_memory_dimms(self, ip: str, username: str, password: str, server_id: str = None, job_id: str = None, session: Dict = None, legacy_ssl: bool = False) -> List[Dict]:
         """
         Fetch memory/DIMM inventory using Dell Redfish Memory API.
         Session-aware: Uses session token if provided for auth efficiency.
+        Legacy TLS aware: Uses TLS 1.0/1.1 for iDRAC 8 compatibility.
         
         Dell Redfish Pattern (per GetSystemHWInventoryREDFISH.py):
         1. GET /redfish/v1/Systems/System.Embedded.1/Memory → list of DIMMs
@@ -2665,21 +2687,10 @@ class IdracMixin:
             # Get memory collection with $expand for efficiency
             memory_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Memory?$expand=Members"
             
-            # Use session-based request if available, otherwise basic auth
-            if session and session.get('token'):
-                memory_response, memory_time = self._make_session_request(
-                    ip, memory_url, session, username, password, timeout=(2, 30)
-                )
-            else:
-                start_time = time.time()
-                memory_response = self.session_manager.make_request(
-                    method='GET',
-                    url=memory_url,
-                    ip=ip,
-                    auth=(username, password),
-                    timeout=(2, 30)
-                )
-                memory_time = int((time.time() - start_time) * 1000)
+            # Always use session-based request for proper legacy_ssl handling
+            memory_response, memory_time = self._make_session_request(
+                ip, memory_url, session, username, password, timeout=(2, 30), legacy_ssl=legacy_ssl
+            )
             
             # Log the API call
             expand_succeeded = memory_response is not None and memory_response.status_code == 200
@@ -2703,15 +2714,9 @@ class IdracMixin:
             # Fallback to non-expanded if needed
             if not memory_response or memory_response.status_code != 200:
                 memory_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/Memory"
-                start_time = time.time()
-                memory_response = self.session_manager.make_request(
-                    method='GET',
-                    url=memory_url,
-                    ip=ip,
-                    auth=(username, password),
-                    timeout=(2, 15)
+                memory_response, memory_time = self._make_session_request(
+                    ip, memory_url, session, username, password, timeout=(2, 15), legacy_ssl=legacy_ssl
                 )
-                memory_time = int((time.time() - start_time) * 1000)
                 
                 # Log fallback
                 self.log_idrac_command(
@@ -2741,12 +2746,8 @@ class IdracMixin:
                     # If $expand worked, member has full data; else fetch individually
                     if '@odata.id' in member and 'Id' not in member:
                         dimm_url = f"https://{ip}{member['@odata.id']}"
-                        dimm_resp = self.session_manager.make_request(
-                            method='GET',
-                            url=dimm_url,
-                            ip=ip,
-                            auth=(username, password),
-                            timeout=(2, 10)
+                        dimm_resp, _ = self._make_session_request(
+                            ip, dimm_url, session, username, password, timeout=(2, 10), legacy_ssl=legacy_ssl
                         )
                         if not dimm_resp or dimm_resp.status_code != 200:
                             continue
