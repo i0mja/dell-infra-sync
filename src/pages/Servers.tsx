@@ -542,6 +542,7 @@ export default function Servers() {
             onlineCount: selectedGroupData.onlineCount,
             linkedCount: selectedGroupData.linkedCount,
           } : null}
+          hardwareIssues={hardwareIssues}
           onClose={() => {
             setSelectedServer(null);
             setSelectedGroup(null);
