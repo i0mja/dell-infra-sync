@@ -60,7 +60,7 @@ export function ActiveTestIndicator({
     
     setIsEnding(true);
     try {
-      await rollbackFailover.mutateAsync(eventId);
+      await rollbackFailover.mutateAsync({ eventId, protectionGroupId: groupId });
     } finally {
       setIsEnding(false);
     }
