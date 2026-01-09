@@ -210,6 +210,19 @@ export function ServerDetailsSidebar({
                 {selectedServer.service_tag && (
                   <p className="font-mono">{selectedServer.service_tag}</p>
                 )}
+                {/* Location info */}
+                {(selectedServer.datacenter || selectedServer.rack_id || selectedServer.rack_position) && (
+                  <p className="flex items-center gap-1 text-muted-foreground">
+                    <span>📍</span>
+                    <span className="truncate">
+                      {[
+                        selectedServer.datacenter,
+                        selectedServer.rack_id,
+                        selectedServer.rack_position
+                      ].filter(Boolean).join(" · ")}
+                    </span>
+                  </p>
+                )}
               </div>
             </div>
             <Button variant="ghost" size="icon" className="h-7 w-7 -mr-1" onClick={onClose}>

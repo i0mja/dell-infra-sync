@@ -41,6 +41,13 @@ export interface Server {
   virtualization_enabled: boolean | null;
   total_drives: number | null;
   total_storage_tb: number | null;
+  // Location/rack info
+  datacenter: string | null;
+  rack_id: string | null;
+  rack_position: string | null;
+  row_aisle: string | null;
+  room_floor: string | null;
+  location_notes: string | null;
 }
 
 interface GroupedServers {
