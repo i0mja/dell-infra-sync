@@ -2660,14 +2660,22 @@ class IdracMixin:
                         # Build speed map: FQDD -> SpeedMbps
                         speed_map = {}
                         for member in eth_data.get('Members', []):
-                            fqdd = member.get('Id')
+                            eth_id = member.get('Id')
                             speed = member.get('SpeedMbps')
-                            if fqdd and speed and speed > 0:
-                                speed_map[fqdd] = speed
+                            self.log(f"    → EthernetInterface raw: Id='{eth_id}' SpeedMbps={speed}", "DEBUG")
+                            if eth_id and speed and speed > 0:
+                                speed_map[eth_id] = speed
+                        
+                        self.log(f"    → speed_map keys: {list(speed_map.keys())}", "DEBUG")
+                        
+                        # Log NIC FQDDs for comparison
+                        nic_fqdds = [nic.get('fqdd') for nic in nics if nic.get('fqdd')]
+                        self.log(f"    → NIC FQDDs to match: {nic_fqdds}", "DEBUG")
                         
                         # Merge speeds into NICs that are missing speed data
                         # Handle partition suffix: NIC FQDD "NIC.Integrated.1-1-1" vs EthInterface ID "NIC.Integrated.1-1"
                         enhanced_count = 0
+                        unmatched = []
                         for nic in nics:
                             if not nic.get('current_speed_mbps'):
                                 fqdd = nic.get('fqdd')
@@ -2675,18 +2683,29 @@ class IdracMixin:
                                     continue
                                 
                                 speed = None
+                                match_type = None
+                                
                                 # Pattern 1: Exact match
                                 if fqdd in speed_map:
                                     speed = speed_map[fqdd]
+                                    match_type = "exact"
+                                
                                 # Pattern 2: Strip partition suffix (NIC.Integrated.1-1-1 → NIC.Integrated.1-1)
                                 if not speed and '-' in fqdd:
                                     eth_id = '-'.join(fqdd.rsplit('-', 1)[:-1])
                                     if eth_id in speed_map:
                                         speed = speed_map[eth_id]
+                                        match_type = f"partition-strip→{eth_id}"
                                 
                                 if speed:
                                     nic['current_speed_mbps'] = speed
                                     enhanced_count += 1
+                                    self.log(f"    → {fqdd}: matched ({match_type}) → {speed} Mbps", "DEBUG")
+                                else:
+                                    unmatched.append(fqdd)
+                        
+                        if unmatched:
+                            self.log(f"    → UNMATCHED NICs (no speed): {unmatched}", "WARNING")
                         
                         if enhanced_count > 0:
                             self.log(f"  → Enhanced {enhanced_count} NICs with EthernetInterfaces speed data", "DEBUG")
