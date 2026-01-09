@@ -41,6 +41,7 @@ interface ComponentFault {
   type: 'drive' | 'memory';
   slot: string;
   partNumber: string | null;
+  partNumberInferred?: boolean; // True if P/N was looked up from another drive with same model
   model?: string;
   mediaType?: string;
   manufacturer?: string;
@@ -135,6 +136,21 @@ export const PriorityAlertCenter = () => {
         `)
         .eq('health', 'Critical');
 
+      // Build a model -> part_number lookup from healthy drives for fallback
+      const { data: modelPartNumbers } = await supabase
+        .from('server_drives')
+        .select('model, part_number')
+        .not('model', 'is', null)
+        .not('part_number', 'is', null)
+        .neq('health', 'Critical');
+
+      const modelToPartNumber: Record<string, string> = {};
+      modelPartNumbers?.forEach(d => {
+        if (d.model && d.part_number && !modelToPartNumber[d.model]) {
+          modelToPartNumber[d.model] = d.part_number;
+        }
+      });
+
       // Aggregate by server with component details
       const serverIssues: Record<string, { 
         serverId: string; 
@@ -144,18 +160,19 @@ export const PriorityAlertCenter = () => {
         components: ComponentFault[];
       }> = {};
 
-      const buildLocation = (server: { datacenter?: string | null; rack_id?: string | null; rack_position?: number | null }) => {
+      const buildLocation = (server: { datacenter?: string | null; rack_id?: string | null; rack_position?: string | null }) => {
         const parts: string[] = [];
         if (server.datacenter) parts.push(server.datacenter);
         if (server.rack_id) parts.push(server.rack_id);
-        if (server.rack_position) parts.push(`U${server.rack_position}`);
+        // rack_position already includes 'U' prefix (e.g., "U31-U32")
+        if (server.rack_position) parts.push(server.rack_position);
         return parts.join(' · ');
       };
 
       driveIssues?.forEach(d => {
         const server = d.servers as unknown as { 
           id: string; hostname: string; ip_address: string;
-          datacenter: string | null; rack_id: string | null; rack_position: number | null;
+          datacenter: string | null; rack_id: string | null; rack_position: string | null;
         };
         if (!serverIssues[server.id]) {
           serverIssues[server.id] = { 
@@ -172,10 +189,16 @@ export const PriorityAlertCenter = () => {
           ? 'Predictive failure' 
           : d.health === 'Critical' ? 'Critical' : d.status || 'Failed';
         
+        // Use direct part_number if available, otherwise look up from matching model
+        const directPartNumber = d.part_number;
+        const inferredPartNumber = !directPartNumber && d.model ? modelToPartNumber[d.model] : null;
+        const partNumber = directPartNumber || inferredPartNumber;
+        
         serverIssues[server.id].components.push({
           type: 'drive',
           slot: d.slot ? `Bay ${d.slot}` : 'Unknown bay',
-          partNumber: d.part_number,
+          partNumber,
+          partNumberInferred: !directPartNumber && !!inferredPartNumber,
           model: d.model,
           mediaType: d.media_type === 'SSD' ? 'SSD' : d.media_type === 'HDD' ? 'HDD' : undefined,
           severity: isCritical ? 'critical' : 'warning',
@@ -186,7 +209,7 @@ export const PriorityAlertCenter = () => {
       memoryIssues?.forEach(m => {
         const server = m.servers as unknown as { 
           id: string; hostname: string; ip_address: string;
-          datacenter: string | null; rack_id: string | null; rack_position: number | null;
+          datacenter: string | null; rack_id: string | null; rack_position: string | null;
         };
         if (!serverIssues[server.id]) {
           serverIssues[server.id] = { 
@@ -506,12 +529,20 @@ export const PriorityAlertCenter = () => {
                                         <span className="text-muted-foreground/70">{comp.mediaType}</span>
                                       )}
                                       {comp.partNumber && (
-                                        <span 
-                                          className="font-mono text-[9px] bg-muted px-1 rounded cursor-help" 
-                                          title={comp.partNumber}
-                                        >
-                                          P/N: {formatDellPartNumber(comp.partNumber)}
-                                        </span>
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <span 
+                                              className="font-mono text-[9px] bg-muted px-1 rounded cursor-help" 
+                                            >
+                                              P/N: {formatDellPartNumber(comp.partNumber)}{comp.partNumberInferred ? '*' : ''}
+                                            </span>
+                                          </TooltipTrigger>
+                                          <TooltipContent side="top" className="text-xs">
+                                            {comp.partNumberInferred 
+                                              ? `Inferred from model ${comp.model}` 
+                                              : comp.partNumber}
+                                          </TooltipContent>
+                                        </Tooltip>
                                       )}
                                       {comp.type === 'memory' && comp.manufacturer && !comp.partNumber && (
                                         <span className="font-mono text-[9px] bg-muted px-1 rounded">
