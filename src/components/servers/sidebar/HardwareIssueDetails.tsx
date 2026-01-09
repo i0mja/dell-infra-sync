@@ -3,6 +3,13 @@ import { cn } from "@/lib/utils";
 import type { ServerMemory } from "@/hooks/useServerMemory";
 import type { ServerDrive } from "@/hooks/useServerDrives";
 import { isDriveCritical } from "@/lib/driveHealth";
+import { formatDellPartNumber } from "@/lib/drive-utils";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface MemoryIssueProps {
   memory: ServerMemory;
@@ -17,8 +24,14 @@ export function MemoryIssueDetail({ memory }: MemoryIssueProps) {
     ? `${(memory.capacity_mb / 1024).toFixed(0)} GB` 
     : null;
   
-  // Build detail line
-  const details = [capacityGB, memory.manufacturer].filter(Boolean).join(" • ");
+  // Build detail line with type and speed
+  const typeInfo = [
+    capacityGB,
+    memory.memory_type,
+    memory.speed_mhz ? `@ ${memory.speed_mhz} MHz` : null,
+  ].filter(Boolean).join(" ");
+  
+  const details = [typeInfo, memory.manufacturer].filter(Boolean).join(" • ");
   
   // Serial number status
   const hasSerial = memory.serial_number && memory.serial_number !== "Unknown";
@@ -46,6 +59,11 @@ export function MemoryIssueDetail({ memory }: MemoryIssueProps) {
           {details && (
             <p className="text-xs text-muted-foreground mt-0.5">{details}</p>
           )}
+          {memory.part_number && (
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Mfr P/N: {memory.part_number}
+            </p>
+          )}
           {!hasSerial && isCritical && (
             <p className="text-xs text-muted-foreground/80 mt-1 italic">
               Serial unavailable — module needs replacement
@@ -59,9 +77,10 @@ export function MemoryIssueDetail({ memory }: MemoryIssueProps) {
 
 interface DriveIssueProps {
   drive: ServerDrive;
+  inferredPartNumber?: string;
 }
 
-export function DriveIssueDetail({ drive }: DriveIssueProps) {
+export function DriveIssueDetail({ drive, inferredPartNumber }: DriveIssueProps) {
   const isCritical = isDriveCritical(drive);
   const isPredictive = drive.predicted_failure;
   
@@ -70,15 +89,27 @@ export function DriveIssueDetail({ drive }: DriveIssueProps) {
   const bayMatch = slotInfo.match(/Bay\.?(\d+)/i) || slotInfo.match(/(\d+)/);
   const bayNumber = bayMatch ? `Bay ${bayMatch[1]}` : slotInfo;
   
+  // Format capacity
+  const capacityTB = drive.capacity_bytes 
+    ? `${(drive.capacity_bytes / (1024 ** 4)).toFixed(1)} TB` 
+    : null;
+  
   // Build detail line
   const details = [
     drive.media_type,
-    drive.capacity_bytes ? `${(drive.capacity_bytes / (1024 ** 4)).toFixed(0)} TB` : null,
+    capacityTB,
     drive.manufacturer,
   ].filter(Boolean).join(" • ");
   
   // Serial number status
   const hasSerial = drive.serial_number && drive.serial_number !== "Unknown";
+
+  // Part number handling with fallback
+  const rawPartNumber = drive.part_number;
+  const dellPartNumber = rawPartNumber ? formatDellPartNumber(rawPartNumber) : null;
+  const inferredDellPart = inferredPartNumber ? formatDellPartNumber(inferredPartNumber) : null;
+  const displayPartNumber = dellPartNumber || inferredDellPart;
+  const isInferred = !dellPartNumber && !!inferredDellPart;
 
   // Determine status message
   let statusMessage = "";
@@ -118,6 +149,25 @@ export function DriveIssueDetail({ drive }: DriveIssueProps) {
           </p>
           {details && (
             <p className="text-xs text-muted-foreground mt-0.5">{details}</p>
+          )}
+          {displayPartNumber && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <p className="text-xs text-muted-foreground mt-0.5 cursor-help w-fit">
+                    P/N: {displayPartNumber}{isInferred ? '*' : ''}
+                    {isInferred && <span className="text-muted-foreground/60"> (inferred)</span>}
+                  </p>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="text-xs">
+                    {isInferred 
+                      ? `Inferred from model ${drive.model}` 
+                      : `Raw: ${rawPartNumber}`}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           )}
           {!hasSerial && isCritical && (
             <p className="text-xs text-muted-foreground/80 mt-1 italic">
