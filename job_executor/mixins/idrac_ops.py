@@ -2884,7 +2884,9 @@ class IdracMixin:
                 _parse_port_item(port_item)
             
             if port_map:
-                self.log(f"  → Port map: {list(port_map.keys())}", "DEBUG")
+                self.log(f"  → Port map contents:", "DEBUG")
+                for pid, pdata in port_map.items():
+                    self.log(f"    → {pid}: speed={pdata.get('current_speed_mbps')}, link={pdata.get('link_status')}", "DEBUG")
                     
         except Exception as e:
             self.log(f"  Error fetching ports: {e}", "DEBUG")
@@ -2968,7 +2970,7 @@ class IdracMixin:
                 matched_port_id = None
                 
                 # Log available port_map for this NIC
-                self.logger.debug(f"    → {fqdd}: Looking for port data, port_map keys: {list(port_map.keys())}")
+                self.log(f"    → {fqdd}: Looking for port data, port_map keys: {list(port_map.keys())}", "DEBUG")
                 
                 # Try multiple port ID patterns:
                 # Pattern 1: Full FQDD prefix (NIC.Integrated.1-2-1 → NIC.Integrated.1-2)
@@ -2997,7 +2999,7 @@ class IdracMixin:
                     matched_port_id = list(port_map.keys())[0]
                 
                 speed_val = port_data.get('current_speed_mbps')
-                self.logger.debug(f"    → {fqdd}: port_data matched '{matched_port_id}' -> speed={speed_val}")
+                self.log(f"    → {fqdd}: port_data matched '{matched_port_id}' -> speed={speed_val}", "DEBUG")
                 if speed_val and speed_val > 0:
                     current_speed = speed_val
                 
