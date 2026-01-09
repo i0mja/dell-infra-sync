@@ -55,7 +55,7 @@ export function CollapsibleSection({
           {headerContent}
         </div>
       </button>
-      {isOpen && <div className="pl-5 pb-2 pt-1">{children}</div>}
+      {isOpen && <div className="pl-4 pb-1.5 pt-0.5">{children}</div>}
     </div>
   );
 }

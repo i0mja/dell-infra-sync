@@ -112,7 +112,7 @@ export function ServerStorageSummary({
       </div>
 
       {/* Drive List */}
-      <div className="space-y-1.5">
+      <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
         {drives.map((drive) => (
           <div
             key={drive.id}
