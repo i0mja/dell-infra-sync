@@ -114,7 +114,10 @@ export default function Servers() {
     }
   }, [scan?.status, scan?.id, scan?.summary, scan?.error_message, updateScanDialogOpen, navigate]);
 
-  // Hooks
+  // Fetch hardware issues for degraded status (needed for filtering)
+  const { data: hardwareIssues } = useServerHardwareIssues();
+
+  // Hooks - pass hardwareIssues for degraded status filtering
   const {
     filteredServers,
     groupedData,
@@ -123,10 +126,7 @@ export default function Servers() {
     groupMemberships,
     vCenterHosts,
     refetch,
-  } = useServers(searchTerm, statusFilter, groupFilter);
-
-  // Fetch hardware issues for degraded status
-  const { data: hardwareIssues } = useServerHardwareIssues();
+  } = useServers(searchTerm, statusFilter, groupFilter, hardwareIssues);
 
   const { refreshing, testing, handleTestConnection, handleRefreshInfo, handleDeleteServer } =
     useServerActions();
