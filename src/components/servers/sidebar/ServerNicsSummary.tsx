@@ -113,7 +113,7 @@ export function ServerNicsSummary({ nics, isLoading }: ServerNicsSummaryProps) {
       count={nics.length}
       defaultOpen={false}
     >
-      <div className={`space-y-1.5 ${showAll ? 'max-h-64 overflow-y-auto' : ''}`}>
+      <div className={`space-y-1.5 ${showAll ? 'max-h-80 overflow-y-auto pr-1' : ''}`}>
         {displayNics.map((nic) => (
           <div
             key={nic.id}

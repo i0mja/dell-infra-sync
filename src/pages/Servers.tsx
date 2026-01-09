@@ -455,7 +455,7 @@ export default function Servers() {
       {/* Main: Table + Sidebar Layout */}
       <div className="flex-1 flex overflow-hidden">
         {/* Scrollable table area */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto min-w-0">
           <ServersTable
           servers={filteredServers}
           groupedData={groupedData ? groupedData.map(g => ({

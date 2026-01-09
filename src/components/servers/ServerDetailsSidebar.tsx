@@ -183,7 +183,7 @@ export function ServerDetailsSidebar({
     };
 
     return (
-      <Card className="h-full flex flex-col overflow-hidden">
+      <div className="w-[440px] flex-shrink-0 border-l bg-card h-full flex flex-col overflow-hidden">
         {/* Status Bar */}
         <div className={`h-1.5 ${getStatusBarColor(selectedServer.connection_status)}`} />
 
@@ -361,7 +361,7 @@ export function ServerDetailsSidebar({
 
         {/* Bottom Tab Navigation */}
         <ServerSidebarTabs activeTab={activeTab} onTabChange={setActiveTab} />
-      </Card>
+      </div>
     );
   }
 
@@ -375,7 +375,7 @@ export function ServerDetailsSidebar({
     ).length;
 
     return (
-      <Card className="h-full flex flex-col">
+      <div className="w-[440px] flex-shrink-0 border-l bg-card h-full flex flex-col">
         {/* Status Bar - green if all online, yellow if mixed */}
         <div className={`h-1.5 ${offlineCount === 0 ? "bg-success" : onlineCount > 0 ? "bg-warning" : "bg-destructive"}`} />
 
@@ -424,13 +424,13 @@ export function ServerDetailsSidebar({
             Bulk Operations
           </Button>
         </div>
-      </Card>
+      </div>
     );
   }
 
   // Empty State
   return (
-    <Card className="h-full flex flex-col">
+    <div className="w-[440px] flex-shrink-0 border-l bg-card h-full flex flex-col">
       <div className="h-1.5 bg-muted" />
       
       <CardHeader className="pb-3 pt-3">
@@ -449,6 +449,6 @@ export function ServerDetailsSidebar({
           <p className="text-xs mt-1">Click on a server row to view details</p>
         </div>
       </CardContent>
-    </Card>
+    </div>
   );
 }

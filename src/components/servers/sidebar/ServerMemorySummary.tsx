@@ -136,7 +136,7 @@ export function ServerMemorySummary({ server }: ServerMemorySummaryProps) {
       defaultOpen={false}
       headerContent={headerContent}
     >
-      <div className="space-y-1.5 max-h-64 overflow-y-auto">
+      <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
         {sortedDimms.map((dimm) => (
           <div
             key={dimm.id}
