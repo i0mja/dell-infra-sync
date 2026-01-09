@@ -8,6 +8,7 @@ import { useConsoleLauncher } from "@/hooks/useConsoleLauncher";
 import { useServerActions } from "@/hooks/useServerActions";
 import { useAutoLinkVCenter } from "@/hooks/useAutoLinkVCenter";
 import { useUpdateAvailabilityScan } from "@/hooks/useUpdateAvailabilityScan";
+import { parseIdracError } from "@/lib/idrac-errors";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { logActivityDirect } from "@/hooks/useActivityLog";
@@ -98,8 +99,13 @@ export default function Servers() {
       setActiveScanId(null);
     } else if (scan.status === 'failed') {
       setUpdateScanDialogOpen(false);
-      toast.error('Scan Failed', {
-        description: scan.error_message || 'The firmware scan encountered an error.',
+      const parsedError = parseIdracError(scan.error_message);
+      toast.error(parsedError?.title || 'Scan Failed', {
+        description: parsedError?.message || 'The firmware scan encountered an error.',
+        action: parsedError?.suggestedAction ? {
+          label: 'Retry',
+          onClick: () => setUpdateScanDialogOpen(true),
+        } : undefined,
       });
       setActiveScanId(null);
     } else if (scan.status === 'cancelled') {
