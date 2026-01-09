@@ -95,20 +95,20 @@ export function ServerNicsSummary({ nics, isLoading }: ServerNicsSummaryProps) {
                       ? "default" 
                       : nic.link_status?.toLowerCase() === "down" || nic.link_status?.toLowerCase() === "linkdown"
                         ? "destructive"
-                        : "secondary"
+                        : "outline"
                   }
                   className="text-[10px] px-1 py-0 h-4"
                 >
                   {nic.link_status === "LinkUp" || nic.link_status?.toLowerCase() === "up" ? "Up" : 
                    nic.link_status === "LinkDown" || nic.link_status?.toLowerCase() === "down" ? "Down" : 
-                   nic.link_status || "Unknown"}
+                   nic.link_status || "—"}
                 </Badge>
               </div>
-              {/* Manufacturer and model line */}
-              {(nic.manufacturer || formatShortModel(nic.model)) && (
+              {/* Manufacturer and model line - only show if we have a model to display */}
+              {formatShortModel(nic.model) && (
                 <div className="text-[10px] text-muted-foreground truncate mt-0.5" title={nic.model || ''}>
                   {formatManufacturer(nic.manufacturer)}
-                  {formatManufacturer(nic.manufacturer) && formatShortModel(nic.model) && ' • '}
+                  {formatManufacturer(nic.manufacturer) && ' • '}
                   {formatShortModel(nic.model)}
                 </div>
               )}
