@@ -408,6 +408,10 @@ class FailoverHandler:
             # Update group status
             new_group_status = 'failed_over' if recovered_count > 0 else 'failover_error'
             self._update_group_failover_status(protection_group_id, new_group_status, event_id)
+            
+            # Update last_test_at for successful test failovers
+            if failover_type == 'test' and recovered_count > 0:
+                self._update_protection_group_test_date(protection_group_id)
 
             result = {
                 'success': recovered_count > 0,
@@ -1991,3 +1995,29 @@ class FailoverHandler:
             self.executor.log(f"[Failover] Error fetching vCenter: {e}", "ERROR")
         
         return None
+
+    def _update_protection_group_test_date(self, protection_group_id: str):
+        """Update the last_test_at field on a protection group after successful test failover."""
+        from datetime import datetime
+        
+        try:
+            response = requests.patch(
+                f"{DSM_URL}/rest/v1/protection_groups",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=minimal'
+                },
+                params={'id': f'eq.{protection_group_id}'},
+                json={'last_test_at': datetime.utcnow().isoformat()},
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.status_code in [200, 204]:
+                self.executor.log(f"[Group Failover] Updated last_test_at for group {protection_group_id}")
+            else:
+                self.executor.log(f"[Group Failover] Failed to update last_test_at: {response.status_code}", "WARN")
+        except Exception as e:
+            self.executor.log(f"[Group Failover] Error updating last_test_at: {e}", "WARN")
