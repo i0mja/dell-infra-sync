@@ -786,9 +786,21 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
                             <p className="text-sm">{testResult.message}</p>
                             
                             {testResult.details?.parsedError?.suggestedAction && (
-                              <div className="mt-2 p-2 bg-muted/50 rounded text-xs">
-                                <span className="font-medium">Suggested Action:</span>
-                                <p className="mt-0.5 opacity-90">{testResult.details.parsedError.suggestedAction}</p>
+                              <div className="mt-3 p-3 bg-muted/50 rounded border text-xs">
+                                <span className="font-medium text-foreground">Suggested Resolution:</span>
+                                <div className="mt-1.5 opacity-90 whitespace-pre-line">
+                                  {testResult.details.parsedError.suggestedAction}
+                                </div>
+                                {testResult.details?.parsedError?.docLink && (
+                                  <a 
+                                    href={testResult.details.parsedError.docLink} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    className="text-primary hover:underline mt-2 inline-block"
+                                  >
+                                    Learn More →
+                                  </a>
+                                )}
                               </div>
                             )}
                             
