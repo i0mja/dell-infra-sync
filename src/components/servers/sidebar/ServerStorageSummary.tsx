@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import type { ServerDrive } from "@/hooks/useServerDrives";
 import { CollapsibleSection } from "./CollapsibleSection";
 import { isDriveCritical, getDriveFailureMessage } from "@/lib/driveHealth";
+import { formatDellPartNumber } from "@/lib/drive-utils";
 import { formatDistanceToNow } from "date-fns";
 
 interface ServerStorageSummaryProps {
@@ -139,6 +140,11 @@ export function ServerStorageSummary({
                 {drive.slot != null && <span>{drive.serial_number ? '•' : ''} Bay {drive.slot}</span>}
                 {drive.capacity_gb && <span>• {formatCapacity(drive.capacity_gb)}</span>}
                 {drive.manufacturer && <span className="truncate">• {drive.manufacturer}</span>}
+                {drive.part_number && (
+                  <span className="font-mono text-[10px]" title={drive.part_number}>
+                    • P/N: {formatDellPartNumber(drive.part_number)}
+                  </span>
+                )}
               </div>
               {/* Critical/Disabled/UnavailableOffline status */}
               {isDriveCritical(drive) && (
