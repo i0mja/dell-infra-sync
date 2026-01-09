@@ -85,8 +85,25 @@ export function ServerNicsSummary({ nics, isLoading, onViewAll }: ServerNicsSumm
     );
   }
 
-  // Show first 6 NICs, with option to view all
-  const displayNics = nics.slice(0, 6);
+  // Sort NICs: LinkUp first, then by speed descending, then alphabetically
+  const sortedNics = [...nics].sort((a, b) => {
+    // LinkUp ports first
+    const aUp = a.link_status?.toLowerCase() === 'linkup' || a.link_status?.toLowerCase() === 'up';
+    const bUp = b.link_status?.toLowerCase() === 'linkup' || b.link_status?.toLowerCase() === 'up';
+    if (aUp && !bUp) return -1;
+    if (!aUp && bUp) return 1;
+    
+    // Then by speed (highest first)
+    const aSpeed = a.current_speed_mbps || 0;
+    const bSpeed = b.current_speed_mbps || 0;
+    if (aSpeed !== bSpeed) return bSpeed - aSpeed;
+    
+    // Finally alphabetically by FQDD
+    return a.fqdd.localeCompare(b.fqdd);
+  });
+
+  // Show first 6 sorted NICs, with option to view all
+  const displayNics = sortedNics.slice(0, 6);
   const hasMore = nics.length > 6;
 
   return (
