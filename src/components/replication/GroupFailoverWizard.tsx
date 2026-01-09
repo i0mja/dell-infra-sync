@@ -70,6 +70,7 @@ export function GroupFailoverWizard({
   const [reverseProtection, setReverseProtection] = useState(false);
   const [confirmName, setConfirmName] = useState('');
   const [showEditDialog, setShowEditDialog] = useState(false);
+  const [testDurationMinutes, setTestDurationMinutes] = useState(60);
 
   const { data: preflightJob } = usePreflightJobStatus(preflightJobId || undefined);
   const { data: failoverJob } = usePreflightJobStatus(failoverJobId || undefined);
@@ -124,6 +125,7 @@ export function GroupFailoverWizard({
       final_sync: finalSync,
       reverse_protection: reverseProtection,
       force: forceOverride,
+      test_duration_minutes: failoverType === 'test' ? testDurationMinutes : undefined,
     };
     
     const job = await executeFailover.mutateAsync(config);
@@ -287,6 +289,28 @@ export function GroupFailoverWizard({
                 <Switch checked={finalSync} onCheckedChange={setFinalSync} />
               </div>
 
+              {failoverType === 'test' && (
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label>Test Duration</Label>
+                    <p className="text-xs text-muted-foreground">
+                      DR VMs will be automatically powered off after this time
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      value={testDurationMinutes}
+                      onChange={(e) => setTestDurationMinutes(Math.max(15, Math.min(480, parseInt(e.target.value) || 60)))}
+                      className="w-20"
+                      min={15}
+                      max={480}
+                    />
+                    <span className="text-sm text-muted-foreground">minutes</span>
+                  </div>
+                </div>
+              )}
+
               {failoverType === 'live' && (
                 <>
                   <div className="flex items-center justify-between">
@@ -361,6 +385,12 @@ export function GroupFailoverWizard({
                 <span className="text-muted-foreground">Final Sync:</span>
                 <span>{finalSync ? 'Yes' : 'No'}</span>
               </div>
+              {failoverType === 'test' && (
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Auto-Cleanup:</span>
+                  <span>{testDurationMinutes} minutes</span>
+                </div>
+              )}
               {failoverType === 'live' && (
                 <>
                   <div className="flex items-center justify-between">

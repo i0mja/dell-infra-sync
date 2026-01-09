@@ -61,6 +61,7 @@ export interface FailoverConfig {
   test_network_id?: string;
   reverse_protection?: boolean;
   force?: boolean;
+  test_duration_minutes?: number;
 }
 
 export function useFailoverOperations(protectionGroupId?: string) {
@@ -157,6 +158,7 @@ export function useFailoverOperations(protectionGroupId?: string) {
             test_network_id: config.test_network_id,
             reverse_protection: config.reverse_protection ?? false,
             force: config.force ?? false,
+            test_duration_minutes: config.test_duration_minutes,
           }
         })
         .select()

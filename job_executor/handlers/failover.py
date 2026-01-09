@@ -409,9 +409,25 @@ class FailoverHandler:
             new_group_status = 'failed_over' if recovered_count > 0 else 'failover_error'
             self._update_group_failover_status(protection_group_id, new_group_status, event_id)
             
-            # Update last_test_at for successful test failovers
+            # Update last_test_at and schedule cleanup for successful test failovers
             if failover_type == 'test' and recovered_count > 0:
                 self._update_protection_group_test_date(protection_group_id)
+                
+                # Schedule automatic cleanup
+                test_duration = details.get('test_duration_minutes', 60)
+                cleanup_at = datetime.utcnow() + timedelta(minutes=test_duration)
+                
+                cleanup_job_id = self._schedule_test_cleanup(
+                    protection_group_id,
+                    event_id,
+                    cleanup_at,
+                    job.get('created_by')
+                )
+                
+                # Update failover event with cleanup info
+                if cleanup_job_id:
+                    self._update_failover_event_cleanup(event_id, test_duration, cleanup_at, cleanup_job_id)
+                    log_step(f"Automatic cleanup scheduled in {test_duration} minutes")
 
             result = {
                 'success': recovered_count > 0,
@@ -493,6 +509,10 @@ class FailoverHandler:
         try:
             group = self._fetch_protection_group(protection_group_id)
             vms = self._fetch_protected_vms(protection_group_id)
+            
+            # Cancel any scheduled cleanup job if this is a manual rollback
+            if not details.get('auto_scheduled'):
+                self._cancel_scheduled_cleanup(event_id)
 
             # Power off DR shell VMs
             for vm in vms:
@@ -505,7 +525,7 @@ class FailoverHandler:
             # Update failover event
             self._update_failover_event(event_id, 'rolled_back', rolled_back_at=datetime.utcnow().isoformat())
             
-            # Update group status
+            # Update group status back to normal
             self._update_group_failover_status(protection_group_id, 'normal', None)
 
             self.executor.log("[Rollback Failover] Rollback completed")
@@ -2021,3 +2041,127 @@ class FailoverHandler:
                 self.executor.log(f"[Group Failover] Failed to update last_test_at: {response.status_code}", "WARN")
         except Exception as e:
             self.executor.log(f"[Group Failover] Error updating last_test_at: {e}", "WARN")
+
+    def _schedule_test_cleanup(self, protection_group_id: str, event_id: str, 
+                               cleanup_at: datetime, created_by: Optional[str] = None) -> Optional[str]:
+        """Create a scheduled rollback job for automatic test cleanup."""
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        import requests
+        
+        try:
+            response = requests.post(
+                f"{DSM_URL}/rest/v1/jobs",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=representation'
+                },
+                json={
+                    'job_type': 'rollback_failover',
+                    'status': 'pending',
+                    'schedule_at': cleanup_at.isoformat(),
+                    'created_by': created_by,
+                    'details': {
+                        'failover_event_id': event_id,
+                        'protection_group_id': protection_group_id,
+                        'triggered_by': 'test_auto_cleanup',
+                        'auto_scheduled': True
+                    }
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.status_code in [200, 201]:
+                job_data = response.json()
+                job_id = job_data[0]['id'] if isinstance(job_data, list) else job_data.get('id')
+                self.executor.log(f"[Group Failover] Scheduled cleanup job {job_id} for {cleanup_at.isoformat()}")
+                return job_id
+            else:
+                self.executor.log(f"[Group Failover] Failed to schedule cleanup: {response.status_code} - {response.text}", "WARN")
+                return None
+        except Exception as e:
+            self.executor.log(f"[Group Failover] Error scheduling cleanup: {e}", "WARN")
+            return None
+
+    def _update_failover_event_cleanup(self, event_id: str, test_duration: int, 
+                                        cleanup_at: datetime, cleanup_job_id: str):
+        """Update failover event with cleanup scheduling info."""
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        import requests
+        
+        try:
+            response = requests.patch(
+                f"{DSM_URL}/rest/v1/failover_events",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=minimal'
+                },
+                params={'id': f'eq.{event_id}'},
+                json={
+                    'test_duration_minutes': test_duration,
+                    'cleanup_scheduled_at': cleanup_at.isoformat(),
+                    'cleanup_job_id': cleanup_job_id
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.status_code in [200, 204]:
+                self.executor.log(f"[Group Failover] Updated event {event_id} with cleanup info")
+            else:
+                self.executor.log(f"[Group Failover] Failed to update event cleanup: {response.status_code}", "WARN")
+        except Exception as e:
+            self.executor.log(f"[Group Failover] Error updating event cleanup: {e}", "WARN")
+
+    def _cancel_scheduled_cleanup(self, event_id: str):
+        """Cancel any pending scheduled cleanup job for a failover event."""
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        import requests
+        
+        try:
+            # First, fetch the failover event to get the cleanup_job_id
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/failover_events",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                params={'id': f'eq.{event_id}', 'select': 'cleanup_job_id'},
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.status_code != 200 or not response.json():
+                return
+            
+            event_data = response.json()[0]
+            cleanup_job_id = event_data.get('cleanup_job_id')
+            
+            if not cleanup_job_id:
+                return
+            
+            # Cancel the scheduled cleanup job
+            cancel_response = requests.patch(
+                f"{DSM_URL}/rest/v1/jobs",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=minimal'
+                },
+                params={'id': f'eq.{cleanup_job_id}', 'status': 'eq.pending'},
+                json={'status': 'cancelled'},
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if cancel_response.status_code in [200, 204]:
+                self.executor.log(f"[Rollback Failover] Cancelled scheduled cleanup job {cleanup_job_id}")
+            else:
+                self.executor.log(f"[Rollback Failover] No pending cleanup job to cancel", "DEBUG")
+        except Exception as e:
+            self.executor.log(f"[Rollback Failover] Error cancelling cleanup job: {e}", "WARN")
