@@ -1755,23 +1755,222 @@ class FailoverHandler:
 
     def _power_on_dr_shell_vm(self, vm: Dict, group: Dict, failover_type: str, 
                               test_network_id: Optional[str]) -> bool:
-        """Power on a DR shell VM."""
+        """Power on a DR shell VM via vCenter API."""
+        import ssl
+        from pyVim.connect import SmartConnect, Disconnect
+        from pyVmomi import vim
+        
         dr_vm_id = vm.get('dr_shell_vm_id')
+        vm_name = vm.get('dr_shell_vm_name') or vm.get('vm_name')
+        
         if not dr_vm_id:
             self.executor.log(f"No DR shell VM ID for {vm.get('vm_name')}", "WARN")
             return False
-
-        # TODO: Implement actual VM power on via vCenter
-        self.executor.log(f"[Group Failover] Would power on DR VM: {vm.get('dr_shell_vm_name')}")
-        time.sleep(0.5)  # Placeholder
-        return True
+        
+        # Get DR vCenter from replication target
+        site_b_target = self._get_site_b_target(group)
+        if not site_b_target:
+            self.executor.log(f"[Group Failover] No Site B target for power-on", "ERROR")
+            return False
+        
+        dr_vcenter_id = site_b_target.get('dr_vcenter_id')
+        if not dr_vcenter_id:
+            self.executor.log(f"[Group Failover] No DR vCenter configured on target", "ERROR")
+            return False
+        
+        # Get vCenter credentials
+        vcenter_data = self._fetch_vcenter_connection(dr_vcenter_id)
+        if not vcenter_data:
+            self.executor.log(f"[Group Failover] DR vCenter not found: {dr_vcenter_id}", "ERROR")
+            return False
+        
+        vcenter_host = vcenter_data.get('host')
+        vcenter_user = vcenter_data.get('username')
+        vcenter_password_enc = vcenter_data.get('password_encrypted')
+        
+        # Decrypt password
+        vcenter_password = self.executor.decrypt_password(vcenter_password_enc) if vcenter_password_enc else None
+        if not vcenter_password:
+            self.executor.log(f"[Group Failover] Unable to decrypt vCenter password", "ERROR")
+            return False
+        
+        si = None
+        try:
+            # Connect to vCenter
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            
+            self.executor.log(f"[Group Failover] Connecting to DR vCenter {vcenter_host}...")
+            si = SmartConnect(
+                host=vcenter_host,
+                user=vcenter_user,
+                pwd=vcenter_password,
+                sslContext=context
+            )
+            content = si.RetrieveContent()
+            
+            # Find VM by moref ID (dr_vm_id is like 'vm-2041')
+            vm_obj = self._find_vm_by_moref(content, dr_vm_id)
+            
+            if not vm_obj:
+                self.executor.log(f"[Group Failover] DR VM not found in vCenter: {dr_vm_id}", "ERROR")
+                return False
+            
+            # Check current power state
+            current_state = vm_obj.runtime.powerState
+            
+            if current_state == vim.VirtualMachinePowerState.poweredOn:
+                self.executor.log(f"[Group Failover] DR VM already powered on: {vm_name}")
+                return True
+            
+            # Power on the VM
+            self.executor.log(f"[Group Failover] Powering on DR VM: {vm_name} ({dr_vm_id})...")
+            task = vm_obj.PowerOnVM_Task()
+            self._wait_for_vcenter_task(task, timeout=120)
+            self.executor.log(f"[Group Failover] DR VM powered on successfully: {vm_name}")
+            
+            return True
+            
+        except Exception as e:
+            self.executor.log(f"[Group Failover] Error powering on {vm_name}: {e}", "ERROR")
+            return False
+        finally:
+            if si:
+                try:
+                    Disconnect(si)
+                except Exception:
+                    pass
 
     def _power_off_dr_shell_vm(self, vm: Dict, group: Dict):
-        """Power off a DR shell VM during rollback."""
+        """Power off a DR shell VM during rollback via vCenter API."""
+        import ssl
+        from pyVim.connect import SmartConnect, Disconnect
+        from pyVmomi import vim
+        
         dr_vm_id = vm.get('dr_shell_vm_id')
+        vm_name = vm.get('dr_shell_vm_name') or vm.get('vm_name')
+        
         if not dr_vm_id:
             return
+        
+        # Get DR vCenter from replication target
+        site_b_target = self._get_site_b_target(group)
+        if not site_b_target:
+            self.executor.log(f"[Rollback Failover] No Site B target for power-off", "WARN")
+            return
+        
+        dr_vcenter_id = site_b_target.get('dr_vcenter_id')
+        if not dr_vcenter_id:
+            self.executor.log(f"[Rollback Failover] No DR vCenter configured", "WARN")
+            return
+        
+        # Get vCenter credentials
+        vcenter_data = self._fetch_vcenter_connection(dr_vcenter_id)
+        if not vcenter_data:
+            self.executor.log(f"[Rollback Failover] DR vCenter not found", "WARN")
+            return
+        
+        vcenter_host = vcenter_data.get('host')
+        vcenter_user = vcenter_data.get('username')
+        vcenter_password_enc = vcenter_data.get('password_encrypted')
+        vcenter_password = self.executor.decrypt_password(vcenter_password_enc) if vcenter_password_enc else None
+        
+        if not vcenter_password:
+            self.executor.log(f"[Rollback Failover] Unable to decrypt vCenter password", "WARN")
+            return
+        
+        si = None
+        try:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            
+            si = SmartConnect(
+                host=vcenter_host,
+                user=vcenter_user,
+                pwd=vcenter_password,
+                sslContext=context
+            )
+            content = si.RetrieveContent()
+            
+            vm_obj = self._find_vm_by_moref(content, dr_vm_id)
+            if not vm_obj:
+                self.executor.log(f"[Rollback Failover] DR VM not found: {dr_vm_id}", "WARN")
+                return
+            
+            current_state = vm_obj.runtime.powerState
+            
+            if current_state == vim.VirtualMachinePowerState.poweredOff:
+                self.executor.log(f"[Rollback Failover] DR VM already powered off: {vm_name}")
+                return
+            
+            self.executor.log(f"[Rollback Failover] Powering off DR VM: {vm_name}...")
+            task = vm_obj.PowerOffVM_Task()
+            self._wait_for_vcenter_task(task, timeout=60)
+            self.executor.log(f"[Rollback Failover] DR VM powered off: {vm_name}")
+            
+        except Exception as e:
+            self.executor.log(f"[Rollback Failover] Error powering off {vm_name}: {e}", "WARN")
+        finally:
+            if si:
+                try:
+                    Disconnect(si)
+                except Exception:
+                    pass
 
-        # TODO: Implement actual VM power off via vCenter
-        self.executor.log(f"[Rollback Failover] Would power off DR VM: {vm.get('dr_shell_vm_name')}")
-        time.sleep(0.5)  # Placeholder
+    def _find_vm_by_moref(self, content, moref_id: str):
+        """Find VM by managed object reference ID (e.g., 'vm-2041')."""
+        from pyVmomi import vim
+        
+        container = content.viewManager.CreateContainerView(
+            content.rootFolder, [vim.VirtualMachine], True
+        )
+        try:
+            for vm in container.view:
+                if vm._moId == moref_id:
+                    return vm
+        finally:
+            container.Destroy()
+        return None
+
+    def _wait_for_vcenter_task(self, task, timeout: int = 120):
+        """Wait for a vCenter task to complete."""
+        from pyVmomi import vim
+        
+        start = time.time()
+        while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+            if time.time() - start > timeout:
+                raise TimeoutError(f"vCenter task timed out after {timeout}s")
+            time.sleep(1)
+        
+        if task.info.state == vim.TaskInfo.State.error:
+            error_msg = task.info.error.msg if hasattr(task.info.error, 'msg') else str(task.info.error)
+            raise Exception(f"vCenter task failed: {error_msg}")
+
+    def _fetch_vcenter_connection(self, vcenter_id: str) -> Optional[Dict]:
+        """Fetch vCenter credentials from database."""
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        import requests
+        
+        try:
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_connections",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                params={
+                    'select': 'id,host,username,password_encrypted',
+                    'id': f'eq.{vcenter_id}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.status_code == 200 and response.json():
+                return response.json()[0]
+        except Exception as e:
+            self.executor.log(f"[Failover] Error fetching vCenter: {e}", "ERROR")
+        
+        return None
