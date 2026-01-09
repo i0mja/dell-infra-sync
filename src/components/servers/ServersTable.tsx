@@ -250,9 +250,9 @@ export function ServersTable({
     });
   }, [allServers, sortField, sortDirection, hardwareIssues]);
 
-  // Regroup after sorting (if grouped view)
+  // Regroup after sorting (if grouped view) - always use sortedServers to respect degraded pinning
   const sortedGroupedData =
-    groupedData && sortField
+    groupedData
       ? sortedServers.reduce((acc: GroupData[], server) => {
           const serverWithGroup = server as typeof server & { groupName: string; groupId: string };
           let group = acc.find((g) => g.id === serverWithGroup.groupId);
