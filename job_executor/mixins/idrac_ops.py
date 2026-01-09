@@ -3028,7 +3028,7 @@ class IdracMixin:
                 'switch_port_description': switch_port_desc,
             }
         except Exception as e:
-            self.logger.warning(f"Failed to extract NIC info: {e}")
+            self.log(f"Failed to extract NIC info: {e}", "WARN")
             return None
     
     def _sync_server_nics(self, server_id: str, nics: List[Dict], log_fn=None, job_id: str = None):
