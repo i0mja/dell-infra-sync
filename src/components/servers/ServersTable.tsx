@@ -209,11 +209,33 @@ export function ServersTable({
     ? groupedData.flatMap((g) => g.servers.map((s) => ({ ...s, groupName: g.name, groupId: g.id })))
     : servers || [];
 
+  // Get effective status for sorting (considers hardware issues for degraded state)
+  const getEffectiveStatus = (server: Server): string => {
+    if (server.connection_status === "online") {
+      const issues = hardwareIssues?.get(server.id);
+      if (issues && (issues.drive_issues > 0 || issues.memory_issues > 0)) {
+        return "degraded"; // Degraded sorts before online alphabetically
+      }
+      return "online";
+    }
+    return server.connection_status || "unknown";
+  };
+
   // Apply sorting
   const sortedServers = sortField
     ? [...allServers].sort((a, b) => {
-        const aVal = a[sortField as keyof typeof a];
-        const bVal = b[sortField as keyof typeof b];
+        let aVal: any;
+        let bVal: any;
+        
+        if (sortField === "connection_status") {
+          // Use effective status for sorting (includes degraded)
+          aVal = getEffectiveStatus(a);
+          bVal = getEffectiveStatus(b);
+        } else {
+          aVal = a[sortField as keyof typeof a];
+          bVal = b[sortField as keyof typeof b];
+        }
+        
         return compareValues(aVal, bVal, sortDirection);
       })
     : allServers;
