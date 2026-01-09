@@ -510,6 +510,10 @@ class FailoverHandler:
             group = self._fetch_protection_group(protection_group_id)
             vms = self._fetch_protected_vms(protection_group_id)
             
+            # Fetch the failover event to check its type
+            failover_event = self._fetch_failover_event(event_id)
+            is_test_failover = failover_event and failover_event.get('failover_type') == 'test'
+            
             # Cancel any scheduled cleanup job if this is a manual rollback
             if not details.get('auto_scheduled'):
                 self._cancel_scheduled_cleanup(event_id)
@@ -527,6 +531,12 @@ class FailoverHandler:
             
             # Update group status back to normal
             self._update_group_failover_status(protection_group_id, 'normal', None)
+            
+            # For test failovers, update last_test_at to mark the test as completed
+            # Rolling back IS the expected completion of a test failover
+            if is_test_failover:
+                self._update_protection_group_test_date(protection_group_id)
+                self.executor.log("[Rollback Failover] Updated last_test_at for completed test")
 
             self.executor.log("[Rollback Failover] Rollback completed")
             self.executor.update_job_status(job['id'], 'completed', details={
@@ -2014,6 +2024,29 @@ class FailoverHandler:
         except Exception as e:
             self.executor.log(f"[Failover] Error fetching vCenter: {e}", "ERROR")
         
+        return None
+
+    def _fetch_failover_event(self, event_id: str) -> Optional[Dict]:
+        """Fetch a failover event by ID."""
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        import requests
+        
+        try:
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/failover_events",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                params={'id': f'eq.{event_id}', 'select': '*'},
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            if response.status_code == 200:
+                data = response.json()
+                return data[0] if data else None
+        except Exception as e:
+            self.executor.log(f"[Failover] Error fetching failover event: {e}", "WARN")
         return None
 
     def _update_protection_group_test_date(self, protection_group_id: str):
