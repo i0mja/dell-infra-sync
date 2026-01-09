@@ -139,3 +139,23 @@ export function formatShortModel(model: string | null): string {
   
   return '';
 }
+
+/**
+ * Formats speed in short form for summary display, distinguishing FC from Ethernet
+ * e.g., 10000 → "10G", 16000 (FC) → "16G FC"
+ */
+export function formatSpeedShort(speedMbps: number | null, model: string | null): string {
+  if (!speedMbps || speedMbps === 0) return '';
+  
+  const isFibreChannel = model?.toLowerCase().includes('fibre') || 
+                         model?.toLowerCase().includes('fc') ||
+                         model?.toLowerCase().includes('qlogic') ||
+                         model?.toLowerCase().includes('lpe') ||
+                         model?.toLowerCase().includes('emulex');
+  
+  if (speedMbps >= 1000) {
+    const gbps = Math.round(speedMbps / 1000);
+    return isFibreChannel ? `${gbps}G FC` : `${gbps}G`;
+  }
+  return `${speedMbps}M`;
+}
