@@ -5,51 +5,11 @@ import { useState } from "react";
 import { toast } from "sonner";
 import type { ServerNic } from "@/hooks/useServerNics";
 import { CollapsibleSection } from "./CollapsibleSection";
+import { formatNicSpeed, formatNicName } from "@/lib/nic-utils";
 
 interface ServerNicsSummaryProps {
   nics: ServerNic[];
   isLoading?: boolean;
-}
-
-function formatSpeed(mbps: number | null): string {
-  if (!mbps) return "";
-  if (mbps >= 1000) {
-    return `${(mbps / 1000).toFixed(0)}G`;
-  }
-  return `${mbps}M`;
-}
-
-function formatNicName(nic: ServerNic): string {
-  const fqdd = nic.fqdd;
-  
-  // FC adapters: FC.Slot.1-1 → "FC Slot 1 Port 1"
-  const fcMatch = fqdd.match(/FC\.Slot\.(\d+)-(\d+)/);
-  if (fcMatch) {
-    return `FC Slot ${fcMatch[1]} Port ${fcMatch[2]}`;
-  }
-  
-  // Embedded NICs: NIC.Embedded.1-1-1 → "Embedded 1 Port 1"
-  // These are typically dedicated management or secondary adapter NICs
-  const embMatch = fqdd.match(/NIC\.Embedded\.(\d+)-(\d+)-(\d+)/);
-  if (embMatch) {
-    return `Embedded ${embMatch[1]} Port ${embMatch[2]}`;
-  }
-  
-  // Integrated NICs: NIC.Integrated.1-2-1 → "LOM Port 2"
-  // These are the main LAN-on-Motherboard ports
-  const intMatch = fqdd.match(/NIC\.Integrated\.(\d+)-(\d+)-(\d+)/);
-  if (intMatch) {
-    return `LOM Port ${intMatch[2]}`;
-  }
-  
-  // PCIe slot NICs: NIC.Slot.2-1-1 → "Slot 2 Port 1"
-  const slotMatch = fqdd.match(/NIC\.Slot\.(\d+)-(\d+)/);
-  if (slotMatch) {
-    return `Slot ${slotMatch[1]} Port ${slotMatch[2]}`;
-  }
-  
-  // Fallback to model or cleaned FQDD
-  return nic.model || fqdd.split(".").pop() || fqdd;
 }
 
 export function ServerNicsSummary({ nics, isLoading }: ServerNicsSummaryProps) {
@@ -126,7 +86,7 @@ export function ServerNicsSummary({ nics, isLoading }: ServerNicsSummaryProps) {
                 </span>
                 {nic.current_speed_mbps != null && nic.current_speed_mbps > 0 && (
                   <Badge variant="outline" className="text-[10px] px-1 py-0 h-4 font-normal">
-                    {formatSpeed(nic.current_speed_mbps)}
+                    {formatNicSpeed(nic.current_speed_mbps)}
                   </Badge>
                 )}
                 <Badge 
