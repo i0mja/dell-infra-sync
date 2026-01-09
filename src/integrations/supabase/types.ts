@@ -3701,6 +3701,7 @@ export type Database = {
           id: string
           idrac_fetch_options: Json | null
           idrac_firmware: string | null
+          idrac_hostname: string | null
           idrac_password_encrypted: string | null
           idrac_sync_enabled: boolean | null
           idrac_sync_interval_minutes: number | null
@@ -3761,6 +3762,7 @@ export type Database = {
           id?: string
           idrac_fetch_options?: Json | null
           idrac_firmware?: string | null
+          idrac_hostname?: string | null
           idrac_password_encrypted?: string | null
           idrac_sync_enabled?: boolean | null
           idrac_sync_interval_minutes?: number | null
@@ -3821,6 +3823,7 @@ export type Database = {
           id?: string
           idrac_fetch_options?: Json | null
           idrac_firmware?: string | null
+          idrac_hostname?: string | null
           idrac_password_encrypted?: string | null
           idrac_sync_enabled?: boolean | null
           idrac_sync_interval_minutes?: number | null

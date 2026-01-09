@@ -202,10 +202,17 @@ export function ServerDetailsSidebar({
           <div className="flex items-start justify-between gap-2">
             <div className="flex-1 min-w-0">
               <h3 className="text-base font-semibold truncate">
-                {selectedServer.hostname || selectedServer.ip_address}
+                {selectedServer.hostname || selectedServer.idrac_hostname || selectedServer.ip_address}
               </h3>
               <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
                 <p className="font-mono">{selectedServer.ip_address}</p>
+                {/* Show iDRAC-reported hostname when it differs from display name */}
+                {selectedServer.hostname && selectedServer.idrac_hostname && 
+                 selectedServer.hostname !== selectedServer.idrac_hostname && (
+                  <p className="text-muted-foreground/70 italic">
+                    iDRAC: {selectedServer.idrac_hostname}
+                  </p>
+                )}
                 <p className="truncate">{selectedServer.model || "Unknown Model"}</p>
                 {selectedServer.service_tag && (
                   <p className="font-mono">{selectedServer.service_tag}</p>
