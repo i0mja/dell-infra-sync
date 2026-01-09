@@ -11,7 +11,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { Loader2, Info, Server, Key, Search, FolderPlus, Cpu, Activity, Settings, HardDrive, Network, MemoryStick, FileArchive, Zap, Sparkles } from "lucide-react";
+import { Loader2, Info, Server, Key, Search, FolderPlus, Cpu, Activity, Settings, HardDrive, Network, MemoryStick, FileArchive, Zap, Sparkles, RefreshCw } from "lucide-react";
+import { parseIdracError } from "@/lib/idrac-errors";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { BackendStatusHelper } from "./BackendStatusHelper";
@@ -488,14 +489,22 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
           clearInterval(pollInterval);
           setTestingConnection(false);
           const details = updatedJob.details as any;
+          const rawError = details?.error || details?.message || 'Connection failed';
+          
+          // Parse iDRAC-specific error for better UX
+          const parsedError = parseIdracError(rawError);
+          
           setTestResult({
             status: 'failed',
-            message: details?.message || 'Connection failed',
-            details: details
+            message: parsedError?.message || rawError,
+            details: {
+              ...details,
+              parsedError, // Include parsed error info for UI
+            }
           });
           toast({ 
-            title: "✗ Connection failed", 
-            description: details?.message || 'Connection failed',
+            title: parsedError?.title || "Connection failed", 
+            description: parsedError?.message || rawError,
             variant: "destructive" 
           });
         } else if (pollAttempts >= maxAttempts) {
@@ -745,26 +754,58 @@ export const AddServerDialog = ({ open, onOpenChange, onSuccess }: AddServerDial
                   
                   {testResult && testResult.status !== 'idle' && (
                     <Alert variant={testResult.status === 'success' ? 'default' : 'destructive'}>
-                      <AlertDescription>
-                        {testResult.status === 'success' ? '✓' : '✗'} {testResult.message}
-                        {testResult.details?.legacy_ssl && (
-                          <div className="mt-2 p-2 bg-muted/50 rounded text-xs">
-                            <span className="font-medium text-warning">⚠ Legacy TLS Mode (iDRAC 8)</span>
-                            <p className="mt-0.5 opacity-80">
-                              This iDRAC uses older TLS protocols. Compatibility mode enabled automatically.
-                            </p>
-                          </div>
-                        )}
-                        {testResult.details?.idrac_version && (
-                          <div className="mt-1 text-xs opacity-80">
-                            iDRAC Version: {testResult.details.idrac_version}
-                            {testResult.details?.legacy_ssl && ' (iDRAC 8)'}
-                          </div>
-                        )}
-                        {testResult.details?.product && (
-                          <div className="text-xs opacity-80">
-                            Product: {testResult.details.product}
-                          </div>
+                      <AlertDescription className="space-y-2">
+                        {testResult.status === 'success' ? (
+                          <>
+                            <div>✓ {testResult.message}</div>
+                            {testResult.details?.legacy_ssl && (
+                              <div className="mt-2 p-2 bg-muted/50 rounded text-xs">
+                                <span className="font-medium text-warning">⚠ Legacy TLS Mode (iDRAC 8)</span>
+                                <p className="mt-0.5 opacity-80">
+                                  This iDRAC uses older TLS protocols. Compatibility mode enabled automatically.
+                                </p>
+                              </div>
+                            )}
+                            {testResult.details?.idrac_version && (
+                              <div className="mt-1 text-xs opacity-80">
+                                iDRAC Version: {testResult.details.idrac_version}
+                                {testResult.details?.legacy_ssl && ' (iDRAC 8)'}
+                              </div>
+                            )}
+                            {testResult.details?.product && (
+                              <div className="text-xs opacity-80">
+                                Product: {testResult.details.product}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <div className="font-medium">
+                              ✗ {testResult.details?.parsedError?.title || 'Connection Failed'}
+                            </div>
+                            <p className="text-sm">{testResult.message}</p>
+                            
+                            {testResult.details?.parsedError?.suggestedAction && (
+                              <div className="mt-2 p-2 bg-muted/50 rounded text-xs">
+                                <span className="font-medium">Suggested Action:</span>
+                                <p className="mt-0.5 opacity-90">{testResult.details.parsedError.suggestedAction}</p>
+                              </div>
+                            )}
+                            
+                            {testResult.details?.parsedError?.isRecoverable && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={handleTestConnection}
+                                disabled={testingConnection}
+                                className="mt-2"
+                              >
+                                <RefreshCw className="mr-2 h-4 w-4" />
+                                Retry Connection
+                              </Button>
+                            )}
+                          </>
                         )}
                       </AlertDescription>
                     </Alert>
