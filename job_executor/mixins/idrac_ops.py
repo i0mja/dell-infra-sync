@@ -2912,9 +2912,9 @@ class IdracMixin:
                 link_status = func_data.get('LinkStatus')
             if not link_status:
                 state = status.get('State', '').lower()
-                if state == 'enabled':
-                    link_status = 'LinkUp'
-                elif state in ('disabled', 'standbyoffline', 'absent'):
+                # Only derive LinkDown from explicit down states
+                # Don't assume 'enabled' means LinkUp - let Port data provide actual physical state
+                if state in ('disabled', 'standbyoffline', 'absent'):
                     link_status = 'LinkDown'
             
             # Get speed with fallbacks (treat 0 as "no data"):
@@ -3003,9 +3003,10 @@ class IdracMixin:
                 if speed_val and speed_val > 0:
                     current_speed = speed_val
                 
-                # Also use port link status if we don't have one
-                if not link_status:
-                    link_status = port_data.get('link_status')
+                # Prefer port link status - it reflects actual physical link state
+                port_link = port_data.get('link_status')
+                if port_link:
+                    link_status = port_link
             
             # Get switch connection info from LLDP if available
             switch_connection_id = dell_oem.get('SwitchConnectionID')
