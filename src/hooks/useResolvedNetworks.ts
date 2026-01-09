@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { resolveProtectionGroupNetworks, applyOverrides, ResolvedNetwork } from "@/lib/networkResolution";
+import { resolveProtectionGroupNetworks, getAllSourceNetworks, applyOverrides, ResolvedNetwork, NetworkResolutionResult } from "@/lib/networkResolution";
 import { supabase } from "@/integrations/supabase/client";
 
 export function useResolvedNetworks(
@@ -22,12 +22,12 @@ export function useResolvedNetworks(
     enabled: !!protectionGroupId
   });
 
-  // Resolve networks by VLAN ID
-  const { data: resolved, isLoading, error, refetch } = useQuery({
+  // Resolve networks by VLAN ID based on VM network associations
+  const { data: resolutionResult, isLoading, error, refetch } = useQuery({
     queryKey: ["resolved-networks", protectionGroupId, sourceVCenterId, targetVCenterId],
     queryFn: async () => {
       if (!protectionGroupId || !sourceVCenterId || !targetVCenterId) {
-        return [];
+        return { networks: [], dataSource: 'none' as const, vmsMissingNetworkData: [] };
       }
       return resolveProtectionGroupNetworks(protectionGroupId, sourceVCenterId, targetVCenterId);
     },
@@ -35,10 +35,31 @@ export function useResolvedNetworks(
     staleTime: 30000
   });
 
+  // Fallback: Get all source networks when VM network data is missing
+  const { data: fallbackNetworks, isLoading: fallbackLoading } = useQuery({
+    queryKey: ["all-source-networks", sourceVCenterId, targetVCenterId],
+    queryFn: async () => {
+      if (!sourceVCenterId || !targetVCenterId) return [];
+      return getAllSourceNetworks(sourceVCenterId, targetVCenterId);
+    },
+    enabled: !!sourceVCenterId && !!targetVCenterId && resolutionResult?.dataSource === 'none'
+  });
+
+  // Determine which networks to use
+  const dataSource = resolutionResult?.dataSource || 'none';
+  const vmsMissingNetworkData = resolutionResult?.vmsMissingNetworkData || [];
+  
+  let baseNetworks: ResolvedNetwork[] = [];
+  if (dataSource === 'vm_networks' && resolutionResult?.networks.length) {
+    baseNetworks = resolutionResult.networks;
+  } else if (fallbackNetworks?.length) {
+    baseNetworks = fallbackNetworks;
+  }
+
   // Apply overrides to resolved networks
-  const networks: ResolvedNetwork[] = resolved && overrides
-    ? applyOverrides(resolved, overrides)
-    : resolved || [];
+  const networks: ResolvedNetwork[] = baseNetworks.length > 0 && overrides
+    ? applyOverrides(baseNetworks, overrides)
+    : baseNetworks;
 
   const stats = {
     total: networks.length,
@@ -51,8 +72,11 @@ export function useResolvedNetworks(
   return {
     networks,
     stats,
-    isLoading,
+    isLoading: isLoading || fallbackLoading,
     error,
-    refetch
+    refetch,
+    dataSource,
+    vmsMissingNetworkData,
+    useFallbackMode: dataSource === 'none' && !!fallbackNetworks?.length
   };
 }

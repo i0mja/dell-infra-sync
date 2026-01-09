@@ -38,7 +38,7 @@ export function NetworkMappingsEditor({
   const [newSourceNetwork, setNewSourceNetwork] = useState("");
   const [newTargetNetwork, setNewTargetNetwork] = useState("");
 
-  const { networks, stats, isLoading, error } = useResolvedNetworks(
+  const { networks, stats, isLoading, error, dataSource, vmsMissingNetworkData, useFallbackMode } = useResolvedNetworks(
     protectionGroupId,
     sourceVCenterId,
     drVCenterId
@@ -162,7 +162,9 @@ export function NetworkMappingsEditor({
           Network Mappings
         </h4>
         <p className="text-xs text-muted-foreground mt-1">
-          Auto-resolved by VLAN ID matching between sites
+          {useFallbackMode 
+            ? "Showing all source networks (VM network data not synced)"
+            : "Auto-resolved by VLAN ID matching between sites"}
         </p>
       </div>
 
@@ -192,14 +194,25 @@ export function NetworkMappingsEditor({
         )}
       </div>
 
-      {networks.length === 0 ? (
+      {/* Fallback mode warning */}
+      {useFallbackMode && vmsMissingNetworkData.length > 0 && (
+        <Alert className="bg-amber-500/5 border-amber-500/20">
+          <AlertTriangle className="h-4 w-4 text-amber-500" />
+          <AlertDescription className="text-amber-700">
+            Network associations not synced for {vmsMissingNetworkData.length} VM{vmsMissingNetworkData.length > 1 ? 's' : ''}: {vmsMissingNetworkData.slice(0, 3).join(', ')}{vmsMissingNetworkData.length > 3 ? ` and ${vmsMissingNetworkData.length - 3} more` : ''}.
+            Showing all source vCenter networks instead.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {networks.length === 0 && !useFallbackMode ? (
         <Alert>
           <Info className="h-4 w-4" />
           <AlertDescription>
             No VMs in this protection group yet, or VMs have no networks attached.
           </AlertDescription>
         </Alert>
-      ) : (
+      ) : networks.length > 0 ? (
         <>
           {/* Auto-resolved mappings table */}
           <div className="border rounded-lg">
@@ -270,7 +283,7 @@ export function NetworkMappingsEditor({
             </Alert>
           )}
         </>
-      )}
+      ) : null}
 
       {/* Manual Overrides Section */}
       <div className="pt-4 border-t">
