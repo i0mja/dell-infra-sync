@@ -2772,9 +2772,12 @@ class IdracMixin:
                     # Port is expanded, parse directly
                     port_id = port_item.get('Id')
                     if port_id:
+                        speed = _extract_speed(port_item)
+                        link_status = port_item.get('LinkStatus')
+                        self.log(f"    → Port '{port_id}': speed={speed}, link_status={link_status}", "DEBUG")
                         port_map[port_id] = {
-                            'current_speed_mbps': _extract_speed(port_item),
-                            'link_status': port_item.get('LinkStatus'),
+                            'current_speed_mbps': speed,
+                            'link_status': link_status,
                         }
                 elif '@odata.id' in port_item:
                     # Port is a link, need to fetch individually
@@ -2786,12 +2789,15 @@ class IdracMixin:
                         port_data = port_resp.json()
                         port_id = port_data.get('Id')
                         if port_id:
+                            speed = _extract_speed(port_data)
+                            link_status = port_data.get('LinkStatus')
+                            self.log(f"    → Port (fetched) '{port_id}': speed={speed}, link_status={link_status}", "DEBUG")
                             port_map[port_id] = {
-                                'current_speed_mbps': _extract_speed(port_data),
-                                'link_status': port_data.get('LinkStatus'),
+                                'current_speed_mbps': speed,
+                                'link_status': link_status,
                             }
-            except Exception:
-                pass
+            except Exception as e:
+                self.log(f"    → Port parse error: {e}", "DEBUG")
         
         # Try Ports first (newer iDRAC 9 with v1.5+ NetworkAdapter schema)
         ports_data = adapter_data.get('Ports', {})
@@ -2959,12 +2965,18 @@ class IdracMixin:
             if not current_speed and port_map:  # None or 0
                 fqdd = func_data.get('Id', '')
                 port_data = {}
+                matched_port_id = None
+                
+                # Log available port_map for this NIC
+                self.logger.debug(f"    → {fqdd}: Looking for port data, port_map keys: {list(port_map.keys())}")
                 
                 # Try multiple port ID patterns:
                 # Pattern 1: Full FQDD prefix (NIC.Integrated.1-2-1 → NIC.Integrated.1-2)
                 if '-' in fqdd:
                     port_id_full = '-'.join(fqdd.rsplit('-', 1)[:-1])
                     port_data = port_map.get(port_id_full, {})
+                    if port_data:
+                        matched_port_id = port_id_full
                 
                 # Pattern 2: Extract port number and try ordinal matches
                 if not port_data and '-' in fqdd:
@@ -2976,13 +2988,16 @@ class IdracMixin:
                         for pattern in [port_num, f"Port{port_num}", f"{parts[0]}-{port_num}"]:
                             port_data = port_map.get(pattern, {})
                             if port_data:
+                                matched_port_id = pattern
                                 break
                 
                 # Pattern 3: If port_map only has one entry, use it as fallback
                 if not port_data and len(port_map) == 1:
                     port_data = list(port_map.values())[0]
+                    matched_port_id = list(port_map.keys())[0]
                 
                 speed_val = port_data.get('current_speed_mbps')
+                self.logger.debug(f"    → {fqdd}: port_data matched '{matched_port_id}' -> speed={speed_val}")
                 if speed_val and speed_val > 0:
                     current_speed = speed_val
                 
