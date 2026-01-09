@@ -63,7 +63,8 @@ interface GroupedServers {
 export function useServers(
   searchTerm: string,
   statusFilter: string,
-  groupFilter: string
+  groupFilter: string,
+  hardwareIssues?: Map<string, { drive_issues: number; memory_issues: number }>
 ) {
   const [servers, setServers] = useState<Server[]>([]);
   const [loading, setLoading] = useState(true);
@@ -176,9 +177,10 @@ export function useServers(
       } else if (statusFilter === "incomplete") {
         matchesStatus = isIncompleteServer(server);
       } else if (statusFilter === "degraded") {
-        // Degraded filter is handled at ServersTable level since it needs hardware issues data
-        // Here we just ensure online servers pass through - the table filters them further
-        matchesStatus = server.connection_status === "online";
+        // Only show online servers with hardware issues
+        const issues = hardwareIssues?.get(server.id);
+        const hasCriticalIssue = issues && (issues.drive_issues > 0 || issues.memory_issues > 0);
+        matchesStatus = server.connection_status === "online" && hasCriticalIssue === true;
       }
 
       // Group filter
@@ -201,7 +203,7 @@ export function useServers(
 
       return matchesSearch && matchesStatus && matchesGroup;
     });
-  }, [servers, searchTerm, statusFilter, groupFilter, groupMemberships, vCenterHosts]);
+  }, [servers, searchTerm, statusFilter, groupFilter, groupMemberships, vCenterHosts, hardwareIssues]);
 
   // Organize servers by groups
   const groupedData = useMemo<GroupedServers[]>(() => {
