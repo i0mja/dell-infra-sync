@@ -35,7 +35,8 @@ export const useJobApiStream = (jobId: string | null) => {
           .from('idrac_commands')
           .select('*')
           .eq('job_id', jobId)
-          .order('timestamp', { ascending: true });
+          .order('timestamp', { ascending: true })
+          .range(0, 9999); // Fetch up to 10,000 rows (default Supabase limit is 1000)
 
         if (error) throw error;
         setApiCalls(data || []);
