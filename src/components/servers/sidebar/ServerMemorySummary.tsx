@@ -166,7 +166,7 @@ export function ServerMemorySummary({ server }: ServerMemorySummaryProps) {
                     className="cursor-help" 
                     title={dimm.part_number}
                   >
-                    • P/N: {formatDellPartNumber(dimm.part_number)}
+                    • Mfr P/N: {formatDellPartNumber(dimm.part_number)}
                   </span>
                 )}
               </div>
