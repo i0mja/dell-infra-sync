@@ -1,4 +1,4 @@
-import { useState, Fragment, useMemo } from "react";
+import { useState, Fragment, useMemo, useEffect } from "react";
 import { Server } from "@/hooks/useServers";
 import { compareValues } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -58,6 +58,7 @@ import {
   Power,
   Link2,
   Monitor,
+  Pin,
   Eye,
   Search,
   MoreHorizontal,
@@ -204,6 +205,9 @@ export function ServersTable({
     "servers-table-views"
   );
 
+  // State for degraded banner dismissal
+  const [degradedBannerDismissed, setDegradedBannerDismissed] = useState(false);
+
   // Flatten servers for sorting
   const allServers = groupedData
     ? groupedData.flatMap((g) => g.servers.map((s) => ({ ...s, groupName: g.name, groupId: g.id })))
@@ -220,6 +224,16 @@ export function ServersTable({
     }
     return server.connection_status || "unknown";
   };
+
+  // Count of degraded servers for the pinning banner
+  const degradedCount = useMemo(() => {
+    return allServers.filter(s => getEffectiveStatus(s) === "degraded").length;
+  }, [allServers, hardwareIssues]);
+
+  // Reset dismissed state if degraded count changes (new issue detected)
+  useEffect(() => {
+    setDegradedBannerDismissed(false);
+  }, [degradedCount]);
 
   // Apply sorting - degraded servers always pinned to top
   const sortedServers = useMemo(() => {
@@ -422,6 +436,7 @@ export function ServersTable({
             </TooltipTrigger>
             <TooltipContent>
               <p>{totalIssues} hardware issue{totalIssues > 1 ? 's' : ''} detected</p>
+              <p className="text-muted-foreground text-xs mt-1">Pinned to top until resolved</p>
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
@@ -693,6 +708,25 @@ export function ServersTable({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      {/* Degraded servers pinning notice */}
+      {degradedCount > 0 && !degradedBannerDismissed && (
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-warning/10 border-b border-warning/20 text-xs text-warning-foreground">
+          <Pin className="h-3 w-3 text-warning" />
+          <span>
+            <strong>{degradedCount}</strong> server{degradedCount > 1 ? 's' : ''} with hardware issues 
+            {degradedCount === 1 ? ' is' : ' are'} pinned to the top until resolved
+          </span>
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="h-5 px-1.5 ml-auto text-xs hover:bg-warning/20"
+            onClick={() => setDegradedBannerDismissed(true)}
+          >
+            <X className="h-3 w-3" />
+          </Button>
+        </div>
+      )}
 
       {/* Table */}
       <div className="overflow-auto flex-1">
