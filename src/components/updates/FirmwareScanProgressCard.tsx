@@ -159,15 +159,28 @@ export function FirmwareScanProgressCard({ scanProgress, inline = false }: Firmw
                             {parsedError?.title || 'Failed'}
                           </Badge>
                         </TooltipTrigger>
-                        <TooltipContent side="left" className="max-w-xs">
-                          <div className="space-y-1">
+                        <TooltipContent side="left" className="max-w-sm">
+                          <div className="space-y-2">
                             <p className="font-medium text-sm">
+                              {parsedError?.title || 'Error'}
+                            </p>
+                            <p className="text-sm text-muted-foreground">
                               {parsedError?.message || host.error || 'Unknown error'}
                             </p>
                             {parsedError?.suggestedAction && (
-                              <p className="text-xs text-muted-foreground">
+                              <div className="text-xs text-muted-foreground whitespace-pre-line border-t border-border pt-2 mt-2">
                                 {parsedError.suggestedAction}
-                              </p>
+                              </div>
+                            )}
+                            {parsedError?.docLink && (
+                              <a 
+                                href={parsedError.docLink} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="text-xs text-primary hover:underline block"
+                              >
+                                Learn More →
+                              </a>
                             )}
                           </div>
                         </TooltipContent>

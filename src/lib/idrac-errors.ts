@@ -11,6 +11,7 @@ export interface IdracErrorInfo {
   severity: 'error' | 'warning' | 'info';
   isRecoverable: boolean;
   suggestedAction?: string;
+  docLink?: string;
   originalError?: string;
 }
 
@@ -20,14 +21,21 @@ interface ErrorPattern {
 }
 
 const IDRAC_ERROR_PATTERNS: ErrorPattern[] = [
+  // ========== iDRAC Core Errors (with Dell KB-backed resolutions) ==========
   {
     pattern: /Base\.1\.\d+\.InternalError/i,
     info: {
       title: 'iDRAC Internal Error',
-      message: 'The iDRAC service is experiencing an internal issue.',
+      message: 'The iDRAC service encountered an internal issue and is not responding properly.',
       severity: 'error',
       isRecoverable: true,
-      suggestedAction: 'Reboot the iDRAC and wait 2-3 minutes before retrying. You can reboot via the web UI, SSH, or the physical reset button.',
+      suggestedAction: 
+        'Reset the iDRAC using one of these methods:\n' +
+        '• Web UI: Maintenance → Diagnostics → Reset iDRAC\n' +
+        '• SSH: Run "racadm racreset"\n' +
+        '• Physical: Hold the front panel "i" button for 16 seconds\n\n' +
+        'Wait 2-3 minutes for the iDRAC to restart, then retry.',
+      docLink: 'https://www.dell.com/support/kbdoc/en-us/000126703',
     },
   },
   {
@@ -37,17 +45,26 @@ const IDRAC_ERROR_PATTERNS: ErrorPattern[] = [
       message: 'The iDRAC returned a general error response.',
       severity: 'error',
       isRecoverable: true,
-      suggestedAction: 'Reboot the iDRAC via the web UI or SSH. If the issue persists, check the iDRAC logs for more details.',
+      suggestedAction: 
+        'Reset the iDRAC to clear the error state:\n' +
+        '• Web UI: Maintenance → Diagnostics → Reset iDRAC\n' +
+        '• SSH: Run "racadm racreset"\n\n' +
+        'If the issue persists, check iDRAC logs under Maintenance → Lifecycle Controller Log.',
+      docLink: 'https://www.dell.com/support/kbdoc/en-us/000126703',
     },
   },
   {
-    pattern: /ServiceTemporarilyUnavailable/i,
+    pattern: /ServiceTemporarilyUnavailable|service.*unavailable/i,
     info: {
-      title: 'iDRAC Busy',
-      message: 'The Redfish service is temporarily unavailable.',
+      title: 'iDRAC Service Busy',
+      message: 'The Redfish API service is temporarily unavailable.',
       severity: 'warning',
       isRecoverable: true,
-      suggestedAction: 'Wait 1-2 minutes and retry. The iDRAC may be starting up or processing another request.',
+      suggestedAction: 
+        'The iDRAC may be starting up or processing another operation.\n\n' +
+        'Wait 1-2 minutes and retry. If this persists, reset the iDRAC via:\n' +
+        '• Web UI: Maintenance → Diagnostics → Reset iDRAC\n' +
+        '• SSH: Run "racadm racreset"',
     },
   },
   {
@@ -67,7 +84,12 @@ const IDRAC_ERROR_PATTERNS: ErrorPattern[] = [
       message: 'Unable to authenticate with the iDRAC.',
       severity: 'error',
       isRecoverable: true,
-      suggestedAction: 'Verify the username and password are correct. Ensure the user has Redfish API permissions.',
+      suggestedAction: 
+        'Verify the username and password are correct.\n\n' +
+        'Ensure the user account:\n' +
+        '• Has Redfish API permissions enabled\n' +
+        '• Is not locked due to failed login attempts\n' +
+        '• Has not expired',
     },
   },
   {
@@ -77,7 +99,11 @@ const IDRAC_ERROR_PATTERNS: ErrorPattern[] = [
       message: 'The credentials do not have permission for this operation.',
       severity: 'error',
       isRecoverable: false,
-      suggestedAction: 'Check that the iDRAC user has Administrator or Operator privileges.',
+      suggestedAction: 
+        'Check that the iDRAC user has sufficient privileges:\n' +
+        '• Administrator role for full access\n' +
+        '• Operator role for basic operations\n\n' +
+        'Verify in: iDRAC Settings → User Authentication → Users',
     },
   },
   {
@@ -87,7 +113,12 @@ const IDRAC_ERROR_PATTERNS: ErrorPattern[] = [
       message: 'The iDRAC is not accepting connections on the HTTPS port.',
       severity: 'error',
       isRecoverable: true,
-      suggestedAction: 'Verify the IP address is correct and the iDRAC is powered on. Check if HTTPS is enabled on port 443.',
+      suggestedAction: 
+        'Verify the following:\n' +
+        '• IP address is correct\n' +
+        '• iDRAC is powered on and responsive\n' +
+        '• HTTPS is enabled on port 443\n' +
+        '• No firewall is blocking the connection',
     },
   },
   {
@@ -97,7 +128,12 @@ const IDRAC_ERROR_PATTERNS: ErrorPattern[] = [
       message: 'Unable to reach the iDRAC within the timeout period.',
       severity: 'error',
       isRecoverable: true,
-      suggestedAction: 'Check network connectivity and firewall rules. Ensure the iDRAC IP is reachable from the Job Executor.',
+      suggestedAction: 
+        'Check the following:\n' +
+        '• Network connectivity to the iDRAC IP\n' +
+        '• Firewall rules allow HTTPS (port 443)\n' +
+        '• iDRAC is reachable from the Job Executor host\n\n' +
+        'Try pinging the iDRAC IP to verify basic connectivity.',
     },
   },
   {
@@ -117,7 +153,12 @@ const IDRAC_ERROR_PATTERNS: ErrorPattern[] = [
       message: 'There was a problem with the SSL/TLS connection.',
       severity: 'warning',
       isRecoverable: true,
-      suggestedAction: 'The system will attempt legacy TLS mode automatically. If this persists, the iDRAC certificate may be invalid.',
+      suggestedAction: 
+        'The system will attempt legacy TLS mode automatically.\n\n' +
+        'If this persists:\n' +
+        '• The iDRAC certificate may be expired or invalid\n' +
+        '• Try updating the iDRAC firmware\n' +
+        '• Check iDRAC Settings → Network → SSL for certificate status',
     },
   },
   {
@@ -127,17 +168,80 @@ const IDRAC_ERROR_PATTERNS: ErrorPattern[] = [
       message: 'The connection was unexpectedly closed by the iDRAC.',
       severity: 'error',
       isRecoverable: true,
-      suggestedAction: 'The iDRAC may be overloaded. Wait a few seconds and retry.',
+      suggestedAction: 
+        'The iDRAC may be overloaded or restarting.\n\n' +
+        'Wait 30 seconds and retry. If this persists, reset the iDRAC.',
     },
   },
   {
-    pattern: /MaxConcurrentSessions|session limit/i,
+    pattern: /MaxConcurrentSessions|session limit|too many sessions/i,
     info: {
       title: 'Session Limit Reached',
-      message: 'The iDRAC has reached its maximum number of concurrent sessions.',
+      message: 'The iDRAC has reached its maximum number of concurrent Redfish sessions.',
       severity: 'warning',
       isRecoverable: true,
-    suggestedAction: 'Wait for existing sessions to expire (typically 30 minutes) or reboot the iDRAC to clear sessions.',
+      suggestedAction: 
+        'Sessions typically expire after 30 minutes of inactivity.\n\n' +
+        'To clear sessions immediately:\n' +
+        '• Web UI: Maintenance → Diagnostics → Reset iDRAC\n' +
+        '• SSH: Run "racadm racreset"',
+      docLink: 'https://www.dell.com/support/kbdoc/en-us/000126703',
+    },
+  },
+  // ========== Lifecycle Controller / Job Queue Errors ==========
+  {
+    pattern: /job.*pending|task.*stuck|LC.*busy|lifecycle.*running|lifecycle.*controller.*busy/i,
+    info: {
+      title: 'Lifecycle Controller Busy',
+      message: 'A previous job or task is still running on the Lifecycle Controller.',
+      severity: 'warning',
+      isRecoverable: true,
+      suggestedAction: 
+        'Check the iDRAC job queue for pending tasks.\n\n' +
+        'Wait for the existing job to complete, or cancel it via:\n' +
+        '• Web UI: Maintenance → Job Queue → Delete\n' +
+        '• SSH: "racadm jobqueue delete -i JID_xxxxx"',
+    },
+  },
+  {
+    pattern: /firmware.*update.*progress|update.*in.*progress|iDRAC.*updating/i,
+    info: {
+      title: 'Firmware Update in Progress',
+      message: 'The iDRAC is currently being updated and is temporarily unavailable.',
+      severity: 'info',
+      isRecoverable: true,
+      suggestedAction: 
+        'Wait for the firmware update to complete (typically 5-10 minutes).\n\n' +
+        'The iDRAC will automatically reboot after the update.',
+    },
+  },
+  // ========== License Errors ==========
+  {
+    pattern: /license.*required|LIC\d+|feature.*not.*licensed/i,
+    info: {
+      title: 'License Required',
+      message: 'This feature requires an iDRAC Enterprise or Datacenter license.',
+      severity: 'error',
+      isRecoverable: false,
+      suggestedAction: 
+        'Check the iDRAC license level under Overview → Server → Licenses.\n\n' +
+        'Some Redfish operations require iDRAC Enterprise or Datacenter edition.',
+    },
+  },
+  // ========== Power Operation Errors ==========
+  {
+    pattern: /unable.*reboot|power.*failed|GracefulRestart.*failed|power.*state.*error/i,
+    info: {
+      title: 'Power Operation Failed',
+      message: 'The requested power operation could not be completed.',
+      severity: 'error',
+      isRecoverable: true,
+      suggestedAction: 
+        'Possible causes:\n' +
+        '• The server OS is in sleep/hibernation mode\n' +
+        '• Windows Server requires an active session for graceful restart\n' +
+        '• Another power operation is in progress\n\n' +
+        'Alternative: Use ForceRestart instead of GracefulRestart.',
     },
   },
   // Firmware scan specific errors
@@ -178,7 +282,12 @@ const IDRAC_ERROR_PATTERNS: ErrorPattern[] = [
       message: 'Cannot access the firmware repository.',
       severity: 'error',
       isRecoverable: true,
-      suggestedAction: 'Check network path and credentials in Settings.',
+      suggestedAction: 
+        'Verify the following:\n' +
+        '• Network share path is correct and accessible\n' +
+        '• Share credentials have read permissions\n' +
+        '• Firewall allows SMB/CIFS traffic\n\n' +
+        'Check Settings → Firmware Repository for configuration.',
     },
   },
   {
@@ -188,7 +297,11 @@ const IDRAC_ERROR_PATTERNS: ErrorPattern[] = [
       message: 'Could not retrieve the firmware inventory from iDRAC.',
       severity: 'error',
       isRecoverable: true,
-      suggestedAction: 'The iDRAC may be busy. Wait a moment and retry.',
+      suggestedAction: 
+        'The iDRAC may be busy processing another request.\n\n' +
+        'Wait 1-2 minutes and retry. If this persists:\n' +
+        '• Check iDRAC connectivity\n' +
+        '• Reset the iDRAC via Web UI or SSH',
     },
   },
   {
