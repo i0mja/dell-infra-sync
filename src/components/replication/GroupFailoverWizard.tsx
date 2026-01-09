@@ -80,11 +80,15 @@ export function GroupFailoverWizard({
     }
   }, [open, step, group.id]);
 
-  // Update preflight results
+  // Update preflight results - check both possible keys
   useEffect(() => {
     const details = preflightJob?.details as Record<string, unknown> | null;
-    if (preflightJob?.status === 'completed' && details?.preflight_results) {
-      setPreflightResults(details.preflight_results);
+    if (preflightJob?.status === 'completed' && details) {
+      // Backend may store results under 'result' or 'preflight_results'
+      const results = details.result || details.preflight_results;
+      if (results) {
+        setPreflightResults(results);
+      }
     }
   }, [preflightJob]);
 
