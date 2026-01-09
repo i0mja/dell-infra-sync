@@ -15,6 +15,7 @@ interface EditServerDialogProps {
   server: {
     id: string;
     hostname: string | null;
+    idrac_hostname?: string | null;  // iDRAC-reported hostname (read-only)
     ip_address: string;
     notes: string | null;
     datacenter?: string | null;
@@ -143,14 +144,28 @@ export const EditServerDialog = ({ open, onOpenChange, server, onSuccess }: Edit
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="hostname">Hostname</Label>
+            <Label htmlFor="hostname">Display Name</Label>
             <Input
               id="hostname"
               placeholder="server01.example.com"
               value={hostname}
               onChange={(e) => setHostname(e.target.value)}
             />
+            <p className="text-xs text-muted-foreground">
+              Your custom name for this server. Won't be overwritten by iDRAC scans.
+            </p>
           </div>
+
+          {/* Show iDRAC-reported hostname if available and different */}
+          {server.idrac_hostname && (
+            <div className="space-y-1.5 rounded-md bg-muted/50 p-3">
+              <Label className="text-xs text-muted-foreground">iDRAC Reported Hostname</Label>
+              <p className="text-sm font-mono">{server.idrac_hostname}</p>
+              <p className="text-xs text-muted-foreground">
+                Auto-updated by discovery scans. Use as reference for display name.
+              </p>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label htmlFor="ip_address">IP Address *</Label>

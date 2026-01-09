@@ -251,7 +251,7 @@ class IdracMixin:
                 "manufacturer": system_data.get("Manufacturer", "Unknown"),
                 "model": system_data.get("Model", "Unknown"),
                 "service_tag": system_data.get("SKU") or system_data.get("SerialNumber", None),
-                "hostname": system_data.get("HostName", None) or None,
+                "idrac_hostname": system_data.get("HostName", None) or None,
                 "bios_version": system_data.get("BiosVersion", None),
                 "cpu_count": cpu_count,
                 "memory_gb": memory_gb,
@@ -3680,8 +3680,10 @@ class IdracMixin:
             
             if info:
                 # Define allowed server columns for update
+                # Note: hostname is intentionally excluded - it's user-assigned and should not be overwritten
+                # idrac_hostname stores the iDRAC-reported hostname instead
                 allowed_fields = {
-                    "manufacturer", "model", "product_name", "service_tag", "hostname",
+                    "manufacturer", "model", "product_name", "service_tag", "idrac_hostname",
                     "bios_version", "cpu_count", "memory_gb", "idrac_firmware",
                     "manager_mac_address", "redfish_version", "supported_endpoints",
                     "cpu_model", "cpu_cores_per_socket", "cpu_speed",

@@ -6,6 +6,7 @@ export interface Server {
   id: string;
   ip_address: string;
   hostname: string | null;
+  idrac_hostname: string | null;  // iDRAC-reported hostname (auto-updated by discovery)
   model: string | null;
   service_tag: string | null;
   manufacturer: string | null;
