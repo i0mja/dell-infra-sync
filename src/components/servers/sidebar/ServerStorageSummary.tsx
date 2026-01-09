@@ -32,7 +32,8 @@ function DriveHealthIcon({ drive }: { drive: ServerDrive }) {
   if (drive.health === "OK") {
     return <CheckCircle2 className="h-3.5 w-3.5 text-success" />;
   }
-  if (drive.health === "Warning" || (drive.life_remaining_percent && drive.life_remaining_percent < 20)) {
+  // Only consider life_remaining_percent for SSDs - HDDs don't have this metric
+  if (drive.health === "Warning" || (drive.media_type === 'SSD' && drive.life_remaining_percent && drive.life_remaining_percent < 20)) {
     return <AlertTriangle className="h-3.5 w-3.5 text-warning" />;
   }
   return <HardDrive className="h-3.5 w-3.5 text-muted-foreground" />;
@@ -69,10 +70,11 @@ export function ServerStorageSummary({
     !d.predicted_failure && 
     !isDriveCritical(d)
   ).length;
+  // Only count life_remaining_percent for SSDs - HDDs don't have this metric
   const warningCount = drives.filter(d => 
     (d.health === "Warning" || 
      d.predicted_failure || 
-     (d.life_remaining_percent && d.life_remaining_percent < 20)) &&
+     (d.media_type === 'SSD' && d.life_remaining_percent && d.life_remaining_percent < 20)) &&
     !isDriveCritical(d)
   ).length;
 
@@ -170,7 +172,8 @@ export function ServerStorageSummary({
                   <span className="text-[10px] font-medium">Predicted failure</span>
                 </div>
               )}
-              {drive.life_remaining_percent !== null && drive.life_remaining_percent < 20 && !drive.predicted_failure && !isDriveCritical(drive) && (
+              {/* Only show life remaining for SSDs - HDDs don't track NAND wear */}
+              {drive.media_type === 'SSD' && drive.life_remaining_percent !== null && drive.life_remaining_percent < 20 && !drive.predicted_failure && !isDriveCritical(drive) && (
                 <div className="text-warning text-[10px] mt-1">
                   {drive.life_remaining_percent}% life remaining
                 </div>
