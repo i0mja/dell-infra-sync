@@ -8,7 +8,8 @@ import {
   ExternalLink,
   Check,
   RotateCcw,
-  HardDrive
+  HardDrive,
+  MemoryStick
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -28,6 +29,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { formatDellPartNumber } from "@/lib/drive-utils";
 
 const INTERNAL_JOB_TYPES = [
   'idm_authenticate', 'idm_test_auth', 'idm_test_connection',
@@ -35,13 +37,32 @@ const INTERNAL_JOB_TYPES = [
   'idm_search_ad_groups', 'idm_search_ad_users', 'idm_sync_users',
 ];
 
+interface ComponentFault {
+  type: 'drive' | 'memory';
+  slot: string;
+  partNumber: string | null;
+  model?: string;
+  mediaType?: string;
+  manufacturer?: string;
+  severity: 'critical' | 'warning';
+  message: string;
+}
+
+interface AlertItem {
+  id: string;
+  label: string;
+  sublabel?: string;
+  location?: string;
+  components?: ComponentFault[];
+}
+
 interface AlertCategory {
   id: string;
   icon: React.ElementType;
   title: string;
   severity: 'critical' | 'warning' | 'info';
   count: number;
-  items: Array<{ id: string; label: string; sublabel?: string }>;
+  items: AlertItem[];
   actionLabel: string;
   actionLink: string;
 }
@@ -91,57 +112,100 @@ export const PriorityAlertCenter = () => {
     }
   });
 
-  // Query for servers with hardware faults (drives, memory)
+  // Query for servers with hardware faults (drives, memory) - with full component details
   const { data: hardwareFaults } = useQuery({
     queryKey: ['hardware-faults-alerts'],
     queryFn: async () => {
-      // Get servers with critical/failed drives
+      // Get servers with critical/failed drives - include component details
       const { data: driveIssues } = await supabase
         .from('server_drives')
-        .select('server_id, slot, health, status, predicted_failure, servers!inner(id, hostname, ip_address)')
+        .select(`
+          server_id, slot, health, status, predicted_failure,
+          part_number, model, serial_number, media_type,
+          servers!inner(id, hostname, ip_address, datacenter, rack_id, rack_position)
+        `)
         .or('health.eq.Critical,status.eq.Disabled,status.eq.UnavailableOffline,predicted_failure.eq.true');
 
-      // Get servers with critical memory
+      // Get servers with critical memory - include component details
       const { data: memoryIssues } = await supabase
         .from('server_memory')
-        .select('server_id, slot_name, health, servers!inner(id, hostname, ip_address)')
+        .select(`
+          server_id, slot_name, health, part_number, serial_number, manufacturer,
+          servers!inner(id, hostname, ip_address, datacenter, rack_id, rack_position)
+        `)
         .eq('health', 'Critical');
 
-      // Aggregate by server
+      // Aggregate by server with component details
       const serverIssues: Record<string, { 
         serverId: string; 
         hostname: string; 
         ipAddress: string;
-        driveCount: number; 
-        memoryCount: number;
+        location: string;
+        components: ComponentFault[];
       }> = {};
 
+      const buildLocation = (server: { datacenter?: string | null; rack_id?: string | null; rack_position?: number | null }) => {
+        const parts: string[] = [];
+        if (server.datacenter) parts.push(server.datacenter);
+        if (server.rack_id) parts.push(server.rack_id);
+        if (server.rack_position) parts.push(`U${server.rack_position}`);
+        return parts.join(' · ');
+      };
+
       driveIssues?.forEach(d => {
-        const server = d.servers as unknown as { id: string; hostname: string; ip_address: string };
+        const server = d.servers as unknown as { 
+          id: string; hostname: string; ip_address: string;
+          datacenter: string | null; rack_id: string | null; rack_position: number | null;
+        };
         if (!serverIssues[server.id]) {
           serverIssues[server.id] = { 
             serverId: server.id, 
             hostname: server.hostname || server.ip_address || 'Unknown',
             ipAddress: server.ip_address || '',
-            driveCount: 0, 
-            memoryCount: 0 
+            location: buildLocation(server),
+            components: []
           };
         }
-        serverIssues[server.id].driveCount++;
+        
+        const isCritical = d.health === 'Critical' || d.status === 'Disabled' || d.status === 'UnavailableOffline';
+        const message = d.predicted_failure && !isCritical 
+          ? 'Predictive failure' 
+          : d.health === 'Critical' ? 'Critical' : d.status || 'Failed';
+        
+        serverIssues[server.id].components.push({
+          type: 'drive',
+          slot: d.slot ? `Bay ${d.slot}` : 'Unknown bay',
+          partNumber: d.part_number,
+          model: d.model,
+          mediaType: d.media_type === 'SSD' ? 'SSD' : d.media_type === 'HDD' ? 'HDD' : undefined,
+          severity: isCritical ? 'critical' : 'warning',
+          message
+        });
       });
 
       memoryIssues?.forEach(m => {
-        const server = m.servers as unknown as { id: string; hostname: string; ip_address: string };
+        const server = m.servers as unknown as { 
+          id: string; hostname: string; ip_address: string;
+          datacenter: string | null; rack_id: string | null; rack_position: number | null;
+        };
         if (!serverIssues[server.id]) {
           serverIssues[server.id] = { 
             serverId: server.id, 
             hostname: server.hostname || server.ip_address || 'Unknown',
             ipAddress: server.ip_address || '',
-            driveCount: 0, 
-            memoryCount: 0 
+            location: buildLocation(server),
+            components: []
           };
         }
-        serverIssues[server.id].memoryCount++;
+        
+        serverIssues[server.id].components.push({
+          type: 'memory',
+          slot: m.slot_name || 'Unknown slot',
+          partNumber: m.part_number,
+          manufacturer: m.manufacturer,
+          severity: 'critical',
+          message: 'Critical'
+        });
       });
 
       return Object.values(serverIssues);
@@ -200,20 +264,25 @@ export const PriorityAlertCenter = () => {
   }
 
   if (hardwareFaults && hardwareFaults.length > 0) {
+    const totalComponents = hardwareFaults.reduce((sum, f) => sum + f.components.length, 0);
     categories.push({
       id: 'hardware',
       icon: HardDrive,
       title: 'Hardware Faults',
       severity: 'critical',
-      count: hardwareFaults.length,
+      count: totalComponents,
       items: hardwareFaults.map(f => {
+        const driveCount = f.components.filter(c => c.type === 'drive').length;
+        const memoryCount = f.components.filter(c => c.type === 'memory').length;
         const parts: string[] = [];
-        if (f.driveCount > 0) parts.push(`${f.driveCount} drive${f.driveCount > 1 ? 's' : ''}`);
-        if (f.memoryCount > 0) parts.push(`${f.memoryCount} DIMM${f.memoryCount > 1 ? 's' : ''}`);
+        if (driveCount > 0) parts.push(`${driveCount} drive${driveCount > 1 ? 's' : ''}`);
+        if (memoryCount > 0) parts.push(`${memoryCount} DIMM${memoryCount > 1 ? 's' : ''}`);
         return {
           id: f.serverId,
           label: f.hostname,
-          sublabel: parts.join(', ')
+          sublabel: parts.join(', '),
+          location: f.location,
+          components: f.components
         };
       }),
       actionLabel: 'View Affected Servers',
@@ -391,19 +460,79 @@ export const PriorityAlertCenter = () => {
                     </div>
                     <CollapsibleContent>
                       <div className="px-3 pb-3 space-y-2">
-                        <div className="grid gap-1 max-h-32 overflow-y-auto">
+                        <div className="grid gap-1 max-h-48 overflow-y-auto">
                           {category.items.slice(0, 5).map(item => (
-                            <div key={item.id} className="text-xs text-muted-foreground flex items-center gap-2 py-1">
-                              <span className="h-1 w-1 rounded-full bg-muted-foreground" />
-                              <span className="truncate">{item.label}</span>
-                              {item.sublabel && (
-                                <span className="text-muted-foreground/60">{item.sublabel}</span>
+                            <div key={item.id} className="py-1.5">
+                              {/* Server header with hostname */}
+                              <div className="text-xs text-muted-foreground flex items-center gap-2">
+                                <span className="h-1 w-1 rounded-full bg-muted-foreground" />
+                                <Link 
+                                  to={`/servers?server=${item.id}`} 
+                                  className="font-medium text-foreground hover:underline"
+                                >
+                                  {item.label}
+                                </Link>
+                                {item.sublabel && !item.components && (
+                                  <span className="text-muted-foreground/60">{item.sublabel}</span>
+                                )}
+                              </div>
+                              
+                              {/* Location line for hardware faults */}
+                              {item.location && (
+                                <div className="ml-3 text-[10px] text-muted-foreground/70 mt-0.5">
+                                  {item.location}
+                                </div>
+                              )}
+                              
+                              {/* Component details for hardware faults */}
+                              {item.components && item.components.length > 0 && (
+                                <div className="ml-3 mt-1 space-y-0.5">
+                                  {item.components.map((comp, idx) => (
+                                    <div 
+                                      key={idx} 
+                                      className="text-[10px] flex items-center gap-1.5 text-muted-foreground"
+                                    >
+                                      <span className={cn(
+                                        "h-1.5 w-1.5 rounded-full flex-shrink-0",
+                                        comp.severity === 'critical' ? "bg-destructive" : "bg-amber-500"
+                                      )} />
+                                      {comp.type === 'drive' ? (
+                                        <HardDrive className="h-3 w-3 flex-shrink-0" />
+                                      ) : (
+                                        <MemoryStick className="h-3 w-3 flex-shrink-0" />
+                                      )}
+                                      <span className="font-medium">{comp.slot}</span>
+                                      {comp.mediaType && (
+                                        <span className="text-muted-foreground/70">{comp.mediaType}</span>
+                                      )}
+                                      {comp.partNumber && (
+                                        <span 
+                                          className="font-mono text-[9px] bg-muted px-1 rounded cursor-help" 
+                                          title={comp.partNumber}
+                                        >
+                                          P/N: {formatDellPartNumber(comp.partNumber)}
+                                        </span>
+                                      )}
+                                      {comp.type === 'memory' && comp.manufacturer && !comp.partNumber && (
+                                        <span className="font-mono text-[9px] bg-muted px-1 rounded">
+                                          {comp.manufacturer}
+                                        </span>
+                                      )}
+                                      <span className={cn(
+                                        "ml-auto",
+                                        comp.severity === 'critical' ? "text-destructive" : "text-amber-600"
+                                      )}>
+                                        {comp.message}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
                               )}
                             </div>
                           ))}
                           {category.items.length > 5 && (
                             <div className="text-xs text-muted-foreground py-1">
-                              +{category.items.length - 5} more
+                              +{category.items.length - 5} more servers
                             </div>
                           )}
                         </div>
