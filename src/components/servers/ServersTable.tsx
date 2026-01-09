@@ -1,4 +1,4 @@
-import { useState, Fragment } from "react";
+import { useState, Fragment, useMemo } from "react";
 import { Server } from "@/hooks/useServers";
 import { compareValues } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -221,24 +221,34 @@ export function ServersTable({
     return server.connection_status || "unknown";
   };
 
-  // Apply sorting
-  const sortedServers = sortField
-    ? [...allServers].sort((a, b) => {
-        let aVal: any;
-        let bVal: any;
-        
-        if (sortField === "connection_status") {
-          // Use effective status for sorting (includes degraded)
-          aVal = getEffectiveStatus(a);
-          bVal = getEffectiveStatus(b);
-        } else {
-          aVal = a[sortField as keyof typeof a];
-          bVal = b[sortField as keyof typeof b];
-        }
-        
-        return compareValues(aVal, bVal, sortDirection);
-      })
-    : allServers;
+  // Apply sorting - degraded servers always pinned to top
+  const sortedServers = useMemo(() => {
+    return [...allServers].sort((a, b) => {
+      // Primary sort: Degraded servers always first (pinned to top)
+      const aIsDegraded = getEffectiveStatus(a) === "degraded";
+      const bIsDegraded = getEffectiveStatus(b) === "degraded";
+      
+      if (aIsDegraded && !bIsDegraded) return -1;
+      if (!aIsDegraded && bIsDegraded) return 1;
+      
+      // Secondary sort: User's chosen sort field
+      if (!sortField) return 0;
+      
+      let aVal: any;
+      let bVal: any;
+      
+      if (sortField === "connection_status") {
+        // Use effective status for sorting (includes degraded)
+        aVal = getEffectiveStatus(a);
+        bVal = getEffectiveStatus(b);
+      } else {
+        aVal = a[sortField as keyof typeof a];
+        bVal = b[sortField as keyof typeof b];
+      }
+      
+      return compareValues(aVal, bVal, sortDirection);
+    });
+  }, [allServers, sortField, sortDirection, hardwareIssues]);
 
   // Regroup after sorting (if grouped view)
   const sortedGroupedData =
