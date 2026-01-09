@@ -7,6 +7,7 @@ import { Copy, Check, Wifi, WifiOff, Network, Info } from "lucide-react";
 import { useServerNics, ServerNic } from "@/hooks/useServerNics";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
+import { formatNicSpeedFull, formatNicName } from "@/lib/nic-utils";
 
 interface ServerNicsTableProps {
   serverId: string | null;
@@ -25,14 +26,6 @@ export function ServerNicsTable({ serverId }: ServerNicsTableProps) {
     } catch {
       toast.error("Failed to copy MAC address");
     }
-  };
-
-  const formatSpeed = (speedMbps: number | null) => {
-    if (!speedMbps) return "N/A";
-    if (speedMbps >= 1000) {
-      return `${speedMbps / 1000} Gbps`;
-    }
-    return `${speedMbps} Mbps`;
   };
 
   const getLinkStatusBadge = (status: string | null) => {
@@ -197,13 +190,13 @@ export function ServerNicsTable({ serverId }: ServerNicsTableProps) {
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <span className="cursor-help">
-                          {formatSpeed(nic.current_speed_mbps)}
+                          {formatNicSpeedFull(nic.current_speed_mbps)}
                         </span>
                       </TooltipTrigger>
                       <TooltipContent>
                         <div className="space-y-1">
-                          <p>Current: {formatSpeed(nic.current_speed_mbps)}</p>
-                          <p>Max: {formatSpeed(nic.max_speed_mbps)}</p>
+                          <p>Current: {formatNicSpeedFull(nic.current_speed_mbps)}</p>
+                          <p>Max: {formatNicSpeedFull(nic.max_speed_mbps)}</p>
                           {nic.duplex && <p>Duplex: {nic.duplex}</p>}
                           {nic.auto_negotiate !== null && (
                             <p>Auto-negotiate: {nic.auto_negotiate ? 'Yes' : 'No'}</p>
