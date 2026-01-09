@@ -2670,7 +2670,7 @@ class IdracMixin:
         # Determine which collection to use
         ports_link = None
         
-        # Check Ports first (newer schema)
+        # Check Ports first (newer schema) at top level
         if isinstance(ports_data, dict):
             if 'Members' in ports_data:
                 # Ports is already expanded inline
@@ -2684,7 +2684,7 @@ class IdracMixin:
                 ports_link = ports_data['@odata.id']
                 self.log(f"  → Found Ports link: {ports_link}", "DEBUG")
         
-        # Fallback to NetworkPorts (deprecated but still common)
+        # Fallback to NetworkPorts at top level (deprecated but still common)
         if not ports_link and isinstance(network_ports_data, dict):
             if 'Members' in network_ports_data:
                 # NetworkPorts is already expanded inline
@@ -2698,9 +2698,30 @@ class IdracMixin:
                 ports_link = network_ports_data['@odata.id']
                 self.log(f"  → Found NetworkPorts link: {ports_link}", "DEBUG")
         
+        # Check Controllers[0].Links (Dell iDRAC pattern)
         if not ports_link:
-            self.log(f"  → No Ports or NetworkPorts link found in adapter", "DEBUG")
-            return port_map
+            controllers = adapter_data.get('Controllers', [])
+            if controllers and len(controllers) > 0:
+                links = controllers[0].get('Links', {})
+                ports_ref = links.get('Ports') or links.get('NetworkPorts')
+                if isinstance(ports_ref, dict) and '@odata.id' in ports_ref:
+                    ports_link = ports_ref['@odata.id']
+                    self.log(f"  → Found Ports link in Controllers[0].Links: {ports_link}", "DEBUG")
+                elif isinstance(ports_ref, list) and len(ports_ref) > 0:
+                    # Some schemas return array of links - get parent collection
+                    if '@odata.id' in ports_ref[0]:
+                        ports_link = ports_ref[0]['@odata.id'].rsplit('/', 1)[0]
+                        self.log(f"  → Found Ports link from array in Controllers[0].Links: {ports_link}", "DEBUG")
+        
+        # Final fallback: Construct URL from adapter ID
+        if not ports_link:
+            adapter_id = adapter_data.get('Id')
+            if adapter_id:
+                ports_link = f"/redfish/v1/Chassis/System.Embedded.1/NetworkAdapters/{adapter_id}/NetworkPorts"
+                self.log(f"  → Constructed NetworkPorts URL for {adapter_id}: {ports_link}", "DEBUG")
+            else:
+                self.log(f"  → No Ports or NetworkPorts link found in adapter", "DEBUG")
+                return port_map
         
         try:
             # Try with $expand first
