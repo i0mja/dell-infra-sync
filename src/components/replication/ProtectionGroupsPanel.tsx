@@ -54,6 +54,7 @@ import { EditProtectionGroupDialog } from "./EditProtectionGroupDialog";
 import { CreateProtectionGroupWizard } from "./CreateProtectionGroupWizard";
 import { FailoverPreflightDialog } from "./FailoverPreflightDialog";
 import { GroupFailoverWizard } from "./GroupFailoverWizard";
+import { ActiveTestIndicator } from "./ActiveTestIndicator";
 import { supabase } from "@/integrations/supabase/client";
 
 function formatBytes(bytes: number | null): string {
@@ -182,6 +183,27 @@ export function ProtectionGroupsPanel() {
   });
 
   const isSyncing = activeSyncJobs.length > 0;
+
+  // Query for active test failover
+  const { data: activeTestEvent } = useQuery({
+    queryKey: ['active-test-failover', selectedGroupId],
+    queryFn: async () => {
+      if (!selectedGroupId) return null;
+      const { data } = await supabase
+        .from('failover_events')
+        .select('id, failover_type, status, started_at, test_duration_minutes, cleanup_scheduled_at')
+        .eq('protection_group_id', selectedGroupId)
+        .eq('failover_type', 'test')
+        .in('status', ['pending', 'in_progress', 'awaiting_commit', 'completed'])
+        .is('rolled_back_at', null)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return data;
+    },
+    enabled: !!selectedGroupId,
+    refetchInterval: 5000,
+  });
 
   // Check if test is overdue (also returns true if never tested and reminder is set)
   const isTestOverdue = (group: ProtectionGroup): boolean => {
@@ -347,6 +369,12 @@ export function ProtectionGroupsPanel() {
                     </Badge>
                     <StatusBadge group={group} />
                     <PriorityBadge priority={group.priority} />
+                    {group.status === 'failed_over' && (
+                      <Badge variant="outline" className="text-blue-600 border-blue-500/30">
+                        <FlaskConical className="h-3 w-3 mr-1" />
+                        Test Active
+                      </Badge>
+                    )}
                   </div>
                   <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
                     <span className="flex items-center gap-1">
@@ -580,18 +608,31 @@ export function ProtectionGroupsPanel() {
               <p>Select a protection group to manage its VMs</p>
             </div>
           ) : (
-            <ProtectedVMsTable
-              vms={vms}
-              loading={vmsLoading}
-              onAddVMs={addVMs}
-              onRemoveVM={removeVM}
-              onBatchMigrate={batchMigrate}
-              protectionDatastore={selectedGroup.protection_datastore}
-              sourceVCenterId={selectedGroup.source_vcenter_id || undefined}
-              protectionGroupId={selectedGroup.id}
-              rpoMinutes={selectedGroup.rpo_minutes}
-              onRefresh={refetchVMs}
-            />
+            <div className="space-y-4">
+              {/* Active Test Indicator */}
+              {activeTestEvent && activeTestEvent.status !== 'rolled_back' && (
+                <ActiveTestIndicator
+                  groupId={selectedGroup.id}
+                  eventId={activeTestEvent.id}
+                  cleanupScheduledAt={activeTestEvent.cleanup_scheduled_at}
+                  testDurationMinutes={activeTestEvent.test_duration_minutes}
+                  startedAt={activeTestEvent.started_at}
+                />
+              )}
+              
+              <ProtectedVMsTable
+                vms={vms}
+                loading={vmsLoading}
+                onAddVMs={addVMs}
+                onRemoveVM={removeVM}
+                onBatchMigrate={batchMigrate}
+                protectionDatastore={selectedGroup.protection_datastore}
+                sourceVCenterId={selectedGroup.source_vcenter_id || undefined}
+                protectionGroupId={selectedGroup.id}
+                rpoMinutes={selectedGroup.rpo_minutes}
+                onRefresh={refetchVMs}
+              />
+            </div>
           )}
         </CardContent>
       </Card>

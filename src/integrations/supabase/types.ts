@@ -801,6 +801,8 @@ export type Database = {
       failover_events: {
         Row: {
           checkpoint_time: string | null
+          cleanup_job_id: string | null
+          cleanup_scheduled_at: string | null
           commit_delay_minutes: number | null
           commit_policy: string | null
           committed_at: string | null
@@ -815,11 +817,14 @@ export type Database = {
           shutdown_source_vms: string | null
           started_at: string | null
           status: string | null
+          test_duration_minutes: number | null
           test_network_id: string | null
           vms_recovered: number | null
         }
         Insert: {
           checkpoint_time?: string | null
+          cleanup_job_id?: string | null
+          cleanup_scheduled_at?: string | null
           commit_delay_minutes?: number | null
           commit_policy?: string | null
           committed_at?: string | null
@@ -834,11 +839,14 @@ export type Database = {
           shutdown_source_vms?: string | null
           started_at?: string | null
           status?: string | null
+          test_duration_minutes?: number | null
           test_network_id?: string | null
           vms_recovered?: number | null
         }
         Update: {
           checkpoint_time?: string | null
+          cleanup_job_id?: string | null
+          cleanup_scheduled_at?: string | null
           commit_delay_minutes?: number | null
           commit_policy?: string | null
           committed_at?: string | null
@@ -853,10 +861,18 @@ export type Database = {
           shutdown_source_vms?: string | null
           started_at?: string | null
           status?: string | null
+          test_duration_minutes?: number | null
           test_network_id?: string | null
           vms_recovered?: number | null
         }
         Relationships: [
+          {
+            foreignKeyName: "failover_events_cleanup_job_id_fkey"
+            columns: ["cleanup_job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "failover_events_initiated_by_fkey"
             columns: ["initiated_by"]
