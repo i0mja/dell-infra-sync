@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useServers } from "@/hooks/useServers";
+import { useServerHardwareIssues } from "@/hooks/useServerHardwareIssues";
 import { useConsoleLauncher } from "@/hooks/useConsoleLauncher";
 import { useServerActions } from "@/hooks/useServerActions";
 import { useAutoLinkVCenter } from "@/hooks/useAutoLinkVCenter";
@@ -117,6 +118,9 @@ export default function Servers() {
     vCenterHosts,
     refetch,
   } = useServers(searchTerm, statusFilter, groupFilter);
+
+  // Fetch hardware issues for degraded status
+  const { data: hardwareIssues } = useServerHardwareIssues();
 
   const { refreshing, testing, handleTestConnection, handleRefreshInfo, handleDeleteServer } =
     useServerActions();
@@ -523,6 +527,7 @@ export default function Servers() {
             setSelectedServer(server as any);
             setIdracSettingsDialogOpen(true);
           }}
+          hardwareIssues={hardwareIssues}
           />
         </div>
 
