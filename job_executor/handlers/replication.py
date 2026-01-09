@@ -4811,6 +4811,103 @@ chmod 600 ~/.ssh/authorized_keys
             )
 
     
+    def _handle_existing_shell_vm(self, content, shell_vm_name: str, job_id: str) -> bool:
+        """
+        Check for existing VM with same name and handle it.
+        
+        Returns True if we can proceed with creation.
+        Raises ValueError if VM exists and is powered on.
+        """
+        from pyVmomi import vim
+        
+        # Search for existing VM by name
+        view = content.viewManager.CreateContainerView(
+            content.rootFolder, [vim.VirtualMachine], True
+        )
+        
+        existing_vm = None
+        try:
+            for vm in view.view:
+                if vm.name == shell_vm_name:
+                    existing_vm = vm
+                    break
+        finally:
+            view.Destroy()
+        
+        if not existing_vm:
+            return True  # No conflict, proceed
+        
+        # VM exists - check power state
+        power_state = existing_vm.runtime.powerState
+        self._add_console_log(job_id, f"Found existing VM '{shell_vm_name}' in state: {power_state}")
+        
+        if power_state == vim.VirtualMachine.PowerState.poweredOn:
+            raise ValueError(
+                f"VM '{shell_vm_name}' already exists and is powered on. "
+                "Power it off or remove it before creating a new shell."
+            )
+        
+        # Powered off - unregister it (keeps disks intact)
+        self._add_console_log(job_id, f"Removing stale shell VM: {shell_vm_name}")
+        try:
+            existing_vm.UnregisterVM()
+            self._add_console_log(job_id, f"Unregistered existing VM '{shell_vm_name}'")
+        except Exception as e:
+            self._add_console_log(job_id, f"Failed to unregister: {e}", "WARN")
+            # Try Destroy if unregister fails (last resort - may delete files)
+            task = existing_vm.Destroy_Task()
+            for _ in range(30):
+                if task.info.state in ['success', 'error']:
+                    break
+                time.sleep(1)
+        
+        return True
+
+    def _discover_replicated_vmdks(self, content, datastore, source_vm_name: str, job_id: str) -> list:
+        """
+        Discover replicated VMDK files in the VM folder on the target datastore.
+        """
+        from pyVmomi import vim
+        
+        disk_paths = []
+        
+        try:
+            browser = datastore.browser
+            search_spec = vim.host.DatastoreBrowser.SearchSpec()
+            search_spec.matchPattern = ["*.vmdk"]
+            search_spec.details = vim.host.DatastoreBrowser.FileInfo.Details(
+                fileType=True, fileSize=True
+            )
+            
+            folder_path = f"[{datastore.name}] {source_vm_name}/"
+            self._add_console_log(job_id, f"Searching for VMDKs in: {folder_path}")
+            
+            task = browser.SearchDatastore_Task(
+                datastorePath=folder_path,
+                searchSpec=search_spec
+            )
+            
+            # Wait for task
+            for _ in range(60):
+                if task.info.state in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+                    break
+                time.sleep(1)
+            
+            if task.info.state == vim.TaskInfo.State.success and task.info.result:
+                for file_info in task.info.result.file:
+                    # Skip flat/delta/ctk files
+                    if any(x in file_info.path for x in ['-flat.vmdk', '-delta.vmdk', '-ctk.vmdk']):
+                        continue
+                    
+                    full_path = f"{folder_path}{file_info.path}"
+                    disk_paths.append(full_path)
+                    self._add_console_log(job_id, f"Found VMDK: {file_info.path}")
+        
+        except Exception as e:
+            self._add_console_log(job_id, f"VMDK discovery error: {e}", "WARN")
+        
+        return disk_paths
+
     def execute_create_dr_shell(self, job: Dict) -> bool:
         """
         Create a DR shell VM at the DR site using replicated disks.
@@ -4920,6 +5017,10 @@ chmod 600 ~/.ssh/authorized_keys
             try:
                 content = si.RetrieveContent()
                 
+                # Check for and handle existing shell VM with same name
+                self._add_console_log(job_id, f"Checking for existing VM: {shell_vm_name}")
+                self._handle_existing_shell_vm(content, shell_vm_name, job_id)
+                
                 self.update_job_status(job_id, 'running', details={
                     **details,
                     'current_step': 'Finding target datastore and cluster',
@@ -4942,6 +5043,16 @@ chmod 600 ~/.ssh/authorized_keys
                         available_list += f' ... and {len(available) - 15} more'
                     
                     raise ValueError(f"Datastore not found: {datastore_name}. Available on this vCenter: [{available_list}]")
+                
+                # Step 6b: Discover replicated VMDKs
+                source_vm_name = protected_vm.get('vm_name')
+                self._add_console_log(job_id, f"Discovering replicated VMDKs for: {source_vm_name}")
+                disk_paths = self._discover_replicated_vmdks(content, datastore, source_vm_name, job_id)
+                
+                if not disk_paths:
+                    raise ValueError(f"No replicated VMDKs found in [{datastore_name}] {source_vm_name}/")
+                
+                self._add_console_log(job_id, f"Found {len(disk_paths)} replicated disk(s)")
                 
                 # Step 7: Find a cluster/host to create VM on
                 cluster = None
@@ -5009,6 +5120,33 @@ chmod 600 ~/.ssh/authorized_keys
                 config_spec.guestId = 'otherGuest64'
                 config_spec.files = vmx_file
                 
+                # Build device changes list
+                device_changes = []
+                
+                # Add SCSI controller for disks
+                scsi_ctr = vim.vm.device.VirtualDeviceSpec()
+                scsi_ctr.operation = vim.vm.device.VirtualDeviceSpec.Operation.add
+                scsi_ctr.device = vim.vm.device.VirtualLsiLogicController()
+                scsi_ctr.device.key = 1000
+                scsi_ctr.device.busNumber = 0
+                scsi_ctr.device.sharedBus = vim.vm.device.VirtualSCSIController.Sharing.noSharing
+                device_changes.append(scsi_ctr)
+                
+                # Attach replicated disks
+                for i, disk_path in enumerate(disk_paths):
+                    disk_spec = vim.vm.device.VirtualDeviceSpec()
+                    disk_spec.operation = vim.vm.device.VirtualDeviceSpec.Operation.add
+                    disk_spec.device = vim.vm.device.VirtualDisk()
+                    disk_spec.device.key = 2000 + i
+                    disk_spec.device.controllerKey = 1000
+                    disk_spec.device.unitNumber = i
+                    disk_spec.device.backing = vim.vm.device.VirtualDisk.FlatVer2BackingInfo()
+                    disk_spec.device.backing.fileName = disk_path
+                    disk_spec.device.backing.diskMode = 'persistent'
+                    disk_spec.device.backing.datastore = datastore
+                    device_changes.append(disk_spec)
+                    self._add_console_log(job_id, f"Attaching disk {i}: {disk_path}")
+                
                 # Add network adapter if network specified
                 if network:
                     nic_spec = vim.vm.device.VirtualDeviceSpec()
@@ -5022,7 +5160,9 @@ chmod 600 ~/.ssh/authorized_keys
                     nic.connectable.connected = True
                     nic.connectable.allowGuestControl = True
                     nic_spec.device = nic
-                    config_spec.deviceChange = [nic_spec]
+                    device_changes.append(nic_spec)
+                
+                config_spec.deviceChange = device_changes
                 
                 # Create the VM
                 self._add_console_log(job_id, "Creating VM task...")
