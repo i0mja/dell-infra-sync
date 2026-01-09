@@ -167,6 +167,10 @@ export function useServers(
           !server.connection_status || server.connection_status === "unknown";
       } else if (statusFilter === "incomplete") {
         matchesStatus = isIncompleteServer(server);
+      } else if (statusFilter === "degraded") {
+        // Degraded filter is handled at ServersTable level since it needs hardware issues data
+        // Here we just ensure online servers pass through - the table filters them further
+        matchesStatus = server.connection_status === "online";
       }
 
       // Group filter

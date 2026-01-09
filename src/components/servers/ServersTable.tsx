@@ -32,6 +32,12 @@ import {
   DialogFooter,
   DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import {
   ChevronDown,
@@ -64,6 +70,7 @@ import {
   Edit,
   Settings,
   FolderPlus,
+  AlertTriangle,
 } from "lucide-react";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
 import { BulkManageGroupsDialog } from "./BulkManageGroupsDialog";
@@ -129,6 +136,7 @@ interface ServersTableProps {
   onViewInVCenter?: (clusterName: string) => void;
   onCheckForUpdates?: (serverIds: string[], name: string) => void;
   onIdracSettings?: (server: Server) => void;
+  hardwareIssues?: Map<string, { drive_issues: number; memory_issues: number }>;
 }
 
 export function ServersTable({
@@ -175,6 +183,7 @@ export function ServersTable({
   onViewInVCenter,
   onCheckForUpdates,
   onIdracSettings,
+  hardwareIssues,
 }: ServersTableProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [sortField, setSortField] = useState<string | null>(null);
@@ -364,6 +373,29 @@ export function ServersTable({
   };
 
   const getStatusBadge = (server: Server) => {
+    // Check for hardware issues if server is online
+    const issues = hardwareIssues?.get(server.id);
+    const hasCriticalIssue = issues && (issues.drive_issues > 0 || issues.memory_issues > 0);
+    
+    if (server.connection_status === "online" && hasCriticalIssue) {
+      const totalIssues = (issues?.drive_issues || 0) + (issues?.memory_issues || 0);
+      return (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge variant="default" className="bg-warning hover:bg-warning/90 text-warning-foreground text-xs">
+                <AlertTriangle className="mr-1 h-3 w-3" />
+                Degraded
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{totalIssues} hardware issue{totalIssues > 1 ? 's' : ''} detected</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      );
+    }
+    
     switch (server.connection_status) {
       case "online":
         return (
@@ -480,6 +512,7 @@ export function ServersTable({
           <SelectContent>
             <SelectItem value="all">All Status</SelectItem>
             <SelectItem value="online">Online</SelectItem>
+            <SelectItem value="degraded">Degraded</SelectItem>
             <SelectItem value="offline">Offline</SelectItem>
             <SelectItem value="unknown">Unknown</SelectItem>
             <SelectItem value="incomplete">Incomplete</SelectItem>
