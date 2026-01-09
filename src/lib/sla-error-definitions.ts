@@ -3,6 +3,18 @@
 export type ErrorSeverity = 'critical' | 'warning' | 'info';
 export type ErrorCategory = 'configuration' | 'infrastructure' | 'connectivity' | 'data' | 'operational';
 
+export type RemediationActionType = 'create_job' | 'direct_update' | 'open_wizard';
+
+export interface SLARemediation {
+  action_type: RemediationActionType;
+  job_type?: string;
+  job_params?: Record<string, unknown>;
+  can_auto_fix: boolean;
+  requires_confirmation?: boolean;
+  requires_password?: boolean;
+  button_label: string;
+}
+
 export interface SLAErrorDefinition {
   code: string;
   title: string;
@@ -13,6 +25,7 @@ export interface SLAErrorDefinition {
   category: ErrorCategory;
   quickActionLabel?: string;
   quickActionRoute?: string;
+  remediation?: SLARemediation;
 }
 
 export const SLA_ERROR_DEFINITIONS: Record<string, SLAErrorDefinition> = {
@@ -33,6 +46,11 @@ export const SLA_ERROR_DEFINITIONS: Record<string, SLAErrorDefinition> = {
     category: 'configuration',
     quickActionLabel: 'Configure Target',
     quickActionRoute: '/vcenter?tab=zfs-infrastructure',
+    remediation: {
+      action_type: 'open_wizard',
+      can_auto_fix: false,
+      button_label: 'Configure Target',
+    },
   },
 
   NO_SCHEDULE_CONFIGURED: {
@@ -46,6 +64,11 @@ export const SLA_ERROR_DEFINITIONS: Record<string, SLAErrorDefinition> = {
       'Save the configuration',
     ],
     severity: 'critical',
+    remediation: {
+      action_type: 'open_wizard',
+      can_auto_fix: false,
+      button_label: 'Set Schedule',
+    },
     category: 'configuration',
     quickActionLabel: 'Set Schedule',
   },
@@ -168,6 +191,12 @@ export const SLA_ERROR_DEFINITIONS: Record<string, SLAErrorDefinition> = {
     ],
     severity: 'warning',
     category: 'infrastructure',
+    remediation: {
+      action_type: 'create_job',
+      job_type: 'create_dr_shells',
+      can_auto_fix: true,
+      button_label: 'Create DR Shells',
+    },
     quickActionLabel: 'Create DR Shells',
   },
 
@@ -204,6 +233,13 @@ export const SLA_ERROR_DEFINITIONS: Record<string, SLAErrorDefinition> = {
     severity: 'critical',
     category: 'connectivity',
     quickActionLabel: 'Configure SSH Trust',
+    remediation: {
+      action_type: 'create_job',
+      job_type: 'ssh_key_deploy',
+      can_auto_fix: true,
+      requires_password: true,
+      button_label: 'Deploy SSH Keys',
+    },
   },
 
   TARGET_UNREACHABLE: {
@@ -268,6 +304,12 @@ export const SLA_ERROR_DEFINITIONS: Record<string, SLAErrorDefinition> = {
     severity: 'critical',
     category: 'data',
     quickActionLabel: 'Run Manual Sync',
+    remediation: {
+      action_type: 'create_job',
+      job_type: 'run_replication_sync',
+      can_auto_fix: true,
+      button_label: 'Run Sync Now',
+    },
   },
 
   LAST_SYNC_TOO_OLD: {
@@ -284,6 +326,12 @@ export const SLA_ERROR_DEFINITIONS: Record<string, SLAErrorDefinition> = {
     severity: 'critical',
     category: 'data',
     quickActionLabel: 'Run Manual Sync',
+    remediation: {
+      action_type: 'create_job',
+      job_type: 'run_replication_sync',
+      can_auto_fix: true,
+      button_label: 'Run Sync Now',
+    },
   },
 
   SNAPSHOT_CHAIN_BROKEN: {
@@ -299,6 +347,14 @@ export const SLA_ERROR_DEFINITIONS: Record<string, SLAErrorDefinition> = {
     ],
     severity: 'warning',
     category: 'data',
+    remediation: {
+      action_type: 'create_job',
+      job_type: 'run_replication_sync',
+      job_params: { force_full_sync: true },
+      can_auto_fix: true,
+      requires_confirmation: true,
+      button_label: 'Run Full Sync',
+    },
   },
 
   INSUFFICIENT_STORAGE: {
@@ -347,6 +403,11 @@ export const SLA_ERROR_DEFINITIONS: Record<string, SLAErrorDefinition> = {
     severity: 'warning',
     category: 'operational',
     quickActionLabel: 'Resume Group',
+    remediation: {
+      action_type: 'direct_update',
+      can_auto_fix: true,
+      button_label: 'Resume Group',
+    },
   },
 
   SYNC_STUCK_IN_PROGRESS: {
@@ -362,6 +423,13 @@ export const SLA_ERROR_DEFINITIONS: Record<string, SLAErrorDefinition> = {
     ],
     severity: 'warning',
     category: 'operational',
+    remediation: {
+      action_type: 'create_job',
+      job_type: 'cancel_stuck_sync',
+      can_auto_fix: true,
+      requires_confirmation: true,
+      button_label: 'Cancel & Restart',
+    },
   },
 
   FAILOVER_TEST_OVERDUE: {
@@ -378,6 +446,11 @@ export const SLA_ERROR_DEFINITIONS: Record<string, SLAErrorDefinition> = {
     severity: 'warning',
     category: 'operational',
     quickActionLabel: 'Schedule Test',
+    remediation: {
+      action_type: 'open_wizard',
+      can_auto_fix: true,
+      button_label: 'Start Test Failover',
+    },
   },
 
   JOB_EXECUTOR_OFFLINE: {

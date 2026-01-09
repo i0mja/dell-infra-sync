@@ -17,12 +17,13 @@ import {
   Info,
   ChevronDown,
   ChevronRight,
-  ExternalLink,
   Play,
   Settings,
   RefreshCw,
   Clock,
   CheckCircle2,
+  Wrench,
+  Loader2,
 } from "lucide-react";
 import { RPOGauge } from "./RPOGauge";
 import { 
@@ -32,10 +33,11 @@ import {
   ReplicationTarget,
   ProtectedVM,
   ReplicationJob,
-  formatDuration,
 } from "@/lib/sla-diagnostics";
 import { formatDistanceToNow } from "date-fns";
 import { cn } from "@/lib/utils";
+import { useSLARemediation } from "@/hooks/useSLARemediation";
+import { toast } from "sonner";
 
 interface SLADiagnosisDialogProps {
   open: boolean;
@@ -53,6 +55,7 @@ export function SLADiagnosisDialog({
   onEditGroup,
 }: SLADiagnosisDialogProps) {
   const [expandedIssues, setExpandedIssues] = useState<Set<string>>(new Set());
+  const { applyFix } = useSLARemediation();
 
   // Fetch protection group
   const { data: group, isLoading: groupLoading } = useQuery({
@@ -153,6 +156,34 @@ export function SLADiagnosisDialog({
       }
       return next;
     });
+  };
+
+  const handleRemediateIssue = (diagnostic: DiagnosticResult) => {
+    const remediation = diagnostic.definition.remediation;
+    if (!remediation) return;
+
+    // For wizard actions, use callbacks
+    if (remediation.action_type === 'open_wizard') {
+      if (diagnostic.errorCode === 'FAILOVER_TEST_OVERDUE') {
+        toast.info("Open the protection group and start a test failover");
+      }
+      onOpenChange(false);
+      return;
+    }
+
+    // Create a mock violation for the remediation hook
+    const mockViolation = {
+      id: `diag-${diagnostic.errorCode}`,
+      protection_group_id: protectionGroupId,
+      violation_type: diagnostic.errorCode.toLowerCase(),
+      severity: diagnostic.definition.severity,
+      details: {
+        error_code: diagnostic.errorCode,
+        group_name: group?.name,
+      },
+    };
+
+    applyFix.mutate({ violation: mockViolation });
   };
 
   const getSeverityIcon = (severity: string) => {
@@ -330,25 +361,21 @@ export function SLADiagnosisDialog({
                               </div>
                             )}
 
-                            {/* Quick action button */}
-                            {diagnostic.definition.quickActionLabel && (
+                            {/* Remediation button */}
+                            {diagnostic.definition.remediation?.can_auto_fix && (
                               <Button 
                                 size="sm" 
-                                variant="outline"
+                                variant="default"
                                 className="mt-2"
-                                onClick={() => {
-                                  // Handle quick actions based on type
-                                  if (diagnostic.errorCode === 'NEVER_SYNCED' || 
-                                      diagnostic.errorCode === 'LAST_SYNC_TOO_OLD') {
-                                    onRunSync?.();
-                                  } else {
-                                    onEditGroup?.();
-                                  }
-                                  onOpenChange(false);
-                                }}
+                                disabled={applyFix.isPending}
+                                onClick={() => handleRemediateIssue(diagnostic)}
                               >
-                                {diagnostic.definition.quickActionLabel}
-                                <ExternalLink className="h-3 w-3 ml-1" />
+                                {applyFix.isPending ? (
+                                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                ) : (
+                                  <Wrench className="h-3 w-3 mr-1" />
+                                )}
+                                {diagnostic.definition.remediation.button_label}
                               </Button>
                             )}
                           </div>
