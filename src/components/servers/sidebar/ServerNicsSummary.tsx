@@ -1,4 +1,4 @@
-import { Copy, Check, Network, ExternalLink } from "lucide-react";
+import { Copy, Check, Network, ChevronDown, ChevronUp } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
@@ -9,7 +9,6 @@ import { CollapsibleSection } from "./CollapsibleSection";
 interface ServerNicsSummaryProps {
   nics: ServerNic[];
   isLoading?: boolean;
-  onViewAll?: () => void;
 }
 
 function formatSpeed(mbps: number | null): string {
@@ -53,8 +52,9 @@ function formatNicName(nic: ServerNic): string {
   return nic.model || fqdd.split(".").pop() || fqdd;
 }
 
-export function ServerNicsSummary({ nics, isLoading, onViewAll }: ServerNicsSummaryProps) {
+export function ServerNicsSummary({ nics, isLoading }: ServerNicsSummaryProps) {
   const [copiedMac, setCopiedMac] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
 
   const copyToClipboard = async (mac: string) => {
     try {
@@ -102,8 +102,8 @@ export function ServerNicsSummary({ nics, isLoading, onViewAll }: ServerNicsSumm
     return a.fqdd.localeCompare(b.fqdd);
   });
 
-  // Show first 6 sorted NICs, with option to view all
-  const displayNics = sortedNics.slice(0, 6);
+  // Show first 6 sorted NICs, or all if expanded
+  const displayNics = showAll ? sortedNics : sortedNics.slice(0, 6);
   const hasMore = nics.length > 6;
 
   return (
@@ -113,7 +113,7 @@ export function ServerNicsSummary({ nics, isLoading, onViewAll }: ServerNicsSumm
       count={nics.length}
       defaultOpen={false}
     >
-      <div className="space-y-1.5">
+      <div className={`space-y-1.5 ${showAll ? 'max-h-64 overflow-y-auto' : ''}`}>
         {displayNics.map((nic) => (
           <div
             key={nic.id}
@@ -166,15 +166,24 @@ export function ServerNicsSummary({ nics, isLoading, onViewAll }: ServerNicsSumm
           </div>
         ))}
         
-        {(hasMore || onViewAll) && (
+        {hasMore && (
           <Button
             variant="ghost"
             size="sm"
             className="w-full text-xs h-7 mt-1"
-            onClick={onViewAll}
+            onClick={() => setShowAll(!showAll)}
           >
-            <ExternalLink className="h-3 w-3 mr-1" />
-            View All NICs
+            {showAll ? (
+              <>
+                <ChevronUp className="h-3 w-3 mr-1" />
+                Show Less
+              </>
+            ) : (
+              <>
+                <ChevronDown className="h-3 w-3 mr-1" />
+                View All NICs ({nics.length})
+              </>
+            )}
           </Button>
         )}
       </div>
