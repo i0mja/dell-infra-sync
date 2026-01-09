@@ -3694,6 +3694,7 @@ export type Database = {
           credential_last_tested: string | null
           credential_set_id: string | null
           credential_test_status: string | null
+          datacenter: string | null
           discovered_by_credential_set_id: string | null
           discovery_job_id: string | null
           hostname: string | null
@@ -3711,6 +3712,7 @@ export type Database = {
           last_idrac_sync: string | null
           last_openmanage_sync: string | null
           last_seen: string | null
+          location_notes: string | null
           manager_mac_address: string | null
           manufacturer: string | null
           memory_gb: number | null
@@ -3721,8 +3723,12 @@ export type Database = {
           overall_health: string | null
           power_state: string | null
           product_name: string | null
+          rack_id: string | null
+          rack_position: string | null
           redfish_version: string | null
           requires_legacy_ssl: boolean | null
+          room_floor: string | null
+          row_aisle: string | null
           secure_boot: string | null
           service_tag: string | null
           supported_endpoints: Json | null
@@ -3748,6 +3754,7 @@ export type Database = {
           credential_last_tested?: string | null
           credential_set_id?: string | null
           credential_test_status?: string | null
+          datacenter?: string | null
           discovered_by_credential_set_id?: string | null
           discovery_job_id?: string | null
           hostname?: string | null
@@ -3765,6 +3772,7 @@ export type Database = {
           last_idrac_sync?: string | null
           last_openmanage_sync?: string | null
           last_seen?: string | null
+          location_notes?: string | null
           manager_mac_address?: string | null
           manufacturer?: string | null
           memory_gb?: number | null
@@ -3775,8 +3783,12 @@ export type Database = {
           overall_health?: string | null
           power_state?: string | null
           product_name?: string | null
+          rack_id?: string | null
+          rack_position?: string | null
           redfish_version?: string | null
           requires_legacy_ssl?: boolean | null
+          room_floor?: string | null
+          row_aisle?: string | null
           secure_boot?: string | null
           service_tag?: string | null
           supported_endpoints?: Json | null
@@ -3802,6 +3814,7 @@ export type Database = {
           credential_last_tested?: string | null
           credential_set_id?: string | null
           credential_test_status?: string | null
+          datacenter?: string | null
           discovered_by_credential_set_id?: string | null
           discovery_job_id?: string | null
           hostname?: string | null
@@ -3819,6 +3832,7 @@ export type Database = {
           last_idrac_sync?: string | null
           last_openmanage_sync?: string | null
           last_seen?: string | null
+          location_notes?: string | null
           manager_mac_address?: string | null
           manufacturer?: string | null
           memory_gb?: number | null
@@ -3829,8 +3843,12 @@ export type Database = {
           overall_health?: string | null
           power_state?: string | null
           product_name?: string | null
+          rack_id?: string | null
+          rack_position?: string | null
           redfish_version?: string | null
           requires_legacy_ssl?: boolean | null
+          room_floor?: string | null
+          row_aisle?: string | null
           secure_boot?: string | null
           service_tag?: string | null
           supported_endpoints?: Json | null
