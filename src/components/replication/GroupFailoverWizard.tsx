@@ -496,7 +496,7 @@ export function GroupFailoverWizard({
                   <Button 
                     size="sm" 
                     variant="outline"
-                    onClick={() => activeFailover && rollbackFailover.mutate(activeFailover.id)}
+                    onClick={() => activeFailover && rollbackFailover.mutate({ eventId: activeFailover.id, protectionGroupId: group.id })}
                     disabled={rollbackFailover.isPending}
                   >
                     <RotateCcw className="h-4 w-4 mr-1" />

@@ -210,7 +210,7 @@ export function useFailoverOperations(protectionGroupId?: string) {
 
   // Rollback failover mutation
   const rollbackFailover = useMutation({
-    mutationFn: async (eventId: string) => {
+    mutationFn: async ({ eventId, protectionGroupId }: { eventId: string; protectionGroupId: string }) => {
       const { data: { user } } = await supabase.auth.getUser();
       
       const { data: job, error } = await supabase
@@ -219,7 +219,10 @@ export function useFailoverOperations(protectionGroupId?: string) {
           job_type: 'rollback_failover' as any,
           status: 'pending',
           created_by: user?.id,
-          details: { failover_event_id: eventId }
+          details: { 
+            event_id: eventId,
+            protection_group_id: protectionGroupId
+          }
         })
         .select()
         .single();
