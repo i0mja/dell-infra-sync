@@ -5,10 +5,22 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { AlertTriangle, AlertCircle, CheckCircle, RefreshCw, Shield, ExternalLink } from "lucide-react";
+import { AlertTriangle, AlertCircle, CheckCircle, RefreshCw, Shield, ExternalLink, Wrench, Loader2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { cn } from "@/lib/utils";
 import { SLADiagnosisDialog } from "./SLADiagnosisDialog";
+import { useSLARemediation, SLAViolationWithRemediation } from "@/hooks/useSLARemediation";
+import { getErrorDefinition } from "@/lib/sla-error-definitions";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface SLAViolation {
   id: string;
@@ -21,6 +33,7 @@ interface SLAViolation {
     target_rpo_minutes?: number;
     reminder_days?: number;
     last_test_at?: string;
+    error_code?: string;
   };
   created_at: string;
   resolved_at: string | null;
@@ -35,6 +48,10 @@ interface ProtectionGroup {
 export function SLAViolationsPanel() {
   const [showResolved, setShowResolved] = useState(false);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
+  const [pendingRemediation, setPendingRemediation] = useState<SLAViolationWithRemediation | null>(null);
+
+  const { applyFix, applyAllFixes, getAutoFixableCount, getRemediation, getErrorCodeFromViolationType } = useSLARemediation();
 
   // Fetch violations
   const { data: violations, isLoading, refetch } = useQuery({
@@ -109,6 +126,78 @@ export function SLAViolationsPanel() {
   };
 
   const activeViolations = violations?.filter(v => !v.resolved_at) || [];
+  const autoFixableCount = getAutoFixableCount(activeViolations as SLAViolationWithRemediation[]);
+
+  const handleFixClick = (violation: SLAViolation) => {
+    const errorCode = violation.details.error_code || getErrorCodeFromViolationType(violation.violation_type);
+    const definition = getErrorDefinition(errorCode);
+    const remediation = definition?.remediation;
+
+    if (!remediation) return;
+
+    // If it's a wizard action, open the appropriate dialog
+    if (remediation.action_type === 'open_wizard') {
+      if (errorCode === 'FAILOVER_TEST_OVERDUE') {
+        // TODO: Open test failover wizard
+        setSelectedGroupId(violation.protection_group_id);
+      } else {
+        setSelectedGroupId(violation.protection_group_id);
+      }
+      return;
+    }
+
+    // If confirmation required, show dialog
+    if (remediation.requires_confirmation) {
+      setPendingRemediation(violation as SLAViolationWithRemediation);
+      setConfirmDialogOpen(true);
+      return;
+    }
+
+    // Apply fix directly
+    applyFix.mutate({ violation: violation as SLAViolationWithRemediation });
+  };
+
+  const handleRemediateAll = () => {
+    applyAllFixes.mutate({ violations: activeViolations as SLAViolationWithRemediation[] });
+  };
+
+  const handleConfirmRemediation = () => {
+    if (pendingRemediation) {
+      applyFix.mutate({ violation: pendingRemediation });
+    }
+    setConfirmDialogOpen(false);
+    setPendingRemediation(null);
+  };
+
+  const getRemediationButton = (violation: SLAViolation) => {
+    const errorCode = violation.details.error_code || getErrorCodeFromViolationType(violation.violation_type);
+    const definition = getErrorDefinition(errorCode);
+    const remediation = definition?.remediation;
+
+    if (!remediation?.can_auto_fix) return null;
+
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={(e) => {
+          e.stopPropagation();
+          handleFixClick(violation);
+        }}
+        disabled={applyFix.isPending || applyAllFixes.isPending}
+        className="h-7 text-xs"
+      >
+        {applyFix.isPending ? (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        ) : (
+          <>
+            <Wrench className="h-3 w-3 mr-1" />
+            {remediation.button_label}
+          </>
+        )}
+      </Button>
+    );
+  };
 
   return (
     <>
@@ -130,6 +219,21 @@ export function SLAViolationsPanel() {
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
+              {autoFixableCount > 0 && (
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={handleRemediateAll}
+                  disabled={applyAllFixes.isPending}
+                >
+                  {applyAllFixes.isPending ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Wrench className="h-4 w-4 mr-2" />
+                  )}
+                  Remediate {autoFixableCount} Issue{autoFixableCount > 1 ? 's' : ''}
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="sm"
@@ -170,7 +274,7 @@ export function SLAViolationsPanel() {
                   <TableHead>Details</TableHead>
                   <TableHead>Detected</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="w-[80px]"></TableHead>
+                  <TableHead className="w-[160px]">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -210,18 +314,22 @@ export function SLAViolationsPanel() {
                       )}
                     </TableCell>
                     <TableCell>
-                      {!violation.resolved_at && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedGroupId(violation.protection_group_id);
-                          }}
-                        >
-                          <ExternalLink className="h-4 w-4" />
-                        </Button>
-                      )}
+                      <div className="flex items-center gap-1">
+                        {!violation.resolved_at && getRemediationButton(violation)}
+                        {!violation.resolved_at && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedGroupId(violation.protection_group_id);
+                            }}
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -237,6 +345,38 @@ export function SLAViolationsPanel() {
         onOpenChange={(open) => !open && setSelectedGroupId(null)}
         protectionGroupId={selectedGroupId || ''}
       />
+
+      {/* Confirmation Dialog */}
+      <AlertDialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm Remediation</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingRemediation && (() => {
+                const errorCode = pendingRemediation.details.error_code || 
+                  getErrorCodeFromViolationType(pendingRemediation.violation_type);
+                const definition = getErrorDefinition(errorCode);
+                return (
+                  <>
+                    This will {definition?.remediation?.button_label?.toLowerCase() || 'apply a fix'} for the{' '}
+                    <strong>{definition?.title || pendingRemediation.violation_type}</strong> issue.
+                    <br /><br />
+                    {definition?.description}
+                  </>
+                );
+              })()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setPendingRemediation(null)}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmRemediation}>
+              Confirm
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }
