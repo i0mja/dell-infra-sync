@@ -2,6 +2,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { 
   Search, 
   Server, 
@@ -12,6 +18,7 @@ import {
   Package,
   AlertTriangle
 } from "lucide-react";
+import { parseIdracError } from "@/lib/idrac-errors";
 
 export interface HostScanStatus {
   hostname: string;
@@ -142,11 +149,32 @@ export function FirmwareScanProgressCard({ scanProgress, inline = false }: Firmw
                     )}
                   </>
                 )}
-                {host.status === 'failed' && (
-                  <Badge variant="destructive" className="text-xs">
-                    {host.error || 'Failed'}
-                  </Badge>
-                )}
+                {host.status === 'failed' && (() => {
+                  const parsedError = parseIdracError(host.error);
+                  return (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Badge variant="destructive" className="text-xs cursor-help">
+                            {parsedError?.title || 'Failed'}
+                          </Badge>
+                        </TooltipTrigger>
+                        <TooltipContent side="left" className="max-w-xs">
+                          <div className="space-y-1">
+                            <p className="font-medium text-sm">
+                              {parsedError?.message || host.error || 'Unknown error'}
+                            </p>
+                            {parsedError?.suggestedAction && (
+                              <p className="text-xs text-muted-foreground">
+                                {parsedError.suggestedAction}
+                              </p>
+                            )}
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  );
+                })()}
               </div>
             ))}
             {hostResults.length > 5 && (

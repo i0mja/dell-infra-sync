@@ -137,7 +137,68 @@ const IDRAC_ERROR_PATTERNS: ErrorPattern[] = [
       message: 'The iDRAC has reached its maximum number of concurrent sessions.',
       severity: 'warning',
       isRecoverable: true,
-      suggestedAction: 'Wait for existing sessions to expire (typically 30 minutes) or reboot the iDRAC to clear sessions.',
+    suggestedAction: 'Wait for existing sessions to expire (typically 30 minutes) or reboot the iDRAC to clear sessions.',
+    },
+  },
+  // Firmware scan specific errors
+  {
+    pattern: /SUP029|already up-to-date|firmware versions.*match/i,
+    info: {
+      title: 'Server Up-to-Date',
+      message: 'No updates available - server firmware matches the catalog.',
+      severity: 'info',
+      isRecoverable: false,
+      suggestedAction: undefined,
+    },
+  },
+  {
+    pattern: /SUP030|unsupported.*model|catalog.*does not contain/i,
+    info: {
+      title: 'Unsupported Server Model',
+      message: 'The catalog does not contain firmware for this server model.',
+      severity: 'warning',
+      isRecoverable: false,
+      suggestedAction: 'Verify the server model is supported by Dell Repository Manager.',
+    },
+  },
+  {
+    pattern: /SUP031|unable to parse|invalid catalog/i,
+    info: {
+      title: 'Invalid Catalog',
+      message: 'Unable to parse the firmware catalog file.',
+      severity: 'error',
+      isRecoverable: false,
+      suggestedAction: 'Verify the catalog URL and format in Settings.',
+    },
+  },
+  {
+    pattern: /repository.*not accessible|share.*unreachable|REP001/i,
+    info: {
+      title: 'Repository Unreachable',
+      message: 'Cannot access the firmware repository.',
+      severity: 'error',
+      isRecoverable: true,
+      suggestedAction: 'Check network path and credentials in Settings.',
+    },
+  },
+  {
+    pattern: /firmware.*inventory.*failed|get.*firmware.*error|failed to get firmware/i,
+    info: {
+      title: 'Firmware Inventory Failed',
+      message: 'Could not retrieve the firmware inventory from iDRAC.',
+      severity: 'error',
+      isRecoverable: true,
+      suggestedAction: 'The iDRAC may be busy. Wait a moment and retry.',
+    },
+  },
+  {
+    pattern: /scan.*failed|scan.*error|firmware scan/i,
+    info: {
+      title: 'Scan Failed',
+      message: 'The firmware scan could not be completed.',
+      severity: 'error',
+      isRecoverable: true,
+      suggestedAction: 'Check iDRAC connectivity and try again.',
     },
   },
 ];

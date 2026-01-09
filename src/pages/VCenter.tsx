@@ -25,6 +25,7 @@ import { useClusterDatastores } from "@/hooks/useClusterDatastores";
 import { useVMVLANMapping } from "@/hooks/useVMVLANMapping";
 import { useVLANOptions } from "@/hooks/useVLANOptions";
 import { useUpdateAvailabilityScan } from "@/hooks/useUpdateAvailabilityScan";
+import { parseIdracError } from "@/lib/idrac-errors";
 import { Button } from "@/components/ui/button";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { exportToCSV, ExportColumn } from "@/lib/csv-export";
@@ -158,9 +159,10 @@ export default function VCenter() {
       setActiveScanId(null);
     } else if (activeScan.status === 'failed') {
       setUpdateScanDialogOpen(false);
+      const parsedError = parseIdracError(activeScan.error_message);
       toast({
-        title: 'Scan Failed',
-        description: activeScan.error_message || 'The firmware scan encountered an error.',
+        title: parsedError?.title || 'Scan Failed',
+        description: parsedError?.message || 'The firmware scan encountered an error.',
         variant: 'destructive',
       });
       setActiveScanId(null);
