@@ -230,11 +230,13 @@ export function useFailoverOperations(protectionGroupId?: string) {
       if (error) throw error;
       return job;
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       toast({ title: 'Rollback initiated', description: 'Reverting failover...' });
       queryClient.invalidateQueries({ queryKey: ['jobs'] });
       queryClient.invalidateQueries({ queryKey: ['active-failover'] });
       queryClient.invalidateQueries({ queryKey: ['failover-history'] });
+      queryClient.invalidateQueries({ queryKey: ['active-test-failover', variables.protectionGroupId] });
+      queryClient.invalidateQueries({ queryKey: ['protection-groups'] });
     },
     onError: (err: Error) => {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
