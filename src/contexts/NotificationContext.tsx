@@ -44,10 +44,12 @@ interface NotificationContextType {
   recentCommands: IdracCommand[];
   jobProgress: Map<string, JobProgress>;
   unreadCount: number;
+  unacknowledgedFailures: number;
   settings: NotificationSettings;
   updateSettings: (newSettings: Partial<NotificationSettings>) => void;
   refreshJobs: () => Promise<void>;
   refreshCommands: () => Promise<void>;
+  acknowledgeFailures: () => void;
 }
 
 const NotificationContext = createContext<NotificationContextType | undefined>(undefined);
@@ -123,6 +125,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const [recentCommands, setRecentCommands] = useState<IdracCommand[]>([]);
   const [jobProgress, setJobProgress] = useState<Map<string, JobProgress>>(new Map());
   const [unreadCount, setUnreadCount] = useState(0);
+  const [unacknowledgedFailures, setUnacknowledgedFailures] = useState(0);
   const [previousJobStatuses, setPreviousJobStatuses] = useState<Map<string, string>>(new Map());
   const [settings, setSettings] = useState<NotificationSettings>({
     enabled: true,
@@ -132,6 +135,11 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     maxRecentItems: 10,
     toastLevel: 'errors_only',
   });
+
+  // Acknowledge failures - resets the unacknowledged failure count
+  const acknowledgeFailures = useCallback(() => {
+    setUnacknowledgedFailures(0);
+  }, []);
 
   // Use ref to avoid stale closures in subscription callbacks
   const previousJobStatusesRef = useRef<Map<string, string>>(new Map());
@@ -599,6 +607,13 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         },
         (payload) => {
           console.log('Command change received:', payload);
+          
+          // Increment unacknowledged failures if command failed
+          const newCommand = payload.new as IdracCommand | null;
+          if (newCommand && !newCommand.success) {
+            setUnacknowledgedFailures(prev => prev + 1);
+          }
+          
           fetchRecentCommands();
         }
       )
@@ -656,10 +671,12 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         recentCommands,
         jobProgress,
         unreadCount,
+        unacknowledgedFailures,
         settings,
         updateSettings,
         refreshJobs: fetchActiveJobs,
         refreshCommands: fetchRecentCommands,
+        acknowledgeFailures,
       }}
     >
       {children}

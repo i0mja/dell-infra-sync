@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bell, Activity, Clock, ExternalLink, Terminal } from 'lucide-react';
+import { Bell, Activity, Clock, ExternalLink, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -33,7 +33,9 @@ export function NotificationCenter() {
     recentCommands,
     jobProgress,
     unreadCount,
+    unacknowledgedFailures,
     settings,
+    acknowledgeFailures,
   } = useNotification();
 
   // Combine active and recently completed for display
@@ -65,7 +67,8 @@ export function NotificationCenter() {
     setOpen(false);
   };
 
-  const hasFailures = recentCommands.some(cmd => !cmd.success);
+  // Badge is red if there are unacknowledged failures (persists until user clears)
+  const hasFailures = unacknowledgedFailures > 0;
 
   return (
     <>
@@ -96,6 +99,17 @@ export function NotificationCenter() {
           <div className="flex items-center justify-between p-4 border-b">
             <h3 className="font-semibold">Notifications</h3>
             <div className="flex items-center gap-2">
+              {hasFailures && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={acknowledgeFailures}
+                  className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  <Check className="h-3 w-3 mr-1" />
+                  Clear alerts
+                </Button>
+              )}
               {displayJobs.length > 0 && (
                 <Badge variant="outline" className="text-xs">
                   {activeJobs.length > 0 ? `${activeJobs.length} active` : 'Recent'}
