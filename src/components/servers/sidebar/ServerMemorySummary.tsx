@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import type { ServerMemory } from "@/hooks/useServerMemory";
 import { useServerMemory } from "@/hooks/useServerMemory";
 import { CollapsibleSection } from "./CollapsibleSection";
+import { formatDellPartNumber } from "@/lib/drive-utils";
 
 interface ServerMemorySummaryProps {
   server: {
@@ -160,6 +161,14 @@ export function ServerMemorySummary({ server }: ServerMemorySummaryProps) {
                 {dimm.capacity_mb && <span>{formatCapacity(dimm.capacity_mb)}</span>}
                 {dimm.manufacturer && <span>• {dimm.manufacturer}</span>}
                 {dimm.operating_speed_mhz && <span>• {dimm.operating_speed_mhz} MHz</span>}
+                {dimm.part_number && (
+                  <span 
+                    className="cursor-help" 
+                    title={dimm.part_number}
+                  >
+                    • P/N: {formatDellPartNumber(dimm.part_number)}
+                  </span>
+                )}
               </div>
               {/* Critical/Disabled status */}
               {(dimm.health === "Critical" || dimm.status === "Disabled") && (
