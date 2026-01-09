@@ -30,9 +30,11 @@ import {
   RefreshCw,
   RotateCcw,
   Check,
+  Settings,
 } from "lucide-react";
 import { useFailoverOperations, usePreflightJobStatus, FailoverConfig } from "@/hooks/useFailoverOperations";
 import { ProtectionGroup, ProtectedVM } from "@/hooks/useReplication";
+import { EditProtectionGroupDialog } from "./EditProtectionGroupDialog";
 
 interface GroupFailoverWizardProps {
   open: boolean;
@@ -67,6 +69,7 @@ export function GroupFailoverWizard({
   const [finalSync, setFinalSync] = useState(true);
   const [reverseProtection, setReverseProtection] = useState(false);
   const [confirmName, setConfirmName] = useState('');
+  const [showEditDialog, setShowEditDialog] = useState(false);
 
   const { data: preflightJob } = usePreflightJobStatus(preflightJobId || undefined);
   const { data: failoverJob } = usePreflightJobStatus(failoverJobId || undefined);
@@ -201,8 +204,21 @@ export function GroupFailoverWizard({
                   <div className="space-y-2">
                     <h4 className="text-sm font-medium text-amber-600">Warnings</h4>
                     {warnings.map((check: any, i: number) => (
-                      <div key={i} className="p-2 rounded bg-amber-500/5 border border-amber-500/20 text-sm">
-                        <span className="font-medium">{check.name}:</span> {check.message}
+                      <div key={i} className="p-2 rounded bg-amber-500/5 border border-amber-500/20 text-sm flex items-center justify-between gap-2">
+                        <div>
+                          <span className="font-medium">{check.name}:</span> {check.message}
+                        </div>
+                        {check.name === 'Network Mappings Valid' && (
+                          <Button 
+                            size="sm" 
+                            variant="outline" 
+                            onClick={() => setShowEditDialog(true)}
+                            className="shrink-0"
+                          >
+                            <Settings className="h-3 w-3 mr-1" />
+                            Configure
+                          </Button>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -506,6 +522,7 @@ export function GroupFailoverWizard({
   };
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent 
         className="max-w-lg"
@@ -585,5 +602,17 @@ export function GroupFailoverWizard({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    {/* Edit dialog for configuring network mappings */}
+    <EditProtectionGroupDialog
+      group={group}
+      open={showEditDialog}
+      onOpenChange={setShowEditDialog}
+      onSave={async () => {
+        // Just close - the mappings are saved directly
+        setShowEditDialog(false);
+      }}
+    />
+    </>
   );
 }

@@ -22,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { NetworkMappingsEditor } from "./NetworkMappingsEditor";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ProtectionGroup, useReplicationTargets } from "@/hooks/useReplication";
@@ -327,9 +328,10 @@ export function EditProtectionGroupDialog({
         )}
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-4">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="general">General</TabsTrigger>
             <TabsTrigger value="sites">Sites</TabsTrigger>
+            <TabsTrigger value="networks">Networks</TabsTrigger>
             <TabsTrigger value="sla">SLA Settings</TabsTrigger>
             <TabsTrigger value="retention">Retention</TabsTrigger>
           </TabsList>
@@ -774,6 +776,14 @@ export function EditProtectionGroupDialog({
                 )}
               </div>
             )}
+          </TabsContent>
+
+          <TabsContent value="networks" className="space-y-4 mt-4">
+            <NetworkMappingsEditor
+              protectionGroupId={group?.id || ""}
+              sourceVCenterId={sourceVCenterId || undefined}
+              drVCenterId={drVCenterId || undefined}
+            />
           </TabsContent>
 
           <TabsContent value="sla" className="space-y-4 mt-4">
