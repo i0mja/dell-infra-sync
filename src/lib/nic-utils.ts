@@ -100,3 +100,42 @@ export function getNicAdapterType(model: string | null): 'ocp' | 'rndc' | 'ndc' 
   
   return 'unknown';
 }
+
+/**
+ * Abbreviates common NIC manufacturer names for compact display
+ */
+export function formatManufacturer(manufacturer: string | null): string {
+  if (!manufacturer) return '';
+  
+  const abbreviations: Record<string, string> = {
+    'broadcom inc. and subsidiaries': 'Broadcom',
+    'broadcom limited': 'Broadcom',
+    'broadcom corporation': 'Broadcom',
+    'intel corporation': 'Intel',
+    'emulex corporation': 'Emulex',
+    'qlogic corp.': 'QLogic',
+    'qlogic corporation': 'QLogic',
+    'dell': 'Dell',
+    'mellanox technologies': 'Mellanox',
+    'nvidia': 'NVIDIA',
+    'marvell semiconductor': 'Marvell',
+    'cavium networks': 'Cavium',
+  };
+  
+  const lower = manufacturer.toLowerCase().trim();
+  return abbreviations[lower] || manufacturer;
+}
+
+/**
+ * Extracts the short model/chip identifier from a full model string
+ * e.g., "BRCM 2P 10G BT 57416 OCP NIC" → "57416"
+ */
+export function formatShortModel(model: string | null): string {
+  if (!model) return '';
+  
+  // Extract chip/model number patterns like "57416", "X710", "I350", "LPe31002", "QLE2692"
+  const chipMatch = model.match(/\b(5\d{4}|X\d{3}[A-Z]*\d*|I\d{3}|LPe\d+|QLE\d+|QL\d+|BCM\d+|MT\d+|XXV\d+|E810)/i);
+  if (chipMatch) return chipMatch[1];
+  
+  return '';
+}

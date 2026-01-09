@@ -5,7 +5,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import type { ServerNic } from "@/hooks/useServerNics";
 import { CollapsibleSection } from "./CollapsibleSection";
-import { formatNicSpeed, formatNicName } from "@/lib/nic-utils";
+import { formatNicSpeed, formatNicName, formatManufacturer, formatShortModel } from "@/lib/nic-utils";
 
 interface ServerNicsSummaryProps {
   nics: ServerNic[];
@@ -104,6 +104,14 @@ export function ServerNicsSummary({ nics, isLoading }: ServerNicsSummaryProps) {
                    nic.link_status || "Unknown"}
                 </Badge>
               </div>
+              {/* Manufacturer and model line */}
+              {(nic.manufacturer || formatShortModel(nic.model)) && (
+                <div className="text-[10px] text-muted-foreground truncate mt-0.5" title={nic.model || ''}>
+                  {formatManufacturer(nic.manufacturer)}
+                  {formatManufacturer(nic.manufacturer) && formatShortModel(nic.model) && ' • '}
+                  {formatShortModel(nic.model)}
+                </div>
+              )}
               {nic.mac_address && (
                 <div className="flex items-center gap-1 mt-0.5">
                   <span className="font-mono text-muted-foreground text-[10px]">
