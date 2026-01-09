@@ -1260,7 +1260,7 @@ class FailoverHandler:
         }
 
     def _check_network_mapping(self, protection_group_id: str) -> Dict:
-        """Check if network mappings are configured."""
+        """Check if network mappings are configured or can be auto-resolved by VLAN ID."""
         try:
             from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
             import requests
@@ -1270,46 +1270,172 @@ class FailoverHandler:
                 'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
             }
 
+            # 1. Check for manual overrides first
             response = requests.get(
                 f"{DSM_URL}/rest/v1/protection_group_network_mappings",
                 headers=headers,
                 params={
-                    'select': 'id',
+                    'select': 'id,source_network,target_network',
                     'protection_group_id': f'eq.{protection_group_id}'
                 },
                 verify=VERIFY_SSL,
                 timeout=10
             )
-
-            if response.status_code == 200:
-                mappings = response.json()
-                if not mappings:
-                    return {
-                        'name': 'Network Mappings Valid',
-                        'passed': False,
-                        'message': 'No network mappings configured',
-                        'can_override': True,
-                        'is_warning': True
-                    }
-                
+            
+            manual_mappings = response.json() if response.status_code == 200 else []
+            
+            # 2. Get protection group details (source and DR vCenter IDs)
+            pg_response = requests.get(
+                f"{DSM_URL}/rest/v1/protection_groups",
+                headers=headers,
+                params={
+                    'select': 'source_vcenter_id,target_id,replication_targets(dr_vcenter_id)',
+                    'id': f'eq.{protection_group_id}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if pg_response.status_code != 200 or not pg_response.json():
                 return {
                     'name': 'Network Mappings Valid',
                     'passed': True,
-                    'message': f'{len(mappings)} network mappings configured'
+                    'message': 'Could not fetch group details, skipping check'
                 }
+            
+            pg = pg_response.json()[0]
+            source_vcenter_id = pg.get('source_vcenter_id')
+            target_info = pg.get('replication_targets') or {}
+            dr_vcenter_id = target_info.get('dr_vcenter_id') if isinstance(target_info, dict) else None
+            
+            if not source_vcenter_id or not dr_vcenter_id:
+                return {
+                    'name': 'Network Mappings Valid',
+                    'passed': True,
+                    'message': 'vCenters not configured, skipping network check'
+                }
+            
+            # 3. Get VMs in this group
+            vms_response = requests.get(
+                f"{DSM_URL}/rest/v1/protected_vms",
+                headers=headers,
+                params={
+                    'select': 'vm_id',
+                    'protection_group_id': f'eq.{protection_group_id}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            vms = vms_response.json() if vms_response.status_code == 200 else []
+            
+            if not vms:
+                return {
+                    'name': 'Network Mappings Valid',
+                    'passed': True,
+                    'message': 'No VMs in group'
+                }
+            
+            # 4. Get network-VM associations with VLAN IDs
+            vm_ids = [v['vm_id'] for v in vms if v.get('vm_id')]
+            if not vm_ids:
+                return {
+                    'name': 'Network Mappings Valid',
+                    'passed': True,
+                    'message': 'No VM IDs found'
+                }
+            
+            networks_response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_network_vms",
+                headers=headers,
+                params={
+                    'select': 'network_id,vcenter_networks(id,name,vlan_id)',
+                    'vm_id': f'in.({",".join(vm_ids)})'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            vlan_ids_needed = {}
+            if networks_response.status_code == 200:
+                for nvm in networks_response.json():
+                    net = nvm.get('vcenter_networks') or {}
+                    if net and net.get('vlan_id'):
+                        vlan_ids_needed[net['name']] = net['vlan_id']
+            
+            if not vlan_ids_needed:
+                # No network data synced - this is a warning but DR shells already have networks set
+                return {
+                    'name': 'Network Mappings Valid',
+                    'passed': True,
+                    'message': 'VM network data not synced, DR shells use their configured networks'
+                }
+            
+            # 5. Get DR site networks with VLAN IDs
+            dr_networks_response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_networks",
+                headers=headers,
+                params={
+                    'select': 'id,name,vlan_id',
+                    'source_vcenter_id': f'eq.{dr_vcenter_id}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            dr_networks_by_vlan = {}
+            if dr_networks_response.status_code == 200:
+                for net in dr_networks_response.json():
+                    if net.get('vlan_id'):
+                        dr_networks_by_vlan.setdefault(net['vlan_id'], []).append(net['name'])
+            
+            # 6. Attempt to resolve each source network
+            resolved = []
+            unresolved = []
+            
+            for src_net, vlan_id in vlan_ids_needed.items():
+                # Check manual override first
+                override = next((m for m in manual_mappings if m['source_network'] == src_net), None)
+                if override:
+                    resolved.append(f"{src_net} -> {override['target_network']} (override)")
+                    continue
+                
+                # Try VLAN ID match
+                dr_matches = dr_networks_by_vlan.get(vlan_id, [])
+                if dr_matches:
+                    resolved.append(f"{src_net} -> VLAN {vlan_id}")
+                else:
+                    unresolved.append(f"{src_net} (VLAN {vlan_id})")
+            
+            if unresolved:
+                return {
+                    'name': 'Network Mappings Valid',
+                    'passed': False,
+                    'message': f'{len(unresolved)} networks not found on DR site',
+                    'can_override': True,
+                    'is_warning': True,
+                    'remediation': f'Missing VLANs: {", ".join(unresolved[:3])}'
+                }
+            
+            if manual_mappings:
+                return {
+                    'name': 'Network Mappings Valid',
+                    'passed': True,
+                    'message': f'{len(manual_mappings)} manual + {len(resolved) - len(manual_mappings)} auto-resolved'
+                }
+            
+            return {
+                'name': 'Network Mappings Valid',
+                'passed': True,
+                'message': f'{len(resolved)} networks auto-resolved by VLAN ID'
+            }
 
         except Exception as e:
             return {
                 'name': 'Network Mappings Valid',
                 'passed': True,
-                'message': f'Could not check: {e}'
+                'message': f'Check skipped: {e}'
             }
-
-        return {
-            'name': 'Network Mappings Valid',
-            'passed': True,
-            'message': 'Check skipped'
-        }
 
     def _check_group_status(self, group: Dict) -> Dict:
         """Check that protection group is not paused or in error state."""
