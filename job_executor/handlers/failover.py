@@ -329,22 +329,35 @@ class FailoverHandler:
             self._fail_job(job, "No protection_group_id provided")
             return
 
-        self.executor.log(f"[Group Failover] Starting {failover_type} failover for group {protection_group_id}")
+        # Console log tracking for debugging
+        console_log = []
+        
+        def log_step(msg: str, level: str = "INFO"):
+            timestamp = datetime.utcnow().strftime('%H:%M:%S')
+            console_log.append(f"[{timestamp}] {level}: {msg}")
+            self.executor.log(msg, level)
+        
+        log_step(f"Starting {failover_type} failover for group {protection_group_id}")
         self.executor.update_job_status(job['id'], 'running')
 
         try:
             # Fetch group and VMs
+            log_step("Fetching protection group...")
             group = self._fetch_protection_group(protection_group_id)
             if not group:
                 self._fail_job(job, "Protection group not found")
                 return
 
+            log_step("Fetching protected VMs...")
             vms = self._fetch_protected_vms(protection_group_id)
             if not vms:
                 self._fail_job(job, "No protected VMs in group")
                 return
+            
+            log_step(f"Found {len(vms)} protected VMs")
 
             # Create failover event
+            log_step("Creating failover event record...")
             event_id = self._create_failover_event(
                 protection_group_id, 
                 failover_type, 
@@ -359,12 +372,12 @@ class FailoverHandler:
 
             # Optional: Final sync
             if final_sync and failover_type == 'live':
-                self.executor.log("[Group Failover] Running final sync...")
+                log_step("Running final sync...")
                 self._run_final_sync(protection_group_id)
 
             # Optional: Shutdown source VMs (live failover only)
             if shutdown_source and failover_type == 'live':
-                self.executor.log("[Group Failover] Shutting down source VMs...")
+                log_step("Shutting down source VMs...")
                 self._shutdown_source_vms(vms, group.get('source_vcenter_id'))
 
             # Power on DR shell VMs
@@ -373,16 +386,19 @@ class FailoverHandler:
             
             for vm in vms:
                 try:
-                    self.executor.log(f"[Group Failover] Powering on DR VM for: {vm.get('vm_name')}")
+                    vm_name = vm.get('vm_name')
+                    log_step(f"Powering on DR VM for: {vm_name}")
                     success = self._power_on_dr_shell_vm(vm, group, failover_type, test_network_id)
                     if success:
                         recovered_count += 1
                         self._update_vm_failover_status(vm['id'], 'failed_over')
+                        log_step(f"Successfully powered on DR VM: {vm_name}")
                     else:
-                        failed_vms.append(vm.get('vm_name'))
+                        failed_vms.append(vm_name)
                         self._update_vm_failover_status(vm['id'], 'failover_error')
+                        log_step(f"Failed to power on DR VM: {vm_name}", "ERROR")
                 except Exception as e:
-                    self.executor.log(f"[Group Failover] Error with VM {vm.get('vm_name')}: {e}", "ERROR")
+                    log_step(f"Error with VM {vm.get('vm_name')}: {e}", "ERROR")
                     failed_vms.append(vm.get('vm_name'))
 
             # Update event with results
@@ -404,10 +420,11 @@ class FailoverHandler:
                 'requires_commit': failover_type == 'live'
             }
 
-            self.executor.log(f"[Group Failover] Complete: {recovered_count}/{len(vms)} VMs recovered")
+            log_step(f"Complete: {recovered_count}/{len(vms)} VMs recovered")
             self.executor.update_job_status(job['id'], 'completed', details={
                 **details,
-                'result': result
+                'result': result,
+                'console_log': console_log
             })
 
         except Exception as e:
@@ -1955,7 +1972,7 @@ class FailoverHandler:
         
         try:
             response = requests.get(
-                f"{DSM_URL}/rest/v1/vcenter_connections",
+                f"{DSM_URL}/rest/v1/vcenters",
                 headers={
                     'apikey': SERVICE_ROLE_KEY,
                     'Authorization': f'Bearer {SERVICE_ROLE_KEY}'

@@ -413,8 +413,10 @@ export function GroupFailoverWizard({
         );
 
       case 'complete':
-        const isSuccess = failoverJob?.status === 'completed';
         const completeDetails = failoverJob?.details as Record<string, unknown> | null;
+        const resultData = completeDetails?.result as Record<string, unknown> | undefined;
+        const isSuccess = failoverJob?.status === 'completed' && resultData?.success !== false;
+        const failedVms = (resultData?.failed_vms as string[]) || [];
         return (
           <div className="space-y-4">
             <div className={`flex flex-col items-center justify-center py-8 gap-4 ${
@@ -432,6 +434,14 @@ export function GroupFailoverWizard({
                 <p className="text-sm text-muted-foreground text-center">
                   {completeDetails.error as string}
                 </p>
+              )}
+              {!isSuccess && failedVms.length > 0 && (
+                <div className="text-center">
+                  <p className="text-sm font-medium text-red-600 mb-2">Failed VMs:</p>
+                  {failedVms.map((vm) => (
+                    <div key={vm} className="text-sm text-muted-foreground">• {vm}</div>
+                  ))}
+                </div>
               )}
             </div>
 
