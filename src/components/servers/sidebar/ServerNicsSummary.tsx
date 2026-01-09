@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import type { ServerNic } from "@/hooks/useServerNics";
 import { CollapsibleSection } from "./CollapsibleSection";
 import { formatNicSpeed, formatNicName, formatManufacturer, formatShortModel } from "@/lib/nic-utils";
+import { formatDellPartNumber } from "@/lib/drive-utils";
 
 interface ServerNicsSummaryProps {
   nics: ServerNic[];
@@ -104,12 +105,20 @@ export function ServerNicsSummary({ nics, isLoading }: ServerNicsSummaryProps) {
                    nic.link_status || "—"}
                 </Badge>
               </div>
-              {/* Manufacturer and model line - only show if we have a model to display */}
-              {formatShortModel(nic.model) && (
+              {/* Manufacturer, model, and part number line */}
+              {(formatShortModel(nic.model) || nic.part_number) && (
                 <div className="text-[10px] text-muted-foreground truncate mt-0.5" title={nic.model || ''}>
                   {formatManufacturer(nic.manufacturer)}
-                  {formatManufacturer(nic.manufacturer) && ' • '}
+                  {formatManufacturer(nic.manufacturer) && formatShortModel(nic.model) && ' • '}
                   {formatShortModel(nic.model)}
+                  {nic.part_number && (
+                    <>
+                      {(formatManufacturer(nic.manufacturer) || formatShortModel(nic.model)) && ' • '}
+                      <span className="cursor-help" title={nic.part_number}>
+                        P/N: {formatDellPartNumber(nic.part_number)}
+                      </span>
+                    </>
+                  )}
                 </div>
               )}
               {nic.mac_address && (
