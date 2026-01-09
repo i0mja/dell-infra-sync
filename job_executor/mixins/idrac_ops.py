@@ -1617,6 +1617,48 @@ class IdracMixin:
                 except Exception as e:
                     self.log(f"  Error processing adapter: {e}", "DEBUG")
             
+            # Enhance NICs with EthernetInterfaces speed data (Dell official pattern)
+            # EthernetInterfaces provides SpeedMbps as an integer, guaranteed to work
+            if nics:
+                try:
+                    eth_url = f"https://{ip}/redfish/v1/Systems/System.Embedded.1/EthernetInterfaces?$expand=*($levels=1)"
+                    eth_resp, eth_time = self._make_session_request(ip, eth_url, session, username, password, timeout=(2, 30), legacy_ssl=legacy_ssl)
+                    
+                    self.log_idrac_command(
+                        server_id=server_id, job_id=job_id, task_id=None,
+                        command_type='GET', endpoint='/EthernetInterfaces?$expand (speed enhancement)',
+                        full_url=eth_url, request_headers=None, request_body=None,
+                        status_code=eth_resp.status_code if eth_resp else None,
+                        response_time_ms=eth_time, response_body=None,
+                        success=eth_resp is not None and eth_resp.status_code == 200,
+                        operation_type='idrac_api'
+                    )
+                    
+                    if eth_resp and eth_resp.status_code == 200:
+                        eth_data = eth_resp.json()
+                        # Build speed map: FQDD -> SpeedMbps
+                        speed_map = {}
+                        for member in eth_data.get('Members', []):
+                            fqdd = member.get('Id')
+                            speed = member.get('SpeedMbps')
+                            if fqdd and speed and speed > 0:
+                                speed_map[fqdd] = speed
+                                self.log(f"    → EthernetInterface {fqdd}: {speed} Mbps", "DEBUG")
+                        
+                        # Merge speeds into NICs that are missing speed data
+                        enhanced_count = 0
+                        for nic in nics:
+                            if not nic.get('current_speed_mbps'):
+                                fqdd = nic.get('fqdd')
+                                if fqdd and fqdd in speed_map:
+                                    nic['current_speed_mbps'] = speed_map[fqdd]
+                                    enhanced_count += 1
+                        
+                        if enhanced_count > 0:
+                            self.log(f"  → Enhanced {enhanced_count} NICs with EthernetInterfaces speed data", "DEBUG")
+                except Exception as e:
+                    self.log(f"  → EthernetInterfaces speed enhancement failed (non-fatal): {e}", "DEBUG")
+            
             return nics
             
         except Exception as e:
@@ -2780,7 +2822,7 @@ class IdracMixin:
                     link_status = 'LinkDown'
             
             # Get speed with fallbacks (treat 0 as "no data"):
-            # 1. Dell OEM DellNIC.LinkSpeed
+            # 1. Dell OEM DellNIC.LinkSpeed (can be int or string like "1000 Mbps", "10 Gbps")
             # 2. Top-level SpeedMbps (standard DMTF)
             # 3. Ethernet.SpeedMbps
             # 4. NetworkPorts data (port_map lookup)
@@ -2788,10 +2830,30 @@ class IdracMixin:
             link_speed = dell_oem.get('LinkSpeed')
             if link_speed is not None:
                 try:
-                    parsed = int(link_speed)
-                    if parsed > 0:  # Only accept positive speeds
-                        current_speed = parsed
-                except (ValueError, TypeError):
+                    if isinstance(link_speed, int):
+                        if link_speed > 0:
+                            current_speed = link_speed
+                    elif isinstance(link_speed, str):
+                        # Parse strings like "1000 Mbps", "10 Gbps", "25000", etc.
+                        link_speed_clean = link_speed.strip().upper()
+                        if 'GBPS' in link_speed_clean or 'GB' in link_speed_clean:
+                            # Extract number and convert Gbps to Mbps
+                            num = ''.join(c for c in link_speed_clean.split('G')[0] if c.isdigit() or c == '.')
+                            if num:
+                                current_speed = int(float(num) * 1000)
+                        elif 'MBPS' in link_speed_clean or 'MB' in link_speed_clean:
+                            # Extract Mbps value
+                            num = ''.join(c for c in link_speed_clean.split('M')[0] if c.isdigit())
+                            if num:
+                                current_speed = int(num)
+                        else:
+                            # Try direct integer parse (legacy format or plain number)
+                            num = ''.join(c for c in link_speed_clean if c.isdigit())
+                            if num:
+                                parsed = int(num)
+                                if parsed > 0:
+                                    current_speed = parsed
+                except (ValueError, TypeError, AttributeError):
                     pass
             
             # Check each fallback, treating 0 as "no data"
