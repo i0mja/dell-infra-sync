@@ -248,6 +248,7 @@ class VCenterInventoryReal:
             uuid = ''
             
             firmware = 'bios'  # Default firmware type
+            scsi_controller_type = 'lsilogic'  # Phase 12: Default SCSI controller type
             if vm.config:
                 cpu_count = vm.config.hardware.numCPU if vm.config.hardware else 0
                 memory_mb = vm.config.hardware.memoryMB if vm.config.hardware else 0
@@ -259,6 +260,22 @@ class VCenterInventoryReal:
                 firmware = str(firmware).lower()
                 if firmware not in ('bios', 'efi'):
                     firmware = 'bios'
+                # Phase 12: Extract SCSI controller type for DR shell
+                if vm.config.hardware and vm.config.hardware.device:
+                    for device in vm.config.hardware.device:
+                        device_type = type(device).__name__
+                        if 'ParaVirtualSCSIController' in device_type:
+                            scsi_controller_type = 'pvscsi'
+                            break
+                        elif 'VirtualLsiLogicSASController' in device_type:
+                            scsi_controller_type = 'lsilogic-sas'
+                            break
+                        elif 'VirtualBusLogicController' in device_type:
+                            scsi_controller_type = 'buslogic'
+                            break
+                        elif 'VirtualLsiLogicController' in device_type:
+                            scsi_controller_type = 'lsilogic'
+                            break
             elif vm.summary and vm.summary.config:
                 cpu_count = vm.summary.config.numCpu or 0
                 memory_mb = vm.summary.config.memorySizeMB or 0
@@ -306,6 +323,7 @@ class VCenterInventoryReal:
                 'guest_os': guest_os,
                 'guest_id': guest_id,  # Phase 10: vSphere guestId for VM creation
                 'firmware': firmware,  # Phase 11: Firmware type (bios/efi)
+                'scsi_controller_type': scsi_controller_type,  # Phase 12: SCSI controller type
                 'cpu_count': cpu_count,
                 'memory_mb': memory_mb,
                 'disk_gb': disk_gb,
