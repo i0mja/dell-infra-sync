@@ -5015,24 +5015,30 @@ chmod 600 ~/.ssh/authorized_keys
                 
                 self._add_console_log(job_id, f"Total VMDK files found: {len(all_vmdks)}")
                 
-                # Process VMDKs - identify which are usable disk descriptors/data files
+                # Process VMDKs - prioritize base disks over snapshot chains
+                import re
+                
+                base_disks = {}      # filename -> (full_path, file_size)
+                snapshot_disks = {}  # filename -> (full_path, file_size)
+                
                 for filename, (full_path, file_size) in all_vmdks.items():
+                    # Skip metadata and data companion files
+                    if any(x in filename for x in ['-ctk.vmdk', '-digest.vmdk', '-flat.vmdk', '-delta.vmdk']):
+                        continue
+                    
+                    # Identify snapshot descriptors: VM-000001.vmdk, VM-000002.vmdk, etc.
+                    if re.search(r'-\d{6}\.vmdk$', filename):
+                        snapshot_disks[filename] = (full_path, file_size)
+                        self._add_console_log(job_id, f"Found snapshot descriptor (will skip): {filename}")
+                    else:
+                        base_disks[filename] = (full_path, file_size)
+                        self._add_console_log(job_id, f"Found potential base disk: {filename}")
+                
+                self._add_console_log(job_id, f"Base disks: {len(base_disks)}, Snapshot descriptors: {len(snapshot_disks)}")
+                
+                # Validate and select base disks only
+                for filename, (full_path, file_size) in base_disks.items():
                     file_size_mb = file_size / (1024 * 1024)
-                    
-                    # Skip metadata files
-                    if any(x in filename for x in ['-ctk.vmdk', '-digest.vmdk']):
-                        self._add_console_log(job_id, f"Skipping metadata file: {filename}")
-                        continue
-                    
-                    # Skip flat files - they're data companions to descriptors
-                    if '-flat.vmdk' in filename:
-                        continue
-                    
-                    # Skip delta files - they're snapshot chains (we want the numbered snapshots instead)
-                    if '-delta.vmdk' in filename:
-                        continue
-                    
-                    # Check if this descriptor has a flat file companion (thick provisioned)
                     base_name = filename.replace('.vmdk', '')
                     expected_flat = f"{base_name}-flat.vmdk"
                     
@@ -5044,16 +5050,21 @@ chmod 600 ~/.ssh/authorized_keys
                             self._add_console_log(job_id, f"Valid thick disk: {filename} (flat: {flat_size / (1024*1024):.1f} MB)")
                         else:
                             self._add_console_log(job_id, f"WARNING: Skipping {filename} - flat file is 0 bytes", "WARN")
-                    else:
+                    elif file_size > 1024:
                         # Sparse/thin provisioned: single file must have substantial size
-                        # Minimum 1KB to filter out empty/corrupt descriptors
-                        if file_size > 1024:
-                            disk_paths.append(full_path)
-                            self._add_console_log(job_id, f"Valid sparse disk: {filename} ({file_size_mb:.1f} MB)")
-                        else:
-                            self._add_console_log(job_id, f"WARNING: Skipping {filename} - file too small ({file_size} bytes)", "WARN")
+                        disk_paths.append(full_path)
+                        self._add_console_log(job_id, f"Valid sparse disk: {filename} ({file_size_mb:.1f} MB)")
+                    else:
+                        self._add_console_log(job_id, f"WARNING: Skipping {filename} - file too small ({file_size} bytes)", "WARN")
                 
-                self._add_console_log(job_id, f"Total valid VMDKs to attach: {len(disk_paths)}")
+                # Handle snapshot-only scenario
+                if not disk_paths and snapshot_disks:
+                    self._add_console_log(job_id, 
+                        f"WARNING: No base disks found, only {len(snapshot_disks)} snapshot descriptors. "
+                        "Source VM should be consolidated before replication. Snapshot chains cannot be attached.", "WARN")
+                    # Do NOT attach snapshots - they won't work without the full chain and correct internal paths
+                
+                self._add_console_log(job_id, f"Total valid base VMDKs to attach: {len(disk_paths)}")
         
         except Exception as e:
             self._add_console_log(job_id, f"VMDK discovery error: {e}", "ERROR")
