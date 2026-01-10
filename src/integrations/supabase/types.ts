@@ -5916,6 +5916,7 @@ export type Database = {
         | "idrac_api_fallback"
         | "session_create"
         | "session_delete"
+        | "pdu_api"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -6150,6 +6151,7 @@ export const Constants = {
         "idrac_api_fallback",
         "session_create",
         "session_delete",
+        "pdu_api",
       ],
     },
   },
