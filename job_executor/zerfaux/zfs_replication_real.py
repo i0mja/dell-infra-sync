@@ -1632,10 +1632,14 @@ class ZFSReplicationReal:
             scsi_ctr.device.sharedBus = vim.vm.device.VirtualSCSIController.Sharing.noSharing
             vm_config.deviceChange.append(scsi_ctr)
             
-            # Add existing disks
+            # Add existing disks with detailed logging
+            logger.info(f"Attaching {len(disk_paths)} validated disk(s) to VM {vm_name}")
             for i, disk_path in enumerate(disk_paths):
                 # Calculate unit number, skipping 7 (reserved for SCSI controller)
                 unit_number = i if i < 7 else i + 1
+                
+                # Log the exact path being used
+                logger.info(f"Disk {i}: unit={unit_number}, path='{disk_path}'")
                 
                 disk_spec = vim.vm.device.VirtualDeviceSpec()
                 disk_spec.operation = vim.vm.device.VirtualDeviceSpec.Operation.add

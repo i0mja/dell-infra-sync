@@ -4866,10 +4866,12 @@ chmod 600 ~/.ssh/authorized_keys
     def _discover_replicated_vmdks(self, content, datastore, source_vm_name: str, job_id: str) -> list:
         """
         Discover replicated VMDK files in the VM folder on the target datastore.
+        Validates that flat files exist for each descriptor.
         """
         from pyVmomi import vim
         
         disk_paths = []
+        flat_files = {}  # Track available flat files and their sizes
         
         try:
             browser = datastore.browser
@@ -4879,32 +4881,84 @@ chmod 600 ~/.ssh/authorized_keys
                 fileType=True, fileSize=True
             )
             
-            folder_path = f"[{datastore.name}] {source_vm_name}/"
+            folder_path = f"[{datastore.name}] {source_vm_name}"
             self._add_console_log(job_id, f"Searching for VMDKs in: {folder_path}")
             
-            task = browser.SearchDatastore_Task(
+            # Use SearchDatastoreSubFolders_Task for recursive search
+            task = browser.SearchDatastoreSubFolders_Task(
                 datastorePath=folder_path,
                 searchSpec=search_spec
             )
             
             # Wait for task
-            for _ in range(60):
+            for _ in range(120):
                 if task.info.state in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
                     break
                 time.sleep(1)
             
+            if task.info.state == vim.TaskInfo.State.error:
+                error_msg = str(task.info.error) if task.info.error else "Unknown search error"
+                self._add_console_log(job_id, f"Datastore search failed: {error_msg}", "ERROR")
+                return []
+            
             if task.info.state == vim.TaskInfo.State.success and task.info.result:
-                for file_info in task.info.result.file:
-                    # Skip flat/delta/ctk files
-                    if any(x in file_info.path for x in ['-flat.vmdk', '-delta.vmdk', '-ctk.vmdk']):
-                        continue
+                # First pass: collect all flat files and their sizes
+                for result in task.info.result:
+                    result_folder = result.folderPath
+                    # Ensure folder path ends with space for proper path construction
+                    if not result_folder.endswith('/') and not result_folder.endswith(' '):
+                        result_folder = result_folder + ' '
+                    elif result_folder.endswith('/'):
+                        # Convert trailing / to space for vSphere path format
+                        result_folder = result_folder[:-1] + ' '
                     
-                    full_path = f"{folder_path}{file_info.path}"
-                    disk_paths.append(full_path)
-                    self._add_console_log(job_id, f"Found VMDK: {file_info.path}")
+                    for file_info in result.file:
+                        file_size = getattr(file_info, 'fileSize', 0) or 0
+                        file_size_mb = file_size / (1024 * 1024)
+                        
+                        if '-flat.vmdk' in file_info.path:
+                            flat_files[file_info.path] = file_size
+                            self._add_console_log(job_id, f"Found flat file: {file_info.path} ({file_size_mb:.1f} MB)")
+                
+                self._add_console_log(job_id, f"Total flat files found: {len(flat_files)}")
+                
+                # Second pass: collect descriptor files that have matching flat files
+                for result in task.info.result:
+                    result_folder = result.folderPath
+                    if not result_folder.endswith('/') and not result_folder.endswith(' '):
+                        result_folder = result_folder + ' '
+                    elif result_folder.endswith('/'):
+                        result_folder = result_folder[:-1] + ' '
+                    
+                    for file_info in result.file:
+                        # Skip flat/delta/ctk files - we only want descriptors
+                        if any(x in file_info.path for x in ['-flat.vmdk', '-delta.vmdk', '-ctk.vmdk']):
+                            continue
+                        
+                        # Verify the corresponding flat file exists
+                        base_name = file_info.path.replace('.vmdk', '')
+                        expected_flat = f"{base_name}-flat.vmdk"
+                        
+                        if expected_flat not in flat_files:
+                            self._add_console_log(job_id, f"WARNING: Skipping {file_info.path} - missing {expected_flat}", "WARN")
+                            continue
+                        
+                        flat_size = flat_files[expected_flat]
+                        if flat_size == 0:
+                            self._add_console_log(job_id, f"WARNING: Skipping {file_info.path} - flat file is 0 bytes", "WARN")
+                            continue
+                        
+                        full_path = f"{result_folder}{file_info.path}"
+                        disk_paths.append(full_path)
+                        flat_size_mb = flat_size / (1024 * 1024)
+                        self._add_console_log(job_id, f"Valid VMDK: {file_info.path} (flat: {flat_size_mb:.1f} MB)")
+                
+                self._add_console_log(job_id, f"Total valid VMDKs to attach: {len(disk_paths)}")
         
         except Exception as e:
-            self._add_console_log(job_id, f"VMDK discovery error: {e}", "WARN")
+            self._add_console_log(job_id, f"VMDK discovery error: {e}", "ERROR")
+            import traceback
+            self._add_console_log(job_id, traceback.format_exc(), "ERROR")
         
         return disk_paths
 
@@ -5144,9 +5198,13 @@ chmod 600 ~/.ssh/authorized_keys
                 device_changes.append(scsi_ctr)
                 
                 # Attach replicated disks
+                self._add_console_log(job_id, f"Attaching {len(disk_paths)} validated disk(s) to VM")
                 for i, disk_path in enumerate(disk_paths):
                     # Calculate unit number, skipping 7 (reserved for SCSI controller)
                     unit_number = i if i < 7 else i + 1
+                    
+                    # Log the exact path being used
+                    self._add_console_log(job_id, f"Disk {i}: unit={unit_number}, path='{disk_path}'")
                     
                     disk_spec = vim.vm.device.VirtualDeviceSpec()
                     disk_spec.operation = vim.vm.device.VirtualDeviceSpec.Operation.add
@@ -5159,7 +5217,7 @@ chmod 600 ~/.ssh/authorized_keys
                     disk_spec.device.backing.diskMode = 'persistent'
                     disk_spec.device.backing.datastore = datastore
                     device_changes.append(disk_spec)
-                    self._add_console_log(job_id, f"Attaching disk {i} at unit {unit_number}: {disk_path}")
+                    self._add_console_log(job_id, f"Added disk spec for: {disk_path.split('/')[-1] if '/' in disk_path else disk_path.split('] ')[-1]}")
                 
                 # Add network adapter if network specified
                 if network:
