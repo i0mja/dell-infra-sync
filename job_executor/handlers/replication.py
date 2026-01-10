@@ -5159,14 +5159,18 @@ chmod 600 ~/.ssh/authorized_keys
             if not protected_vm:
                 raise ValueError(f"Protected VM not found: {protected_vm_id}")
             
-            # Fetch source VM details for guest_id (Phase 10)
+            # Fetch source VM details for guest_id and firmware (Phase 10+11)
             source_vm_id = protected_vm.get('vm_id')
             source_vm_guest_id = 'otherGuest64'  # Default fallback
+            source_vm_firmware = 'bios'  # Default firmware type
             if source_vm_id:
                 source_vm = self._get_vcenter_vm(source_vm_id)
-                if source_vm and source_vm.get('guest_id'):
-                    source_vm_guest_id = source_vm.get('guest_id')
-                    self._add_console_log(job_id, f"Using source VM guest ID: {source_vm_guest_id}")
+                if source_vm:
+                    if source_vm.get('guest_id'):
+                        source_vm_guest_id = source_vm.get('guest_id')
+                    if source_vm.get('firmware'):
+                        source_vm_firmware = source_vm.get('firmware')
+                    self._add_console_log(job_id, f"Using source VM guest ID: {source_vm_guest_id}, firmware: {source_vm_firmware}")
             
             self.update_job_status(job_id, 'running', details={
                 **details,
@@ -5336,6 +5340,7 @@ chmod 600 ~/.ssh/authorized_keys
                 config_spec.memoryMB = memory_mb
                 config_spec.numCPUs = cpu_count
                 config_spec.guestId = source_vm_guest_id  # Phase 10: Use source VM's guest ID
+                config_spec.firmware = source_vm_firmware  # Phase 11: Use source VM's firmware (bios/efi)
                 config_spec.files = vmx_file
                 
                 # Build device changes list

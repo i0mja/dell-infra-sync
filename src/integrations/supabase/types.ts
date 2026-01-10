@@ -4987,6 +4987,7 @@ export type Database = {
           cpu_count: number | null
           created_at: string | null
           disk_gb: number | null
+          firmware: string | null
           folder_path: string | null
           guest_id: string | null
           guest_os: string | null
@@ -5014,6 +5015,7 @@ export type Database = {
           cpu_count?: number | null
           created_at?: string | null
           disk_gb?: number | null
+          firmware?: string | null
           folder_path?: string | null
           guest_id?: string | null
           guest_os?: string | null
@@ -5041,6 +5043,7 @@ export type Database = {
           cpu_count?: number | null
           created_at?: string | null
           disk_gb?: number | null
+          firmware?: string | null
           folder_path?: string | null
           guest_id?: string | null
           guest_os?: string | null

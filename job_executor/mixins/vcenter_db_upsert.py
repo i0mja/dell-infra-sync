@@ -908,6 +908,7 @@ class VCenterDbUpsertMixin:
                 'disk_gb': v.get('disk_gb', 0),
                 'guest_os': v.get('guest_os', ''),
                 'guest_id': v.get('guest_id', ''),  # Phase 10: vSphere guestId for VM creation
+                'firmware': v.get('firmware', 'bios'),  # Phase 11: Firmware type (bios/efi)
                 'ip_address': v.get('ip_address', ''),
                 'is_template': v.get('is_template', False),
                 'tools_status': v.get('tools_status', ''),

@@ -247,12 +247,18 @@ class VCenterInventoryReal:
             guest_id = ''  # Phase 10: vSphere guestId for VM creation
             uuid = ''
             
+            firmware = 'bios'  # Default firmware type
             if vm.config:
                 cpu_count = vm.config.hardware.numCPU if vm.config.hardware else 0
                 memory_mb = vm.config.hardware.memoryMB if vm.config.hardware else 0
                 guest_os = vm.config.guestFullName or ''
                 guest_id = vm.config.guestId or ''  # Phase 10: vSphere guestId for VM creation
                 uuid = vm.config.uuid or ''
+                # Phase 11: Extract firmware type for DR shell boot
+                firmware = getattr(vm.config, 'firmware', 'bios') or 'bios'
+                firmware = str(firmware).lower()
+                if firmware not in ('bios', 'efi'):
+                    firmware = 'bios'
             elif vm.summary and vm.summary.config:
                 cpu_count = vm.summary.config.numCpu or 0
                 memory_mb = vm.summary.config.memorySizeMB or 0
@@ -299,6 +305,7 @@ class VCenterInventoryReal:
                 'power_state': power_state,
                 'guest_os': guest_os,
                 'guest_id': guest_id,  # Phase 10: vSphere guestId for VM creation
+                'firmware': firmware,  # Phase 11: Firmware type (bios/efi)
                 'cpu_count': cpu_count,
                 'memory_mb': memory_mb,
                 'disk_gb': disk_gb,

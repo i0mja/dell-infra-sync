@@ -32,6 +32,7 @@ def _get_vm_properties() -> List[str]:
         "config.hardware.device",             # Phase 8: NICs for network relationships
         "config.version",                     # Phase 9: Hardware version (vmx-XX)
         "config.guestId",                     # Phase 10: Guest ID for VM creation (e.g., rhel7_64Guest)
+        "config.firmware",                    # Phase 11: Firmware type (bios/efi) for DR shell boot
         "runtime.powerState",
         "summary.config.vmPathName",
         "summary.config.numCpu",              # Phase 7: CPU count
@@ -1157,6 +1158,12 @@ def _vm_to_dict(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
     guest_os = props.get("summary.config.guestFullName", "") or ""
     # Phase 10: Extract guestId for VM creation (prefer config.guestId, fallback to summary)
     guest_id = props.get("config.guestId", "") or props.get("summary.config.guestId", "") or ""
+    # Phase 11: Extract firmware type for DR shell boot (bios/efi)
+    firmware = props.get("config.firmware", "") or ""
+    if firmware:
+        firmware = str(firmware).lower()  # Normalize to lowercase
+    if firmware not in ('bios', 'efi'):
+        firmware = 'bios'  # Default to BIOS if not specified
     cpu_count = props.get("summary.config.numCpu", 0) or 0
     memory_mb = props.get("summary.config.memorySizeMB", 0) or 0
     ip_address = props.get("guest.ipAddress", "") or ""
@@ -1375,6 +1382,7 @@ def _vm_to_dict(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
         # Phase 7: Guest info
         "guest_os": guest_os,
         "guest_id": guest_id,                               # Phase 10: vSphere guestId for VM creation
+        "firmware": firmware,                               # Phase 11: Firmware type (bios/efi)
         "ip_address": ip_address,
         "is_template": is_template,
         
