@@ -1483,6 +1483,93 @@ class ZFSReplicationReal:
             logger.error(f"Failed to connect to vCenter: {e}")
             return None
     
+    def unregister_conflicting_vms(self, content, datastore_name: str, 
+                                    source_vm_name: str, dr_shell_name: str) -> tuple:
+        """
+        Find and unregister any VMs that reference files in the target folder.
+        This prevents file locking conflicts during test failover when the replicated
+        source VM's .vmx file may be registered and holding locks on VMDKs.
+        
+        Args:
+            content: vCenter content object
+            datastore_name: Name of the datastore containing replicated files
+            source_vm_name: Name of the source VM (folder name on datastore)
+            dr_shell_name: Name of the DR Shell VM being created
+            
+        Returns:
+            Tuple of (can_proceed: bool, messages: list)
+        """
+        if not PYVMOMI_AVAILABLE:
+            return (True, ["pyVmomi not available - skipping conflict check"])
+        
+        messages = []
+        folder_pattern = f"[{datastore_name}] {source_vm_name}/"
+        messages.append(f"Checking for conflicting VMs in: {folder_pattern}")
+        
+        container = content.viewManager.CreateContainerView(
+            content.rootFolder, [vim.VirtualMachine], True
+        )
+        
+        conflicting_vms = []
+        try:
+            for vm in container.view:
+                try:
+                    # Check VM's configuration file path
+                    if vm.config and vm.config.files:
+                        vm_path = vm.config.files.vmPathName or ""
+                        if folder_pattern in vm_path:
+                            conflicting_vms.append(vm)
+                            continue
+                    
+                    # Check all disk backing file paths
+                    if vm.config and vm.config.hardware:
+                        for device in vm.config.hardware.device:
+                            if isinstance(device, vim.vm.device.VirtualDisk):
+                                backing = device.backing
+                                if hasattr(backing, 'fileName') and backing.fileName:
+                                    if folder_pattern in backing.fileName:
+                                        conflicting_vms.append(vm)
+                                        break
+                except Exception:
+                    continue  # Skip VMs we can't inspect
+        finally:
+            container.Destroy()
+        
+        if not conflicting_vms:
+            messages.append("No conflicting VMs found")
+            return (True, messages)
+        
+        messages.append(f"Found {len(conflicting_vms)} conflicting VM(s)")
+        
+        for vm in conflicting_vms:
+            vm_name = vm.name
+            power_state = vm.runtime.powerState
+            is_dr_shell = vm_name == dr_shell_name or vm_name.endswith('-DR')
+            
+            messages.append(f"Conflicting VM: {vm_name} (state: {power_state}, is_dr_shell: {is_dr_shell})")
+            
+            if power_state == vim.VirtualMachine.PowerState.poweredOn:
+                if is_dr_shell:
+                    # Active test in progress - cannot proceed
+                    messages.append(f"ERROR: Active DR Shell VM {vm_name} is powered on - test failover in progress")
+                    return (False, messages)
+                else:
+                    # Source VM copy is powered on at DR site - unusual but warn and continue
+                    messages.append(f"WARNING: Source VM {vm_name} is powered on at DR site - cannot unregister")
+                    continue
+            
+            # VM is powered off - safe to unregister to release file locks
+            try:
+                vm.UnregisterVM()
+                if is_dr_shell:
+                    messages.append(f"Unregistered existing DR Shell VM: {vm_name}")
+                else:
+                    messages.append(f"Unregistered source VM copy: {vm_name} to release file locks")
+            except Exception as e:
+                messages.append(f"Failed to unregister {vm_name}: {e}")
+        
+        return (True, messages)
+    
     def create_dr_shell_vm(self, dr_vcenter_id: str, vm_name: str,
                            target_datastore: str, cpu_count: int,
                            memory_mb: int, disk_paths: List[str],
