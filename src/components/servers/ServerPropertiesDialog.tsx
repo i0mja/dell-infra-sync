@@ -1,12 +1,17 @@
+import { useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Edit, Server as ServerIcon, Cpu, HardDrive, Network, Wifi, Clock, Cable } from "lucide-react";
+import { Edit, Server as ServerIcon, Cpu, HardDrive, Network, Wifi, Clock, Cable, Plug, Settings } from "lucide-react";
 import { format } from "date-fns";
 import { ServerNicsTable } from "./ServerNicsTable";
+import { useServerPduMappings } from "@/hooks/useServerPduMappings";
+import { OutletStateIndicator } from "@/components/pdu/OutletStateIndicator";
+import { ServerPduMappingDialog } from "@/components/pdu/ServerPduMappingDialog";
+import type { Server } from "@/hooks/useServers";
 
-interface Server {
+interface LocalServer {
   id: string;
   ip_address: string;
   hostname: string | null;
@@ -36,7 +41,7 @@ interface Server {
 interface ServerPropertiesDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  server: Server | null;
+  server: LocalServer | null;
   onEdit?: () => void;
 }
 
@@ -46,6 +51,9 @@ export function ServerPropertiesDialog({
   server,
   onEdit,
 }: ServerPropertiesDialogProps) {
+  const [showMappingDialog, setShowMappingDialog] = useState(false);
+  const { mappings, isLoading: mappingsLoading } = useServerPduMappings(server?.id ?? null);
+
   if (!server) return null;
 
   const getStatusBadge = () => {
@@ -89,205 +97,330 @@ export function ServerPropertiesDialog({
     }
   };
 
+  // Create Server object for mapping dialog
+  const serverForMapping: Server = {
+    id: server.id,
+    ip_address: server.ip_address,
+    hostname: server.hostname,
+    idrac_hostname: null,
+    model: server.model,
+    service_tag: server.service_tag,
+    manufacturer: server.manufacturer,
+    product_name: server.product_name,
+    idrac_firmware: server.idrac_firmware,
+    bios_version: server.bios_version,
+    redfish_version: server.redfish_version,
+    cpu_count: server.cpu_count,
+    memory_gb: server.memory_gb,
+    manager_mac_address: server.manager_mac_address,
+    supported_endpoints: server.supported_endpoints,
+    discovery_job_id: server.discovery_job_id,
+    connection_status: server.connection_status,
+    connection_error: server.connection_error,
+    credential_test_status: server.credential_test_status,
+    credential_last_tested: server.credential_last_tested,
+    last_connection_test: server.last_connection_test,
+    power_state: null,
+    overall_health: null,
+    last_health_check: null,
+    vcenter_host_id: server.vcenter_host_id,
+    credential_set_id: null,
+    last_seen: server.last_seen,
+    created_at: server.created_at,
+    notes: server.notes,
+    cpu_model: null,
+    cpu_cores_per_socket: null,
+    cpu_speed: null,
+    boot_mode: null,
+    boot_order: null,
+    secure_boot: null,
+    virtualization_enabled: null,
+    total_drives: null,
+    total_storage_tb: null,
+    datacenter: null,
+    rack_id: null,
+    rack_position: null,
+    row_aisle: null,
+    room_floor: null,
+    location_notes: null,
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <ServerIcon className="h-5 w-5" />
-            Server Properties
-          </DialogTitle>
-          <DialogDescription>
-            {server.hostname || server.ip_address}
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ServerIcon className="h-5 w-5" />
+              Server Properties
+            </DialogTitle>
+            <DialogDescription>
+              {server.hostname || server.ip_address}
+            </DialogDescription>
+          </DialogHeader>
 
-        <Tabs defaultValue="hardware" className="w-full">
-          <TabsList className="grid w-full grid-cols-5">
-            <TabsTrigger value="hardware">
-              <Cpu className="h-4 w-4 mr-2" />
-              Hardware
-            </TabsTrigger>
-            <TabsTrigger value="firmware">
-              <HardDrive className="h-4 w-4 mr-2" />
-              Firmware
-            </TabsTrigger>
-            <TabsTrigger value="network">
-              <Network className="h-4 w-4 mr-2" />
-              Network
-            </TabsTrigger>
-            <TabsTrigger value="nics">
-              <Cable className="h-4 w-4 mr-2" />
-              NICs
-            </TabsTrigger>
-            <TabsTrigger value="capabilities">
-              <Wifi className="h-4 w-4 mr-2" />
-              Capabilities
-            </TabsTrigger>
-          </TabsList>
+          <Tabs defaultValue="hardware" className="w-full">
+            <TabsList className="grid w-full grid-cols-6">
+              <TabsTrigger value="hardware">
+                <Cpu className="h-4 w-4 mr-2" />
+                Hardware
+              </TabsTrigger>
+              <TabsTrigger value="firmware">
+                <HardDrive className="h-4 w-4 mr-2" />
+                Firmware
+              </TabsTrigger>
+              <TabsTrigger value="network">
+                <Network className="h-4 w-4 mr-2" />
+                Network
+              </TabsTrigger>
+              <TabsTrigger value="nics">
+                <Cable className="h-4 w-4 mr-2" />
+                NICs
+              </TabsTrigger>
+              <TabsTrigger value="pdu">
+                <Plug className="h-4 w-4 mr-2" />
+                PDU
+              </TabsTrigger>
+              <TabsTrigger value="capabilities">
+                <Wifi className="h-4 w-4 mr-2" />
+                Capabilities
+              </TabsTrigger>
+            </TabsList>
 
-          <TabsContent value="hardware" className="space-y-4 mt-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <p className="text-sm text-muted-foreground">Model</p>
-                <p className="font-medium">{server.model || "N/A"}</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-sm text-muted-foreground">Service Tag</p>
-                <p className="font-medium">{server.service_tag || "N/A"}</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-sm text-muted-foreground">CPU Count</p>
-                <p className="font-medium">
-                  {server.cpu_count ? `${server.cpu_count} processor${server.cpu_count > 1 ? 's' : ''}` : "N/A"}
-                </p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-sm text-muted-foreground">Total Memory</p>
-                <p className="font-medium">
-                  {server.memory_gb ? `${server.memory_gb} GB` : "N/A"}
-                </p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-sm text-muted-foreground">Status</p>
-                <div>{getStatusBadge()}</div>
-              </div>
-              <div className="space-y-1">
-                <p className="text-sm text-muted-foreground">Created At</p>
-                <p className="font-medium text-sm">{formatDate(server.created_at)}</p>
-              </div>
-            </div>
-            {server.notes && (
-              <div className="space-y-1 pt-2 border-t">
-                <p className="text-sm text-muted-foreground">Notes</p>
-                <p className="text-sm">{server.notes}</p>
-              </div>
-            )}
-          </TabsContent>
-
-          <TabsContent value="firmware" className="space-y-4 mt-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <p className="text-sm text-muted-foreground">iDRAC Firmware</p>
-                <p className="font-medium">{server.idrac_firmware || "N/A"}</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-sm text-muted-foreground">BIOS Version</p>
-                <p className="font-medium">{server.bios_version || "N/A"}</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-sm text-muted-foreground">Last Updated</p>
-                <p className="font-medium text-sm">{formatDate(server.last_seen)}</p>
-              </div>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="network" className="space-y-4 mt-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <p className="text-sm text-muted-foreground">IP Address</p>
-                <p className="font-medium font-mono">{server.ip_address}</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-sm text-muted-foreground">Hostname</p>
-                <p className="font-medium">{server.hostname || "N/A"}</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-sm text-muted-foreground">Connection Status</p>
-                <div>{getConnectionStatusBadge()}</div>
-              </div>
-              <div className="space-y-1">
-                <p className="text-sm text-muted-foreground">Last Seen</p>
-                <p className="font-medium text-sm flex items-center gap-1">
-                  <Clock className="h-3 w-3" />
-                  {formatDate(server.last_seen)}
-                </p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-sm text-muted-foreground">Last Connection Test</p>
-                <p className="font-medium text-sm">{formatDate(server.last_connection_test)}</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-sm text-muted-foreground">Credential Status</p>
-                <div>{getCredentialStatusBadge()}</div>
-              </div>
-              {server.credential_last_tested && (
+            <TabsContent value="hardware" className="space-y-4 mt-4">
+              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Last Credential Test</p>
-                  <p className="font-medium text-sm">{formatDate(server.credential_last_tested)}</p>
+                  <p className="text-sm text-muted-foreground">Model</p>
+                  <p className="font-medium">{server.model || "N/A"}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Service Tag</p>
+                  <p className="font-medium">{server.service_tag || "N/A"}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">CPU Count</p>
+                  <p className="font-medium">
+                    {server.cpu_count ? `${server.cpu_count} processor${server.cpu_count > 1 ? 's' : ''}` : "N/A"}
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Total Memory</p>
+                  <p className="font-medium">
+                    {server.memory_gb ? `${server.memory_gb} GB` : "N/A"}
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Status</p>
+                  <div>{getStatusBadge()}</div>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Created At</p>
+                  <p className="font-medium text-sm">{formatDate(server.created_at)}</p>
+                </div>
+              </div>
+              {server.notes && (
+                <div className="space-y-1 pt-2 border-t">
+                  <p className="text-sm text-muted-foreground">Notes</p>
+                  <p className="text-sm">{server.notes}</p>
                 </div>
               )}
-            </div>
-            {server.connection_error && (
-              <div className="space-y-1 pt-2 border-t">
-                <p className="text-sm text-muted-foreground">Connection Error</p>
-                <p className="text-sm text-red-600 dark:text-red-400 font-mono">{server.connection_error}</p>
-              </div>
-            )}
-          </TabsContent>
+            </TabsContent>
 
-          <TabsContent value="nics" className="space-y-4 mt-4">
-            <ServerNicsTable serverId={server.id} />
-          </TabsContent>
-
-          <TabsContent value="capabilities" className="space-y-4 mt-4">
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <h3 className="text-sm font-semibold">Product Information</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <p className="text-sm text-muted-foreground">Product</p>
-                    <p className="font-medium text-sm">{server.product_name || "N/A"}</p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-sm text-muted-foreground">Manufacturer</p>
-                    <p className="font-medium text-sm">{server.manufacturer || "N/A"}</p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-sm text-muted-foreground">MAC Address</p>
-                    <p className="font-medium text-sm font-mono">{server.manager_mac_address || "N/A"}</p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-sm text-muted-foreground">Redfish Version</p>
-                    <p className="font-medium text-sm">{server.redfish_version || "N/A"}</p>
-                  </div>
+            <TabsContent value="firmware" className="space-y-4 mt-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">iDRAC Firmware</p>
+                  <p className="font-medium">{server.idrac_firmware || "N/A"}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">BIOS Version</p>
+                  <p className="font-medium">{server.bios_version || "N/A"}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Last Updated</p>
+                  <p className="font-medium text-sm">{formatDate(server.last_seen)}</p>
                 </div>
               </div>
+            </TabsContent>
 
-              {server.supported_endpoints && (
-                <div className="space-y-2 pt-4 border-t">
-                  <h3 className="text-sm font-semibold">Available Endpoints</h3>
+            <TabsContent value="network" className="space-y-4 mt-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">IP Address</p>
+                  <p className="font-medium font-mono">{server.ip_address}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Hostname</p>
+                  <p className="font-medium">{server.hostname || "N/A"}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Connection Status</p>
+                  <div>{getConnectionStatusBadge()}</div>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Last Seen</p>
+                  <p className="font-medium text-sm flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    {formatDate(server.last_seen)}
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Last Connection Test</p>
+                  <p className="font-medium text-sm">{formatDate(server.last_connection_test)}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Credential Status</p>
+                  <div>{getCredentialStatusBadge()}</div>
+                </div>
+                {server.credential_last_tested && (
+                  <div className="space-y-1">
+                    <p className="text-sm text-muted-foreground">Last Credential Test</p>
+                    <p className="font-medium text-sm">{formatDate(server.credential_last_tested)}</p>
+                  </div>
+                )}
+              </div>
+              {server.connection_error && (
+                <div className="space-y-1 pt-2 border-t">
+                  <p className="text-sm text-muted-foreground">Connection Error</p>
+                  <p className="text-sm text-red-600 dark:text-red-400 font-mono">{server.connection_error}</p>
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="nics" className="space-y-4 mt-4">
+              <ServerNicsTable serverId={server.id} />
+            </TabsContent>
+
+            <TabsContent value="pdu" className="space-y-4 mt-4">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold">PDU Power Mappings</h3>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowMappingDialog(true)}
+                  >
+                    <Settings className="h-4 w-4 mr-2" />
+                    Configure
+                  </Button>
+                </div>
+
+                {mappingsLoading ? (
+                  <div className="text-sm text-muted-foreground">Loading...</div>
+                ) : mappings.length === 0 ? (
+                  <div className="rounded-lg border border-dashed p-6 text-center">
+                    <Plug className="mx-auto h-8 w-8 text-muted-foreground/50" />
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      No PDU mappings configured for this server.
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Configure PDU mappings to enable power control via PDU outlets.
+                    </p>
+                  </div>
+                ) : (
                   <div className="space-y-2">
-                    {Object.entries(server.supported_endpoints).map(([key, value]) => (
-                      value && (
-                        <div key={key} className="flex items-start justify-between gap-2 text-sm">
-                          <span className="text-muted-foreground capitalize min-w-[100px]">{key}</span>
-                          <code className="text-xs bg-muted px-2 py-1 rounded flex-1 break-all">{value as string}</code>
+                    {mappings.map((mapping) => (
+                      <div
+                        key={mapping.id}
+                        className="flex items-center justify-between rounded-lg border bg-muted/30 p-3"
+                      >
+                        <div className="flex items-center gap-3">
+                          <Badge variant={mapping.feed_label === 'A' ? 'default' : 'secondary'} className="min-w-[60px] justify-center">
+                            Feed {mapping.feed_label}
+                          </Badge>
+                          <div className="text-sm">
+                            <span className="font-medium">{mapping.pdu?.name}</span>
+                            <span className="text-muted-foreground"> • Outlet {mapping.outlet_number}</span>
+                          </div>
                         </div>
-                      )
+                        {mapping.outlet && (
+                          <OutletStateIndicator
+                            state={mapping.outlet.outlet_state}
+                            outletNumber={mapping.outlet_number}
+                            outletName={mapping.outlet.outlet_name}
+                            size="sm"
+                          />
+                        )}
+                      </div>
                     ))}
                   </div>
-                  {!Object.values(server.supported_endpoints).some(v => v) && (
-                    <p className="text-sm text-muted-foreground italic">No endpoint information available</p>
-                  )}
-                </div>
-              )}
-            </div>
-          </TabsContent>
-        </Tabs>
+                )}
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Close
-          </Button>
-          {onEdit && (
-            <Button onClick={onEdit}>
-              <Edit className="mr-2 h-4 w-4" />
-              Edit Server
+                <div className="text-xs text-muted-foreground p-3 rounded-lg bg-muted/30">
+                  <p>
+                    <strong>Note:</strong> PDU power control is available in the Power Control dialog. 
+                    Use this to manage the server's power when iDRAC is unresponsive.
+                  </p>
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="capabilities" className="space-y-4 mt-4">
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <h3 className="text-sm font-semibold">Product Information</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <p className="text-sm text-muted-foreground">Product</p>
+                      <p className="font-medium text-sm">{server.product_name || "N/A"}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm text-muted-foreground">Manufacturer</p>
+                      <p className="font-medium text-sm">{server.manufacturer || "N/A"}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm text-muted-foreground">MAC Address</p>
+                      <p className="font-medium text-sm font-mono">{server.manager_mac_address || "N/A"}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm text-muted-foreground">Redfish Version</p>
+                      <p className="font-medium text-sm">{server.redfish_version || "N/A"}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {server.supported_endpoints && (
+                  <div className="space-y-2 pt-4 border-t">
+                    <h3 className="text-sm font-semibold">Available Endpoints</h3>
+                    <div className="space-y-2">
+                      {Object.entries(server.supported_endpoints).map(([key, value]) => (
+                        value && (
+                          <div key={key} className="flex items-start justify-between gap-2 text-sm">
+                            <span className="text-muted-foreground capitalize min-w-[100px]">{key}</span>
+                            <code className="text-xs bg-muted px-2 py-1 rounded flex-1 break-all">{value as string}</code>
+                          </div>
+                        )
+                      ))}
+                    </div>
+                    {!Object.values(server.supported_endpoints).some(v => v) && (
+                      <p className="text-sm text-muted-foreground italic">No endpoint information available</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </TabsContent>
+          </Tabs>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              Close
             </Button>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+            {onEdit && (
+              <Button onClick={onEdit}>
+                <Edit className="mr-2 h-4 w-4" />
+                Edit Server
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* PDU Mapping Dialog */}
+      <ServerPduMappingDialog
+        open={showMappingDialog}
+        onOpenChange={setShowMappingDialog}
+        server={serverForMapping}
+      />
+    </>
   );
 }

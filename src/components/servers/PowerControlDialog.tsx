@@ -1,12 +1,17 @@
 import { useState } from "react";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Power, Zap, Square, RefreshCw, AlertTriangle } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
+import { Power, Square, RefreshCw, AlertTriangle, Plug } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { logActivityDirect } from "@/hooks/useActivityLog";
+import { useServerPduMappings } from "@/hooks/useServerPduMappings";
+import { ServerPduPowerSection } from "@/components/pdu/ServerPduPowerSection";
+import { ServerPduMappingDialog } from "@/components/pdu/ServerPduMappingDialog";
+import type { Server } from "@/hooks/useServers";
 
 interface PowerControlDialogProps {
   open: boolean;
@@ -14,14 +19,18 @@ interface PowerControlDialogProps {
   server: {
     id: string;
     ip_address: string;
-    hostname?: string;
-    power_state?: string;
+    hostname?: string | null;
+    power_state?: string | null;
   };
 }
 
 export function PowerControlDialog({ open, onOpenChange, server }: PowerControlDialogProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [confirmAction, setConfirmAction] = useState<string | null>(null);
+  const [showMappingDialog, setShowMappingDialog] = useState(false);
+  
+  const { mappings } = useServerPduMappings(server.id);
+  const hasPduMappings = mappings.length > 0;
 
   const handlePowerAction = async (action: string) => {
     setIsSubmitting(true);
@@ -46,7 +55,7 @@ export function PowerControlDialog({ open, onOpenChange, server }: PowerControlD
       // Log activity
       logActivityDirect('power_action', 'server', server.hostname || server.ip_address, { action }, { targetId: server.id, success: true });
       
-      onOpenChange(false);
+      toast.success(`Power action initiated: ${action}`);
     } catch (error: any) {
       console.error('Error creating power action job:', error);
       toast.error('Failed to initiate power action', {
@@ -72,15 +81,63 @@ export function PowerControlDialog({ open, onOpenChange, server }: PowerControlD
     }
   };
 
-  const getPowerStateColor = (state?: string) => {
+  const getPowerStateColor = (state?: string | null) => {
     if (!state) return "secondary";
     return state === "On" ? "default" : "outline";
+  };
+
+  // Create a minimal Server object for the mapping dialog
+  const serverForMapping: Server = {
+    id: server.id,
+    ip_address: server.ip_address,
+    hostname: server.hostname || null,
+    idrac_hostname: null,
+    model: null,
+    service_tag: null,
+    manufacturer: null,
+    product_name: null,
+    idrac_firmware: null,
+    bios_version: null,
+    redfish_version: null,
+    cpu_count: null,
+    memory_gb: null,
+    manager_mac_address: null,
+    supported_endpoints: null,
+    discovery_job_id: null,
+    connection_status: null,
+    connection_error: null,
+    credential_test_status: null,
+    credential_last_tested: null,
+    last_connection_test: null,
+    power_state: server.power_state || null,
+    overall_health: null,
+    last_health_check: null,
+    vcenter_host_id: null,
+    credential_set_id: null,
+    last_seen: null,
+    created_at: '',
+    notes: null,
+    cpu_model: null,
+    cpu_cores_per_socket: null,
+    cpu_speed: null,
+    boot_mode: null,
+    boot_order: null,
+    secure_boot: null,
+    virtualization_enabled: null,
+    total_drives: null,
+    total_storage_tb: null,
+    datacenter: null,
+    rack_id: null,
+    rack_position: null,
+    row_aisle: null,
+    room_floor: null,
+    location_notes: null,
   };
 
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-[500px]">
+        <DialogContent className="sm:max-w-[550px] max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Power className="h-5 w-5" />
@@ -100,9 +157,9 @@ export function PowerControlDialog({ open, onOpenChange, server }: PowerControlD
               </Badge>
             </div>
 
-            {/* Power Actions */}
+            {/* iDRAC Power Actions */}
             <div className="space-y-2">
-              <h4 className="text-sm font-medium mb-3">Power Actions</h4>
+              <h4 className="text-sm font-medium mb-3">iDRAC Power Actions</h4>
               
               <Button
                 onClick={() => handleActionClick('On')}
@@ -148,6 +205,27 @@ export function PowerControlDialog({ open, onOpenChange, server }: PowerControlD
             <div className="text-xs text-muted-foreground p-3 rounded-lg bg-muted/30">
               <p><strong>Note:</strong> Force actions may cause data loss. Use graceful shutdown when possible.</p>
             </div>
+
+            {/* PDU Power Control Section */}
+            <Separator />
+            
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Plug className="h-4 w-4" />
+                <h4 className="text-sm font-medium">PDU Power Control</h4>
+                {hasPduMappings && (
+                  <Badge variant="outline" className="text-xs">
+                    {mappings.length} {mappings.length === 1 ? 'feed' : 'feeds'}
+                  </Badge>
+                )}
+              </div>
+              
+              <ServerPduPowerSection
+                serverId={server.id}
+                serverName={server.hostname || server.ip_address}
+                onManageMappings={() => setShowMappingDialog(true)}
+              />
+            </div>
           </div>
         </DialogContent>
       </Dialog>
@@ -173,6 +251,13 @@ export function PowerControlDialog({ open, onOpenChange, server }: PowerControlD
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* PDU Mapping Dialog */}
+      <ServerPduMappingDialog
+        open={showMappingDialog}
+        onOpenChange={setShowMappingDialog}
+        server={serverForMapping}
+      />
     </>
   );
 }
