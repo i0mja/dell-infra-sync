@@ -5,17 +5,47 @@ import {
   discoverPduApi,
   controlPduOutletApi,
   syncPduStatusApi,
+  getJobExecutorUrl,
 } from '@/lib/job-executor-api';
+
+/**
+ * Check if we're in a mixed content scenario (HTTPS page calling HTTP API)
+ * Browsers block these requests for security
+ */
+function isMixedContentBlocked(): boolean {
+  const isHttpsPage = window.location.protocol === 'https:';
+  const apiUrl = getJobExecutorUrl();
+  const isHttpApi = apiUrl.startsWith('http://') && !apiUrl.startsWith('http://localhost');
+  return isHttpsPage && isHttpApi;
+}
+
+/**
+ * Log a warning about mixed content and suggest solutions
+ */
+function logMixedContentWarning(operation: string): void {
+  console.warn(
+    `PDU ${operation}: Mixed content detected (HTTPS page calling HTTP API). ` +
+    'Using job queue fallback. To enable instant API, either:\n' +
+    '1. Access the app via HTTP, or\n' +
+    '2. Configure the Job Executor with HTTPS (recommended for production)'
+  );
+}
 
 /**
  * Test PDU connection via instant API, fallback to job queue
  */
 export async function testPduConnection(pduId: string): Promise<PduTestConnectionResponse | string> {
+  // Check for mixed content - skip instant API if blocked
+  if (isMixedContentBlocked()) {
+    logMixedContentWarning('test connection');
+    return createPduJob('pdu_test_connection', pduId);
+  }
+
   try {
     const result = await testPduConnectionApi(pduId);
     return result;
   } catch (error) {
-    console.log('PDU instant API unavailable, falling back to job queue');
+    console.log('PDU instant API unavailable, falling back to job queue:', error instanceof Error ? error.message : 'Unknown error');
     return createPduJob('pdu_test_connection', pduId);
   }
 }
@@ -24,11 +54,17 @@ export async function testPduConnection(pduId: string): Promise<PduTestConnectio
  * Discover PDU details via instant API, fallback to job queue
  */
 export async function discoverPdu(pduId: string): Promise<PduDiscoverResponse | string> {
+  // Check for mixed content - skip instant API if blocked
+  if (isMixedContentBlocked()) {
+    logMixedContentWarning('discover');
+    return createPduJob('pdu_discover', pduId);
+  }
+
   try {
     const result = await discoverPduApi(pduId);
     return result;
   } catch (error) {
-    console.log('PDU instant API unavailable, falling back to job queue');
+    console.log('PDU instant API unavailable, falling back to job queue:', error instanceof Error ? error.message : 'Unknown error');
     return createPduJob('pdu_discover', pduId);
   }
 }
@@ -41,11 +77,17 @@ export async function controlPduOutlet(
   outletNumbers: number[],
   action: OutletAction
 ): Promise<PduOutletControlResponse | string> {
+  // Check for mixed content - skip instant API if blocked
+  if (isMixedContentBlocked()) {
+    logMixedContentWarning('outlet control');
+    return createPduOutletJob(pduId, outletNumbers, action);
+  }
+
   try {
     const result = await controlPduOutletApi(pduId, outletNumbers, action);
     return result;
   } catch (error) {
-    console.log('PDU instant API unavailable, falling back to job queue');
+    console.log('PDU instant API unavailable, falling back to job queue:', error instanceof Error ? error.message : 'Unknown error');
     return createPduOutletJob(pduId, outletNumbers, action);
   }
 }
@@ -54,11 +96,17 @@ export async function controlPduOutlet(
  * Sync PDU outlet status via instant API, fallback to job queue
  */
 export async function syncPduStatus(pduId: string): Promise<PduSyncStatusResponse | string> {
+  // Check for mixed content - skip instant API if blocked
+  if (isMixedContentBlocked()) {
+    logMixedContentWarning('sync status');
+    return createPduJob('pdu_sync_status', pduId);
+  }
+
   try {
     const result = await syncPduStatusApi(pduId);
     return result;
   } catch (error) {
-    console.log('PDU instant API unavailable, falling back to job queue');
+    console.log('PDU instant API unavailable, falling back to job queue:', error instanceof Error ? error.message : 'Unknown error');
     return createPduJob('pdu_sync_status', pduId);
   }
 }
