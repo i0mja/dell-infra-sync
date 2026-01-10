@@ -65,12 +65,27 @@ class VirtualMediaHandler(BaseHandler):
                     )
                     
                     if status['inserted']:
-                        # Update session in database
-                        self.executor.supabase.table('virtual_media_sessions').update({
-                            'is_mounted': True,
-                            'inserted': True,
-                            'mounted_at': utc_now_iso()
-                        }).eq('id', session_id).execute()
+                        # Update session in database using REST API
+                        import requests
+                        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+                        
+                        requests.patch(
+                            f"{DSM_URL}/rest/v1/virtual_media_sessions",
+                            headers={
+                                'apikey': SERVICE_ROLE_KEY,
+                                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                'Content-Type': 'application/json',
+                                'Prefer': 'return=minimal'
+                            },
+                            params={'id': f'eq.{session_id}'},
+                            json={
+                                'is_mounted': True,
+                                'inserted': True,
+                                'mounted_at': utc_now_iso()
+                            },
+                            verify=VERIFY_SSL,
+                            timeout=10
+                        )
                         
                         self.log(f"  [OK] Virtual media mounted successfully on {ip}")
                         success_count += 1
@@ -177,12 +192,27 @@ class VirtualMediaHandler(BaseHandler):
                     )
                     
                     if not status['inserted']:
-                        # Update session in database
-                        self.executor.supabase.table('virtual_media_sessions').update({
-                            'is_mounted': False,
-                            'inserted': False,
-                            'unmounted_at': utc_now_iso()
-                        }).eq('id', session_id).execute()
+                        # Update session in database using REST API
+                        import requests
+                        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+                        
+                        requests.patch(
+                            f"{DSM_URL}/rest/v1/virtual_media_sessions",
+                            headers={
+                                'apikey': SERVICE_ROLE_KEY,
+                                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                'Content-Type': 'application/json',
+                                'Prefer': 'return=minimal'
+                            },
+                            params={'id': f'eq.{session_id}'},
+                            json={
+                                'is_mounted': False,
+                                'inserted': False,
+                                'unmounted_at': utc_now_iso()
+                            },
+                            verify=VERIFY_SSL,
+                            timeout=10
+                        )
                         
                         self.log(f"  [OK] Virtual media unmounted successfully on {ip}")
                         success_count += 1
