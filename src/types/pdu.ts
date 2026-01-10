@@ -13,8 +13,9 @@ export interface Pdu {
   total_outlets: number;
   username: string;
   password_encrypted?: string;
-  protocol: 'nmc' | 'snmp';
+  protocol: 'nmc' | 'snmp' | 'auto';
   snmp_community: string;
+  snmp_write_community?: string;
   connection_status: 'online' | 'offline' | 'unknown' | 'error';
   last_seen?: string;
   last_sync?: string;
@@ -54,8 +55,9 @@ export interface PduFormData {
   hostname?: string;
   username: string;
   password?: string;
-  protocol: 'nmc' | 'snmp';
+  protocol: 'nmc' | 'snmp' | 'auto';
   snmp_community?: string;
+  snmp_write_community?: string;
   total_outlets: number;
   datacenter?: string;
   rack_id?: string;

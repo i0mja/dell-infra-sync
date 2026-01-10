@@ -2151,6 +2151,7 @@ export type Database = {
           protocol: string | null
           rack_id: string | null
           snmp_community: string | null
+          snmp_write_community: string | null
           total_outlets: number | null
           updated_at: string | null
           username: string | null
@@ -2173,6 +2174,7 @@ export type Database = {
           protocol?: string | null
           rack_id?: string | null
           snmp_community?: string | null
+          snmp_write_community?: string | null
           total_outlets?: number | null
           updated_at?: string | null
           username?: string | null
@@ -2195,6 +2197,7 @@ export type Database = {
           protocol?: string | null
           rack_id?: string | null
           snmp_community?: string | null
+          snmp_write_community?: string | null
           total_outlets?: number | null
           updated_at?: string | null
           username?: string | null

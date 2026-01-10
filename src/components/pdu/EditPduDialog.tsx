@@ -21,7 +21,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Info } from 'lucide-react';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import type { Pdu, PduFormData } from '@/types/pdu';
 
 const pduSchema = z.object({
@@ -30,8 +36,9 @@ const pduSchema = z.object({
   hostname: z.string().optional(),
   username: z.string().min(1, 'Username is required'),
   password: z.string().optional(),
-  protocol: z.enum(['nmc', 'snmp']),
+  protocol: z.enum(['nmc', 'snmp', 'auto']),
   snmp_community: z.string().optional(),
+  snmp_write_community: z.string().optional(),
   total_outlets: z.number().min(1).max(48),
   datacenter: z.string().optional(),
   rack_id: z.string().optional(),
@@ -63,8 +70,9 @@ export function EditPduDialog({ open, onOpenChange, pdu, onSubmit }: EditPduDial
       hostname: '',
       username: 'apc',
       password: '',
-      protocol: 'nmc',
+      protocol: 'auto',
       snmp_community: 'public',
+      snmp_write_community: 'private',
       total_outlets: 8,
       datacenter: '',
       rack_id: '',
@@ -84,6 +92,7 @@ export function EditPduDialog({ open, onOpenChange, pdu, onSubmit }: EditPduDial
         password: '', // Don't populate password
         protocol: pdu.protocol,
         snmp_community: pdu.snmp_community || 'public',
+        snmp_write_community: pdu.snmp_write_community || 'private',
         total_outlets: pdu.total_outlets,
         datacenter: pdu.datacenter || '',
         rack_id: pdu.rack_id || '',
@@ -169,17 +178,32 @@ export function EditPduDialog({ open, onOpenChange, pdu, onSubmit }: EditPduDial
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="protocol">Protocol</Label>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="protocol">Protocol</Label>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-[280px]">
+                      <p><strong>Auto (Recommended):</strong> Tries NMC first, falls back to SNMP if session is blocked.</p>
+                      <p className="mt-1"><strong>SNMP:</strong> No session limits, best for concurrent access.</p>
+                      <p className="mt-1"><strong>NMC:</strong> Web interface only, may fail if another session is active.</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
               <Select
                 value={protocol}
-                onValueChange={(value: 'nmc' | 'snmp') => setValue('protocol', value)}
+                onValueChange={(value: 'nmc' | 'snmp' | 'auto') => setValue('protocol', value)}
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="nmc">NMC Web Interface</SelectItem>
-                  <SelectItem value="snmp">SNMP</SelectItem>
+                  <SelectItem value="auto">Auto (Recommended)</SelectItem>
+                  <SelectItem value="snmp">SNMP Only</SelectItem>
+                  <SelectItem value="nmc">NMC Web Interface Only</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -203,14 +227,24 @@ export function EditPduDialog({ open, onOpenChange, pdu, onSubmit }: EditPduDial
             </div>
           </div>
 
-          {protocol === 'snmp' && (
-            <div className="space-y-2">
-              <Label htmlFor="snmp_community">SNMP Community</Label>
-              <Input
-                id="snmp_community"
-                placeholder="public"
-                {...register('snmp_community')}
-              />
+          {(protocol === 'snmp' || protocol === 'auto') && (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="snmp_community">SNMP Read Community</Label>
+                <Input
+                  id="snmp_community"
+                  placeholder="public"
+                  {...register('snmp_community')}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="snmp_write_community">SNMP Write Community</Label>
+                <Input
+                  id="snmp_write_community"
+                  placeholder="private"
+                  {...register('snmp_write_community')}
+                />
+              </div>
             </div>
           )}
 
