@@ -145,10 +145,19 @@ class PDUHandler(BaseHandler):
         """Fetch PDU credentials from database using REST API"""
         from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
         
+        # Store debug info for error reporting
+        self._last_pdu_query_debug = {
+            'url': None,
+            'status_code': None,
+            'response_body': None,
+            'error': None
+        }
+        
         # Debug logging
         self.log(f"Fetching PDU {pdu_id} from {DSM_URL}/rest/v1/pdus")
         
         if not SERVICE_ROLE_KEY:
+            self._last_pdu_query_debug['error'] = 'SERVICE_ROLE_KEY is not set'
             self.log("ERROR: SERVICE_ROLE_KEY is not set!", "ERROR")
             return None
         
@@ -156,6 +165,7 @@ class PDUHandler(BaseHandler):
             url = f"{DSM_URL}/rest/v1/pdus"
             params = {'id': f'eq.{pdu_id}', 'select': '*'}
             
+            self._last_pdu_query_debug['url'] = f"{url}?id=eq.{pdu_id}"
             self.log(f"Making request to: {url} with params: {params}")
             
             response = requests.get(
@@ -168,6 +178,9 @@ class PDUHandler(BaseHandler):
                 verify=VERIFY_SSL,
                 timeout=10
             )
+            
+            self._last_pdu_query_debug['status_code'] = response.status_code
+            self._last_pdu_query_debug['response_body'] = response.text[:500]  # First 500 chars
             
             self.log(f"Response status: {response.status_code}")
             
@@ -183,11 +196,15 @@ class PDUHandler(BaseHandler):
                     else:
                         pdu['password'] = 'apc'  # Default APC password
                     return pdu
+                else:
+                    self._last_pdu_query_debug['error'] = 'Query returned empty array (0 records)'
             else:
+                self._last_pdu_query_debug['error'] = f'HTTP {response.status_code}: {response.text[:200]}'
                 self.log(f"PDU query failed: {response.status_code} - {response.text}", "ERROR")
             
             return None
         except Exception as e:
+            self._last_pdu_query_debug['error'] = str(e)
             self.log(f"Failed to fetch PDU credentials: {e}", "ERROR")
             import traceback
             self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
@@ -495,7 +512,8 @@ class PDUHandler(BaseHandler):
                     'pdu_id': pdu_id,
                     'dsm_url': DSM_URL,
                     'service_key_set': bool(SERVICE_ROLE_KEY),
-                    'service_key_length': len(SERVICE_ROLE_KEY) if SERVICE_ROLE_KEY else 0
+                    'service_key_length': len(SERVICE_ROLE_KEY) if SERVICE_ROLE_KEY else 0,
+                    'http_query': getattr(self, '_last_pdu_query_debug', {})
                 }
             }
         
