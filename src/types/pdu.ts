@@ -58,7 +58,6 @@ export interface PduFormData {
   protocol: 'nmc' | 'snmp' | 'auto';
   snmp_community?: string;
   snmp_write_community?: string;
-  total_outlets: number;
   datacenter?: string;
   rack_id?: string;
   notes?: string;
@@ -70,4 +69,53 @@ export interface PduOutletControlRequest {
   pdu_id: string;
   outlet_numbers: number[];
   action: OutletAction;
+}
+
+// PDU Instant API Response Types
+export interface PduTestConnectionResponse {
+  success: boolean;
+  pdu_id?: string;
+  pdu_name?: string;
+  ip_address?: string;
+  protocol_used?: 'snmp' | 'nmc';
+  message?: string;
+  error?: string;
+  nmc_blocked?: boolean;
+}
+
+export interface PduDiscoverResponse {
+  success: boolean;
+  pdu_id?: string;
+  pdu_name?: string;
+  discovered?: {
+    model?: string | null;
+    firmware_version?: string | null;
+    total_outlets?: number | null;
+    serial_number?: string | null;
+  };
+  protocol_used?: 'snmp' | 'nmc';
+  nmc_blocked?: boolean;
+  error?: string;
+}
+
+export interface PduOutletControlResponse {
+  success: boolean;
+  pdu_id?: string;
+  outlets?: number[];
+  action?: string;
+  results?: Array<{ outlet: number; success: boolean; state?: string; error?: string }>;
+  protocol_used?: 'snmp' | 'nmc';
+  nmc_blocked?: boolean;
+  error?: string;
+}
+
+export interface PduSyncStatusResponse {
+  success: boolean;
+  pdu_id?: string;
+  pdu_name?: string;
+  outlet_count?: number;
+  outlets?: Array<{ outlet_number: number; state: string }>;
+  protocol_used?: 'snmp' | 'nmc';
+  nmc_blocked?: boolean;
+  error?: string;
 }

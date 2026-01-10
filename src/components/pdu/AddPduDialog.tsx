@@ -39,7 +39,6 @@ const pduSchema = z.object({
   protocol: z.enum(['nmc', 'snmp', 'auto']),
   snmp_community: z.string().optional(),
   snmp_write_community: z.string().optional(),
-  total_outlets: z.number().min(1).max(48),
   datacenter: z.string().optional(),
   rack_id: z.string().optional(),
   notes: z.string().optional(),
@@ -72,7 +71,6 @@ export function AddPduDialog({ open, onOpenChange, onSubmit }: AddPduDialogProps
       protocol: 'auto',
       snmp_community: 'public',
       snmp_write_community: 'private',
-      total_outlets: 8,
       datacenter: '',
       rack_id: '',
       notes: '',
@@ -181,24 +179,6 @@ export function AddPduDialog({ open, onOpenChange, onSubmit }: AddPduDialogProps
                   <SelectItem value="auto">Auto (Recommended)</SelectItem>
                   <SelectItem value="snmp">SNMP Only</SelectItem>
                   <SelectItem value="nmc">NMC Web Interface Only</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="total_outlets">Total Outlets</Label>
-              <Select
-                value={String(watch('total_outlets'))}
-                onValueChange={(value) => setValue('total_outlets', parseInt(value))}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="8">8 Outlets</SelectItem>
-                  <SelectItem value="16">16 Outlets</SelectItem>
-                  <SelectItem value="24">24 Outlets</SelectItem>
-                  <SelectItem value="42">42 Outlets</SelectItem>
                 </SelectContent>
               </Select>
             </div>

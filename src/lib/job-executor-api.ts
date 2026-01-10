@@ -939,3 +939,147 @@ export function runPreflightCheckWithProgress(
     };
   });
 }
+
+// =============================================================================
+// PDU Instant API Functions
+// =============================================================================
+
+import type { 
+  PduTestConnectionResponse, 
+  PduDiscoverResponse, 
+  PduOutletControlResponse, 
+  PduSyncStatusResponse,
+  OutletAction
+} from '@/types/pdu';
+
+/**
+ * Test PDU connection via instant API
+ */
+export async function testPduConnectionApi(pduId: string): Promise<PduTestConnectionResponse> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/pdu-test-connection`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ pdu_id: pduId }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to test PDU connection');
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        throw new Error('Job Executor is not running or not reachable. Please ensure it is started on your local network.');
+      }
+      throw error;
+    }
+    throw new Error('Unknown error testing PDU connection');
+  }
+}
+
+/**
+ * Discover PDU details via instant API
+ */
+export async function discoverPduApi(pduId: string): Promise<PduDiscoverResponse> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/pdu-discover`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ pdu_id: pduId }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to discover PDU');
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        throw new Error('Job Executor is not running or not reachable. Please ensure it is started on your local network.');
+      }
+      throw error;
+    }
+    throw new Error('Unknown error discovering PDU');
+  }
+}
+
+/**
+ * Control PDU outlet via instant API
+ */
+export async function controlPduOutletApi(
+  pduId: string,
+  outletNumbers: number[],
+  action: OutletAction
+): Promise<PduOutletControlResponse> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/pdu-outlet-control`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ 
+        pdu_id: pduId, 
+        outlet_numbers: outletNumbers,
+        action 
+      }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to control PDU outlet');
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        throw new Error('Job Executor is not running or not reachable. Please ensure it is started on your local network.');
+      }
+      throw error;
+    }
+    throw new Error('Unknown error controlling PDU outlet');
+  }
+}
+
+/**
+ * Sync PDU outlet status via instant API
+ */
+export async function syncPduStatusApi(pduId: string): Promise<PduSyncStatusResponse> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/pdu-sync-status`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ pdu_id: pduId }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to sync PDU status');
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        throw new Error('Job Executor is not running or not reachable. Please ensure it is started on your local network.');
+      }
+      throw error;
+    }
+    throw new Error('Unknown error syncing PDU status');
+  }
+}

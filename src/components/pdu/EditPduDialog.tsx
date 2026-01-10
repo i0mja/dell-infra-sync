@@ -39,7 +39,6 @@ const pduSchema = z.object({
   protocol: z.enum(['nmc', 'snmp', 'auto']),
   snmp_community: z.string().optional(),
   snmp_write_community: z.string().optional(),
-  total_outlets: z.number().min(1).max(48),
   datacenter: z.string().optional(),
   rack_id: z.string().optional(),
   notes: z.string().optional(),
@@ -73,7 +72,6 @@ export function EditPduDialog({ open, onOpenChange, pdu, onSubmit }: EditPduDial
       protocol: 'auto',
       snmp_community: 'public',
       snmp_write_community: 'private',
-      total_outlets: 8,
       datacenter: '',
       rack_id: '',
       notes: '',
@@ -93,7 +91,6 @@ export function EditPduDialog({ open, onOpenChange, pdu, onSubmit }: EditPduDial
         protocol: pdu.protocol,
         snmp_community: pdu.snmp_community || 'public',
         snmp_write_community: pdu.snmp_write_community || 'private',
-        total_outlets: pdu.total_outlets,
         datacenter: pdu.datacenter || '',
         rack_id: pdu.rack_id || '',
         notes: pdu.notes || '',
@@ -208,23 +205,14 @@ export function EditPduDialog({ open, onOpenChange, pdu, onSubmit }: EditPduDial
               </Select>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="total_outlets">Total Outlets</Label>
-              <Select
-                value={String(watch('total_outlets'))}
-                onValueChange={(value) => setValue('total_outlets', parseInt(value))}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="8">8 Outlets</SelectItem>
-                  <SelectItem value="16">16 Outlets</SelectItem>
-                  <SelectItem value="24">24 Outlets</SelectItem>
-                  <SelectItem value="42">42 Outlets</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            {pdu.total_outlets && (
+              <div className="space-y-2">
+                <Label>Total Outlets</Label>
+                <div className="text-sm text-muted-foreground bg-muted px-3 py-2 rounded-md">
+                  {pdu.total_outlets} outlets (auto-discovered)
+                </div>
+              </div>
+            )}
           </div>
 
           {(protocol === 'snmp' || protocol === 'auto') && (

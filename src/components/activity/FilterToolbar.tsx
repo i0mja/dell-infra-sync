@@ -65,6 +65,7 @@ export const FilterToolbar = ({
             <SelectItem value="idrac_api">iDRAC API</SelectItem>
             <SelectItem value="vcenter_api">vCenter API</SelectItem>
             <SelectItem value="openmanage_api">OpenManage API</SelectItem>
+            <SelectItem value="pdu_api">PDU API</SelectItem>
           </SelectContent>
         </Select>
 

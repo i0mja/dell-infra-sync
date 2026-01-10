@@ -19,7 +19,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Plus, Zap, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
-import type { Pdu, PduFormData } from '@/types/pdu';
+import type { Pdu, PduFormData, PduDiscoverResponse } from '@/types/pdu';
 
 export default function Pdus() {
   const { pdus, isLoading, refetch, addPdu, updatePdu, deletePdu } = usePdus();
@@ -30,7 +30,30 @@ export default function Pdus() {
   const [viewingOutletsPdu, setViewingOutletsPdu] = useState<Pdu | null>(null);
 
   const handleAdd = async (data: PduFormData) => {
-    await addPdu.mutateAsync(data);
+    const result = await addPdu.mutateAsync(data);
+    
+    // Auto-discover to get outlet count
+    if (result?.id) {
+      toast.info('Discovering PDU outlets...');
+      try {
+        const discovery = await discoverPdu(result.id);
+        // Check if it's an instant API response (has discovered property)
+        if (typeof discovery === 'object' && 'discovered' in discovery) {
+          const discoverResult = discovery as PduDiscoverResponse;
+          if (discoverResult.success && discoverResult.discovered?.total_outlets) {
+            toast.success(`Discovered ${discoverResult.discovered.total_outlets} outlets`);
+          } else if (discoverResult.error) {
+            toast.warning(`Discovery: ${discoverResult.error}`);
+          }
+        } else {
+          // Job queue fallback - just notify
+          toast.info('Discovery job queued');
+        }
+        refetch();
+      } catch (e) {
+        console.log('Auto-discovery deferred:', e);
+      }
+    }
   };
 
   const handleEdit = async (id: string, data: Partial<PduFormData>) => {
@@ -45,34 +68,69 @@ export default function Pdus() {
 
   const handleTest = async (pdu: Pdu) => {
     try {
-      await testPduConnection(pdu.id);
-      toast.success(`Connection test job created for ${pdu.name}`);
-      setTimeout(() => refetch(), 3000);
+      const result = await testPduConnection(pdu.id);
+      if (typeof result === 'object' && 'success' in result) {
+        if (result.success) {
+          toast.success(`${pdu.name}: ${result.message || 'Connection successful'}${result.protocol_used ? ` (${result.protocol_used.toUpperCase()})` : ''}`);
+        } else {
+          toast.error(`${pdu.name}: ${result.error || 'Connection failed'}`);
+        }
+      } else {
+        toast.success(`Connection test job created for ${pdu.name}`);
+      }
+      setTimeout(() => refetch(), 1000);
     } catch (error) {
-      toast.error(`Failed to create test job: ${error}`);
+      toast.error(`Failed to test connection: ${error}`);
     }
   };
 
   const handleSync = async (pdu: Pdu) => {
     try {
-      await syncPduStatus(pdu.id);
-      toast.success(`Status sync job created for ${pdu.name}`);
-      setTimeout(() => refetch(), 3000);
+      const result = await syncPduStatus(pdu.id);
+      if (typeof result === 'object' && 'success' in result) {
+        if (result.success) {
+          toast.success(`${pdu.name}: Synced ${result.outlet_count || 0} outlets${result.protocol_used ? ` (${result.protocol_used.toUpperCase()})` : ''}`);
+        } else {
+          toast.error(`${pdu.name}: ${result.error || 'Sync failed'}`);
+        }
+      } else {
+        toast.success(`Status sync job created for ${pdu.name}`);
+      }
+      setTimeout(() => refetch(), 1000);
     } catch (error) {
-      toast.error(`Failed to create sync job: ${error}`);
+      toast.error(`Failed to sync status: ${error}`);
     }
   };
 
   const handleDiscoverAll = async () => {
-    try {
-      for (const pdu of pdus) {
-        await discoverPdu(pdu.id);
+    let successCount = 0;
+    let failCount = 0;
+    
+    for (const pdu of pdus) {
+      try {
+        const result = await discoverPdu(pdu.id);
+        if (typeof result === 'object' && 'success' in result) {
+          if (result.success) {
+            successCount++;
+          } else {
+            failCount++;
+          }
+        } else {
+          successCount++; // Job queued counts as success
+        }
+      } catch {
+        failCount++;
       }
-      toast.success(`Discovery jobs created for ${pdus.length} PDU(s)`);
-      setTimeout(() => refetch(), 5000);
-    } catch (error) {
-      toast.error(`Failed to create discovery jobs: ${error}`);
     }
+    
+    if (successCount > 0) {
+      toast.success(`Discovered ${successCount} PDU(s)`);
+    }
+    if (failCount > 0) {
+      toast.error(`Failed to discover ${failCount} PDU(s)`);
+    }
+    
+    setTimeout(() => refetch(), 2000);
   };
 
   return (
