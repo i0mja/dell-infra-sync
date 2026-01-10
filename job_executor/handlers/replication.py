@@ -4905,19 +4905,36 @@ chmod 600 ~/.ssh/authorized_keys
                 # Collect all VMDK files with their sizes
                 for result in task.info.result:
                     result_folder = result.folderPath
-                    # Ensure folder path ends with space for proper path construction
-                    if not result_folder.endswith('/') and not result_folder.endswith(' '):
-                        result_folder = result_folder + ' '
-                    elif result_folder.endswith('/'):
-                        # Convert trailing / to space for vSphere path format
-                        result_folder = result_folder[:-1] + ' '
+                    
+                    # Build correct datastore path from filesystem path
+                    # result.folderPath can be:
+                    #   - /vmfs/volumes/<uuid>/VM-Name (NFS/VMFS filesystem path)
+                    #   - [DatastoreName] VM-Name (already in datastore format)
+                    if result_folder.startswith('/vmfs/volumes/'):
+                        # Parse out the relative folder after the datastore mount point
+                        # Format: /vmfs/volumes/<datastore-uuid>/<relative-path>
+                        parts = result_folder.rstrip('/').split('/')
+                        if len(parts) >= 5:
+                            # parts = ['', 'vmfs', 'volumes', 'uuid', 'VM-Name', ...]
+                            relative_path = '/'.join(parts[4:])  # Everything after uuid
+                            folder_path = f"[{datastore.name}] {relative_path}/"
+                        else:
+                            folder_path = f"[{datastore.name}] {source_vm_name}/"
+                        self._add_console_log(job_id, f"Converted path: {result_folder} -> {folder_path}")
+                    elif result_folder.startswith('['):
+                        # Already in datastore format, just ensure proper trailing
+                        folder_path = result_folder.rstrip('/').rstrip() + '/'
+                    else:
+                        # Fallback - assume it's the VM folder name
+                        folder_path = f"[{datastore.name}] {source_vm_name}/"
+                        self._add_console_log(job_id, f"Using fallback path: {folder_path}")
                     
                     for file_info in result.file:
                         file_size = getattr(file_info, 'fileSize', 0) or 0
                         file_size_mb = file_size / (1024 * 1024)
-                        full_path = f"{result_folder}{file_info.path}"
+                        full_path = f"{folder_path}{file_info.path}"
                         all_vmdks[file_info.path] = (full_path, file_size)
-                        self._add_console_log(job_id, f"Found: {file_info.path} ({file_size_mb:.1f} MB)")
+                        self._add_console_log(job_id, f"Found: {full_path} ({file_size_mb:.1f} MB)")
                 
                 self._add_console_log(job_id, f"Total VMDK files found: {len(all_vmdks)}")
                 
