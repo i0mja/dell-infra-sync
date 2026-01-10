@@ -721,9 +721,9 @@ class PDUHandler(BaseHandler):
                     'protocol_used': 'nmc'
                 }
             
-            # If auto mode and still session conflict after Telnet attempt, try SNMP fallback
-            if protocol == 'auto' and self._is_session_conflict(message):
-                self.log("NMC session still blocked after Telnet clear, trying SNMP fallback", "WARN")
+            # NMC login failed - try SNMP fallback in auto mode for ANY failure
+            if protocol == 'auto':
+                self.log(f"NMC login failed ({message}), trying SNMP fallback", "WARN")
                 snmp_success, snmp_message = self._snmp_test_connection(ip_address, snmp_community)
                 
                 if snmp_success:
@@ -734,7 +734,8 @@ class PDUHandler(BaseHandler):
                         'pdu_name': pdu.get('name'),
                         'ip_address': ip_address,
                         'protocol_used': 'snmp',
-                        'nmc_blocked': True
+                        'nmc_blocked': True,
+                        'nmc_error': message
                     }
                 else:
                     self._update_pdu_status(pdu_id, 'error')
@@ -745,7 +746,7 @@ class PDUHandler(BaseHandler):
                         'ip_address': ip_address
                     }
             
-            # NMC failed (not session conflict or nmc-only mode)
+            # NMC-only mode failed
             self._update_pdu_status(pdu_id, 'error')
             return {
                 'success': False,
@@ -825,9 +826,9 @@ class PDUHandler(BaseHandler):
                     self.log(f"Telnet clear failed: {clear_msg}", "WARN")
             
             if not success:
-                # Try SNMP fallback in auto mode
-                if protocol == 'auto' and self._is_session_conflict(message):
-                    self.log("NMC still blocked, trying SNMP for discovery", "WARN")
+                # Try SNMP fallback in auto mode for ANY NMC failure
+                if protocol == 'auto':
+                    self.log(f"NMC login failed ({message}), trying SNMP for discovery", "WARN")
                     snmp_community = pdu.get('snmp_community', 'public')
                     outlet_states = self._snmp_get_all_outlet_states(ip_address, snmp_community)
                     
@@ -1048,9 +1049,9 @@ class PDUHandler(BaseHandler):
                     self.log(f"Telnet clear failed: {clear_msg}", "WARN")
             
             if not success:
-                # Try SNMP fallback in auto mode for control operations
-                if protocol == 'auto' and self._is_session_conflict(message):
-                    self.log("NMC still blocked, using SNMP for outlet control", "WARN")
+                # Try SNMP fallback in auto mode for ANY NMC failure
+                if protocol == 'auto':
+                    self.log(f"NMC login failed ({message}), using SNMP for outlet control", "WARN")
                     
                     if action == 'status':
                         outlet_states = self._snmp_get_all_outlet_states(ip_address, snmp_read_community)
@@ -1211,9 +1212,9 @@ class PDUHandler(BaseHandler):
                     self.log(f"Telnet clear failed: {clear_msg}", "WARN")
             
             if not success:
-                # Try SNMP fallback in auto mode
-                if protocol == 'auto' and self._is_session_conflict(message):
-                    self.log("NMC still blocked, using SNMP for sync", "WARN")
+                # Try SNMP fallback in auto mode for ANY NMC failure
+                if protocol == 'auto':
+                    self.log(f"NMC login failed ({message}), using SNMP for sync", "WARN")
                     outlet_states = self._snmp_get_all_outlet_states(ip_address, snmp_community)
                     
                     if outlet_states:
