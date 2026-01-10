@@ -137,8 +137,20 @@ try:
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
     pass
-
 # UNICODE_FALLBACKS imported from job_executor.utils
+
+# ============================================================================
+# STARTUP CONFIGURATION DEBUG
+# ============================================================================
+print("=" * 60)
+print("JOB EXECUTOR CONFIGURATION DEBUG")
+print("=" * 60)
+print(f"DSM_URL:          {DSM_URL}")
+print(f"SERVICE_ROLE_KEY: {'*' * 20 if SERVICE_ROLE_KEY else '(NOT SET)'}")
+print(f"SUPABASE_URL:     {SUPABASE_URL}")
+print(f"VERIFY_SSL:       {VERIFY_SSL}")
+print(f"API_SERVER_PORT:  {API_SERVER_PORT}")
+print("=" * 60)
 
 # ============================================================================
 # Job Executor Class
