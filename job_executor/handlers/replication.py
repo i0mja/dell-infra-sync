@@ -4956,6 +4956,15 @@ chmod 600 ~/.ssh/authorized_keys
             if not protected_vm:
                 raise ValueError(f"Protected VM not found: {protected_vm_id}")
             
+            # Fetch source VM details for guest_id (Phase 10)
+            source_vm_id = protected_vm.get('vm_id')
+            source_vm_guest_id = 'otherGuest64'  # Default fallback
+            if source_vm_id:
+                source_vm = self._get_vcenter_vm(source_vm_id)
+                if source_vm and source_vm.get('guest_id'):
+                    source_vm_guest_id = source_vm.get('guest_id')
+                    self._add_console_log(job_id, f"Using source VM guest ID: {source_vm_guest_id}")
+            
             self.update_job_status(job_id, 'running', details={
                 **details,
                 'current_step': 'Fetching protection group',
@@ -5117,7 +5126,7 @@ chmod 600 ~/.ssh/authorized_keys
                 config_spec.name = shell_vm_name
                 config_spec.memoryMB = memory_mb
                 config_spec.numCPUs = cpu_count
-                config_spec.guestId = 'otherGuest64'
+                config_spec.guestId = source_vm_guest_id  # Phase 10: Use source VM's guest ID
                 config_spec.files = vmx_file
                 
                 # Build device changes list
@@ -5275,4 +5284,24 @@ chmod 600 ~/.ssh/authorized_keys
                 return vcenters[0] if vcenters else None
         except Exception as e:
             self.executor.log(f"Error fetching vCenter: {e}", "ERROR")
+        return None
+    
+    def _get_vcenter_vm(self, vm_id: str) -> Optional[Dict]:
+        """Fetch vCenter VM by ID (from vcenter_vms table)"""
+        try:
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/vcenter_vms",
+                params={'id': f'eq.{vm_id}'},
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            if response.ok:
+                vms = response.json()
+                return vms[0] if vms else None
+        except Exception as e:
+            self.executor.log(f"Error fetching vCenter VM: {e}", "ERROR")
         return None

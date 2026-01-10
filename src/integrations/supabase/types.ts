@@ -4988,6 +4988,7 @@ export type Database = {
           created_at: string | null
           disk_gb: number | null
           folder_path: string | null
+          guest_id: string | null
           guest_os: string | null
           hardware_version: string | null
           host_id: string | null
@@ -5014,6 +5015,7 @@ export type Database = {
           created_at?: string | null
           disk_gb?: number | null
           folder_path?: string | null
+          guest_id?: string | null
           guest_os?: string | null
           hardware_version?: string | null
           host_id?: string | null
@@ -5040,6 +5042,7 @@ export type Database = {
           created_at?: string | null
           disk_gb?: number | null
           folder_path?: string | null
+          guest_id?: string | null
           guest_os?: string | null
           hardware_version?: string | null
           host_id?: string | null

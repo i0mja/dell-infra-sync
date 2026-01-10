@@ -244,17 +244,20 @@ class VCenterInventoryReal:
             cpu_count = 0
             memory_mb = 0
             guest_os = ''
+            guest_id = ''  # Phase 10: vSphere guestId for VM creation
             uuid = ''
             
             if vm.config:
                 cpu_count = vm.config.hardware.numCPU if vm.config.hardware else 0
                 memory_mb = vm.config.hardware.memoryMB if vm.config.hardware else 0
                 guest_os = vm.config.guestFullName or ''
+                guest_id = vm.config.guestId or ''  # Phase 10: vSphere guestId for VM creation
                 uuid = vm.config.uuid or ''
             elif vm.summary and vm.summary.config:
                 cpu_count = vm.summary.config.numCpu or 0
                 memory_mb = vm.summary.config.memorySizeMB or 0
                 guest_os = vm.summary.config.guestFullName or ''
+                guest_id = vm.summary.config.guestId or ''  # Phase 10: Fallback guestId
             
             # Get primary datastore
             datastore = ''
@@ -295,6 +298,7 @@ class VCenterInventoryReal:
                 'uuid': uuid,
                 'power_state': power_state,
                 'guest_os': guest_os,
+                'guest_id': guest_id,  # Phase 10: vSphere guestId for VM creation
                 'cpu_count': cpu_count,
                 'memory_mb': memory_mb,
                 'disk_gb': disk_gb,
