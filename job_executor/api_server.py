@@ -126,6 +126,15 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._handle_idrac_jobs()
             elif self.path == '/api/preflight-check':
                 self._handle_preflight_check()
+            # PDU instant API endpoints
+            elif self.path == '/api/pdu-test-connection':
+                self._handle_pdu_test_connection()
+            elif self.path == '/api/pdu-discover':
+                self._handle_pdu_discover()
+            elif self.path == '/api/pdu-outlet-control':
+                self._handle_pdu_outlet_control()
+            elif self.path == '/api/pdu-sync-status':
+                self._handle_pdu_sync_status()
             else:
                 self._send_error(f'Unknown endpoint: {self.path}', 404)
         except Exception as e:
@@ -2172,6 +2181,169 @@ class APIHandler(BaseHTTPRequestHandler):
         
         return result
     
+    # =========================================================================
+    # PDU Instant API Handlers
+    # =========================================================================
+    
+    def _log_pdu_operation(self, pdu_id: str, operation_name: str, endpoint: str,
+                           request_body: Dict, status_code: int, response_time_ms: int,
+                           response_body: Dict, success: bool, error_message: str = None):
+        """Log a PDU API operation to the activity monitor"""
+        try:
+            self.executor.log_idrac_command(
+                server_id=None,
+                job_id=None,
+                task_id=None,
+                command_type=operation_name,
+                endpoint=endpoint,
+                full_url=f'http://localhost:{self.executor.api_server.port}{endpoint}',
+                request_headers=None,
+                request_body=request_body,
+                status_code=status_code,
+                response_time_ms=response_time_ms,
+                response_body=response_body,
+                success=success,
+                error_message=error_message,
+                operation_type='pdu_api',
+                source='instant_api'
+            )
+        except Exception as e:
+            self.executor.log(f"Failed to log PDU operation: {e}", "ERROR")
+    
+    def _handle_pdu_test_connection(self):
+        """Test PDU connection via instant API"""
+        start_time = datetime.now()
+        data = self._read_json_body()
+        pdu_id = data.get('pdu_id')
+        
+        if not pdu_id:
+            self._send_error('pdu_id is required', 400)
+            return
+        
+        self.executor.log(f"API: PDU test connection for {pdu_id}")
+        
+        try:
+            from job_executor.handlers.pdu import PDUHandler
+            handler = PDUHandler(self.executor)
+            result = handler._handle_test_connection(
+                {'job_type': 'pdu_test_connection'},
+                {'pdu_id': pdu_id}
+            )
+            
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            result['pdu_id'] = pdu_id
+            
+            self._log_pdu_operation(pdu_id, 'pdu_test_connection', '/api/pdu-test-connection',
+                                    data, 200 if result.get('success') else 500,
+                                    response_time_ms, result, result.get('success', False),
+                                    result.get('error'))
+            
+            self._send_json(result)
+        except Exception as e:
+            self.executor.log(f"PDU test connection failed: {e}", "ERROR")
+            self._send_error(str(e), 500)
+    
+    def _handle_pdu_discover(self):
+        """Discover PDU details via instant API"""
+        start_time = datetime.now()
+        data = self._read_json_body()
+        pdu_id = data.get('pdu_id')
+        
+        if not pdu_id:
+            self._send_error('pdu_id is required', 400)
+            return
+        
+        self.executor.log(f"API: PDU discover for {pdu_id}")
+        
+        try:
+            from job_executor.handlers.pdu import PDUHandler
+            handler = PDUHandler(self.executor)
+            result = handler._handle_discover(
+                {'job_type': 'pdu_discover'},
+                {'pdu_id': pdu_id}
+            )
+            
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            result['pdu_id'] = pdu_id
+            
+            self._log_pdu_operation(pdu_id, 'pdu_discover', '/api/pdu-discover',
+                                    data, 200 if result.get('success') else 500,
+                                    response_time_ms, result, result.get('success', False),
+                                    result.get('error'))
+            
+            self._send_json(result)
+        except Exception as e:
+            self.executor.log(f"PDU discover failed: {e}", "ERROR")
+            self._send_error(str(e), 500)
+    
+    def _handle_pdu_outlet_control(self):
+        """Control PDU outlet via instant API"""
+        start_time = datetime.now()
+        data = self._read_json_body()
+        pdu_id = data.get('pdu_id')
+        outlet_numbers = data.get('outlet_numbers', [])
+        action = data.get('action')
+        
+        if not pdu_id or not action:
+            self._send_error('pdu_id and action are required', 400)
+            return
+        
+        self.executor.log(f"API: PDU outlet control {action} for {pdu_id}")
+        
+        try:
+            from job_executor.handlers.pdu import PDUHandler
+            handler = PDUHandler(self.executor)
+            result = handler._handle_outlet_control(
+                {'job_type': 'pdu_outlet_control'},
+                {'pdu_id': pdu_id, 'outlet_numbers': outlet_numbers, 'action': action}
+            )
+            
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            result['pdu_id'] = pdu_id
+            
+            self._log_pdu_operation(pdu_id, f'pdu_outlet_{action}', '/api/pdu-outlet-control',
+                                    data, 200 if result.get('success') else 500,
+                                    response_time_ms, result, result.get('success', False),
+                                    result.get('error'))
+            
+            self._send_json(result)
+        except Exception as e:
+            self.executor.log(f"PDU outlet control failed: {e}", "ERROR")
+            self._send_error(str(e), 500)
+    
+    def _handle_pdu_sync_status(self):
+        """Sync PDU outlet status via instant API"""
+        start_time = datetime.now()
+        data = self._read_json_body()
+        pdu_id = data.get('pdu_id')
+        
+        if not pdu_id:
+            self._send_error('pdu_id is required', 400)
+            return
+        
+        self.executor.log(f"API: PDU sync status for {pdu_id}")
+        
+        try:
+            from job_executor.handlers.pdu import PDUHandler
+            handler = PDUHandler(self.executor)
+            result = handler._handle_sync_status(
+                {'job_type': 'pdu_sync_status'},
+                {'pdu_id': pdu_id}
+            )
+            
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            result['pdu_id'] = pdu_id
+            
+            self._log_pdu_operation(pdu_id, 'pdu_sync_status', '/api/pdu-sync-status',
+                                    data, 200 if result.get('success') else 500,
+                                    response_time_ms, result, result.get('success', False),
+                                    result.get('error'))
+            
+            self._send_json(result)
+        except Exception as e:
+            self.executor.log(f"PDU sync status failed: {e}", "ERROR")
+            self._send_error(str(e), 500)
+    
     def log_message(self, format, *args):
         """Override to suppress default request logging"""
         pass
@@ -2237,6 +2409,10 @@ class APIServer:
             self.executor.log(f"  POST /api/firmware-inventory")
             self.executor.log(f"  POST /api/idrac-jobs")
             self.executor.log(f"  POST /api/preflight-check")
+            self.executor.log(f"  POST /api/pdu-test-connection")
+            self.executor.log(f"  POST /api/pdu-discover")
+            self.executor.log(f"  POST /api/pdu-outlet-control")
+            self.executor.log(f"  POST /api/pdu-sync-status")
             
             if not self.ssl_enabled and config.API_SERVER_SSL_ENABLED:
                 self.executor.log(f"WARNING: SSL was requested but not enabled. Remote HTTPS access may not work.", "WARN")
