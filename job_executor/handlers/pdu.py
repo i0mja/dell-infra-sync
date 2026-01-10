@@ -222,6 +222,41 @@ class PDUHandler(BaseHandler):
         })
         return session
     
+    def _determine_pdu_url(self, ip_address: str) -> str:
+        """
+        Determine the correct URL scheme (HTTPS or HTTP) for a PDU.
+        Tries HTTPS first, falls back to HTTP if connection refused.
+        """
+        import socket
+        
+        # Try HTTPS first (port 443)
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)
+            result = sock.connect_ex((ip_address, 443))
+            sock.close()
+            if result == 0:
+                self.log(f"PDU {ip_address} is reachable on HTTPS (port 443)")
+                return f"https://{ip_address}"
+        except Exception as e:
+            self.log(f"HTTPS probe failed: {e}")
+        
+        # Try HTTP (port 80)
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)
+            result = sock.connect_ex((ip_address, 80))
+            sock.close()
+            if result == 0:
+                self.log(f"PDU {ip_address} is reachable on HTTP (port 80)")
+                return f"http://{ip_address}"
+        except Exception as e:
+            self.log(f"HTTP probe failed: {e}")
+        
+        # Default to HTTPS if neither works (will fail with meaningful error)
+        self.log(f"Neither HTTP nor HTTPS reachable, defaulting to HTTPS", "WARN")
+        return f"https://{ip_address}"
+    
     def _login(self, pdu_url: str, username: str, password: str) -> Tuple[bool, str]:
         """
         Login to NMC web interface and get session token.
@@ -519,7 +554,7 @@ class PDUHandler(BaseHandler):
         
         protocol = pdu.get('protocol', 'auto')
         ip_address = pdu['ip_address']
-        pdu_url = f"https://{ip_address}"
+        pdu_url = self._determine_pdu_url(ip_address)
         username = pdu.get('username', 'apc')
         password = pdu.get('password', 'apc')
         snmp_community = pdu.get('snmp_community', 'public')
@@ -608,7 +643,7 @@ class PDUHandler(BaseHandler):
         
         protocol = pdu.get('protocol', 'auto')
         ip_address = pdu['ip_address']
-        pdu_url = f"https://{ip_address}"
+        pdu_url = self._determine_pdu_url(ip_address)
         username = pdu.get('username', 'apc')
         password = pdu.get('password', 'apc')
         
@@ -785,7 +820,7 @@ class PDUHandler(BaseHandler):
         
         protocol = pdu.get('protocol', 'auto')
         ip_address = pdu['ip_address']
-        pdu_url = f"https://{ip_address}"
+        pdu_url = self._determine_pdu_url(ip_address)
         username = pdu.get('username', 'apc')
         password = pdu.get('password', 'apc')
         snmp_read_community = pdu.get('snmp_community', 'public')
@@ -960,7 +995,7 @@ class PDUHandler(BaseHandler):
         
         protocol = pdu.get('protocol', 'auto')
         ip_address = pdu['ip_address']
-        pdu_url = f"https://{ip_address}"
+        pdu_url = self._determine_pdu_url(ip_address)
         username = pdu.get('username', 'apc')
         password = pdu.get('password', 'apc')
         snmp_community = pdu.get('snmp_community', 'public')
