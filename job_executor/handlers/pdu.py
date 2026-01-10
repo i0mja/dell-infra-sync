@@ -476,6 +476,8 @@ class PDUHandler(BaseHandler):
     
     def _handle_test_connection(self, job: Dict[str, Any], details: Dict[str, Any]) -> Dict[str, Any]:
         """Test PDU connectivity and authentication"""
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY
+        
         pdu_id = details.get('pdu_id')
         
         if not pdu_id:
@@ -485,7 +487,17 @@ class PDUHandler(BaseHandler):
         
         pdu = self._get_pdu_credentials(pdu_id)
         if not pdu:
-            return {'success': False, 'error': 'PDU not found'}
+            # Include diagnostic info in the error response
+            return {
+                'success': False, 
+                'error': 'PDU not found',
+                'debug': {
+                    'pdu_id': pdu_id,
+                    'dsm_url': DSM_URL,
+                    'service_key_set': bool(SERVICE_ROLE_KEY),
+                    'service_key_length': len(SERVICE_ROLE_KEY) if SERVICE_ROLE_KEY else 0
+                }
+            }
         
         protocol = pdu.get('protocol', 'auto')
         ip_address = pdu['ip_address']
