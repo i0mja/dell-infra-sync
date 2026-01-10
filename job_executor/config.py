@@ -1,11 +1,13 @@
 import os
 
-# Dell Server Manager URL
-DSM_URL = os.getenv("DSM_URL", "http://127.0.0.1:54321")  # Defaults to local Supabase
+# Dell Server Manager URL / Supabase URL
+# Check SUPABASE_URL first (used by manage-job-executor.sh), then DSM_URL for backwards compatibility
+DSM_URL = os.getenv("SUPABASE_URL") or os.getenv("DSM_URL", "http://127.0.0.1:54321")
 
 # Supabase Service Role Key (for update-job endpoint)
 # This is a SECRET - do not commit to version control!
-SERVICE_ROLE_KEY = os.getenv("SERVICE_ROLE_KEY", "")  # Set via env var
+# Check SUPABASE_SERVICE_ROLE_KEY first (used by manage-job-executor.sh), then SERVICE_ROLE_KEY
+SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SERVICE_ROLE_KEY", "")
 
 # API Server Configuration (for instant operations)
 API_SERVER_PORT = int(os.getenv("API_SERVER_PORT", "8081"))
