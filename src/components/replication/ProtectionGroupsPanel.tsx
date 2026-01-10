@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useFailoverEventSubscription } from "@/hooks/useFailoverEventSubscription";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -157,6 +158,9 @@ export function ProtectionGroupsPanel() {
 
   const selectedGroup = groups.find(g => g.id === selectedGroupId);
   
+  // Subscribe to realtime failover event changes for immediate UI updates
+  useFailoverEventSubscription(selectedGroupId);
+  
   // Get target info for selected group
   const selectedTarget = selectedGroup?.target_id 
     ? targets.find(t => t.id === selectedGroup.target_id) 
@@ -202,7 +206,7 @@ export function ProtectionGroupsPanel() {
       return data;
     },
     enabled: !!selectedGroupId,
-    refetchInterval: 5000,
+    refetchInterval: 30000, // Reduced from 5s - realtime handles immediate updates
   });
 
   // Check if test is overdue (also returns true if never tested and reminder is set)
