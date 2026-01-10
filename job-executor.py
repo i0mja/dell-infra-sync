@@ -110,7 +110,8 @@ from job_executor.handlers import (
     IDMHandler, ConsoleHandler, DatastoreHandler, MediaUploadHandler,
     VirtualMediaHandler, PowerHandler, BootHandler, DiscoveryHandler,
     FirmwareHandler, ClusterHandler, ESXiHandler, VCenterHandlers, NetworkHandler,
-    ZfsTargetHandler, ReplicationHandler, SLAMonitoringHandler, FailoverHandler
+    ZfsTargetHandler, ReplicationHandler, SLAMonitoringHandler, FailoverHandler,
+    PDUHandler
 )
 from job_executor.handlers.template_copy import TemplateCopyHandler
 from job_executor.handlers.ssh_key_handlers import SshKeyHandler
@@ -201,6 +202,7 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
         self.template_handler = TemplateHandler(self)
         self.sla_monitoring_handler = SLAMonitoringHandler(self)
         self.failover_handler = FailoverHandler(self)
+        self.pdu_handler = PDUHandler(self)
     
     def _generate_executor_id(self) -> str:
         """Generate a stable executor ID based on hostname for heartbeat upserts"""
@@ -1050,6 +1052,11 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
             'scheduled_vcenter_sync': self.vcenter_handler.execute_scheduled_vcenter_sync,
             # Firmware inventory scan (update availability check)
             'firmware_inventory_scan': self.firmware_handler.execute_firmware_inventory_scan,
+            # PDU Management handlers
+            'pdu_test_connection': self.pdu_handler.handle,
+            'pdu_discover': self.pdu_handler.handle,
+            'pdu_outlet_control': self.pdu_handler.handle,
+            'pdu_sync_status': self.pdu_handler.handle,
         }
         
         handler = handler_map.get(job_type)

@@ -18,6 +18,7 @@ from .replication import ReplicationHandler
 from .sla_monitoring import SLAMonitoringHandler
 from .failover import FailoverHandler
 from .agent_target import AgentTargetHandler
+from .pdu import PDUHandler
 
 __all__ = [
     'IDMHandler',
@@ -37,5 +38,6 @@ __all__ = [
     'ReplicationHandler',
     'SLAMonitoringHandler',
     'FailoverHandler',
-    'AgentTargetHandler'
+    'AgentTargetHandler',
+    'PDUHandler'
 ]
