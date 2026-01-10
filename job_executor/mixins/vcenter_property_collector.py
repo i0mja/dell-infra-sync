@@ -31,11 +31,13 @@ def _get_vm_properties() -> List[str]:
         "config.template",                    # Phase 7: Is VM a template?
         "config.hardware.device",             # Phase 8: NICs for network relationships
         "config.version",                     # Phase 9: Hardware version (vmx-XX)
+        "config.guestId",                     # Phase 10: Guest ID for VM creation (e.g., rhel7_64Guest)
         "runtime.powerState",
         "summary.config.vmPathName",
         "summary.config.numCpu",              # Phase 7: CPU count
         "summary.config.memorySizeMB",        # Phase 7: Memory in MB
         "summary.config.guestFullName",       # Phase 7: Guest OS name
+        "summary.config.guestId",             # Phase 10: Fallback guest ID
         "summary.runtime.host",
         "summary.runtime.connectionState",
         "guest.ipAddress",                    # Phase 7: Primary IP
@@ -1153,6 +1155,8 @@ def _vm_to_dict(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
     
     # Phase 7: Extract guest info
     guest_os = props.get("summary.config.guestFullName", "") or ""
+    # Phase 10: Extract guestId for VM creation (prefer config.guestId, fallback to summary)
+    guest_id = props.get("config.guestId", "") or props.get("summary.config.guestId", "") or ""
     cpu_count = props.get("summary.config.numCpu", 0) or 0
     memory_mb = props.get("summary.config.memorySizeMB", 0) or 0
     ip_address = props.get("guest.ipAddress", "") or ""
@@ -1370,6 +1374,7 @@ def _vm_to_dict(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
         
         # Phase 7: Guest info
         "guest_os": guest_os,
+        "guest_id": guest_id,                               # Phase 10: vSphere guestId for VM creation
         "ip_address": ip_address,
         "is_template": is_template,
         

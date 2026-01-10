@@ -907,6 +907,7 @@ class VCenterDbUpsertMixin:
                 'memory_mb': v.get('memory_mb', 0),
                 'disk_gb': v.get('disk_gb', 0),
                 'guest_os': v.get('guest_os', ''),
+                'guest_id': v.get('guest_id', ''),  # Phase 10: vSphere guestId for VM creation
                 'ip_address': v.get('ip_address', ''),
                 'is_template': v.get('is_template', False),
                 'tools_status': v.get('tools_status', ''),

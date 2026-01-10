@@ -1485,7 +1485,8 @@ class ZFSReplicationReal:
     
     def create_dr_shell_vm(self, dr_vcenter_id: str, vm_name: str,
                            target_datastore: str, cpu_count: int,
-                           memory_mb: int, disk_paths: List[str]) -> Dict:
+                           memory_mb: int, disk_paths: List[str],
+                           guest_id: str = 'otherGuest64') -> Dict:
         """
         Create a shell VM at DR site with replicated disks attached.
         
@@ -1499,11 +1500,12 @@ class ZFSReplicationReal:
             cpu_count: Number of CPUs
             memory_mb: Memory in MB
             disk_paths: List of VMDK paths to attach
+            guest_id: vSphere guestId (e.g., 'rhel7_64Guest') - defaults to 'otherGuest64'
             
         Returns:
             Dict with VM creation result
         """
-        logger.info(f"Creating DR shell VM: {vm_name}")
+        logger.info(f"Creating DR shell VM: {vm_name} with guest_id: {guest_id}")
         start_time = time.time()
         
         if not PYVMOMI_AVAILABLE:
@@ -1615,7 +1617,7 @@ class ZFSReplicationReal:
                 name=vm_name,
                 numCPUs=cpu_count,
                 memoryMB=memory_mb,
-                guestId='otherGuest64',
+                guestId=guest_id,  # Phase 10: Use source VM's guest ID
                 files=vim.vm.FileInfo(vmPathName=vm_path)
             )
             
