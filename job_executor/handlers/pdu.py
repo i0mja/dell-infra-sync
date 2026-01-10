@@ -137,6 +137,67 @@ class PDUHandler(BaseHandler):
         message_lower = message.lower()
         return any(pattern in message_lower for pattern in self.SESSION_CONFLICT_PATTERNS)
     
+    def _clear_pdu_sessions_via_telnet(self, ip_address: str, username: str, password: str) -> Tuple[bool, str]:
+        """
+        Clear all active sessions on APC PDU via Telnet.
+        Uses 'logoff -a' command to terminate all sessions.
+        
+        Returns:
+            Tuple of (success, message)
+        """
+        import telnetlib
+        
+        try:
+            self.log(f"Attempting to clear sessions via Telnet on {ip_address}")
+            
+            # Connect to PDU via Telnet (default port 23)
+            tn = telnetlib.Telnet(ip_address, port=23, timeout=10)
+            
+            # Wait for login prompt and send username
+            tn.read_until(b"User Name :", timeout=5)
+            tn.write(username.encode('ascii') + b"\r\n")
+            
+            # Wait for password prompt and send password
+            tn.read_until(b"Password  :", timeout=5)
+            tn.write(password.encode('ascii') + b"\r\n")
+            
+            # Wait for command prompt (typically "apc>" or ">")
+            # Read with timeout and check for successful login
+            response = tn.read_until(b">", timeout=5)
+            response_text = response.decode('ascii', errors='ignore').lower()
+            
+            if 'invalid' in response_text or 'failed' in response_text or 'denied' in response_text:
+                tn.close()
+                return False, "Telnet authentication failed"
+            
+            # Execute logoff command to clear all sessions
+            self.log("Executing 'logoff -a' to clear all sessions")
+            tn.write(b"logoff -a\r\n")
+            
+            # Read response and wait for prompt
+            import time
+            time.sleep(1)  # Give command time to execute
+            response = tn.read_very_eager()
+            self.log(f"Logoff response: {response.decode('ascii', errors='ignore')}")
+            
+            # Exit telnet session cleanly
+            tn.write(b"exit\r\n")
+            time.sleep(0.5)
+            tn.close()
+            
+            self.log("Successfully cleared PDU sessions via Telnet")
+            return True, "Sessions cleared successfully via Telnet"
+            
+        except ConnectionRefusedError:
+            self.log("Telnet connection refused - port 23 may be disabled", "WARN")
+            return False, "Telnet connection refused (port 23 disabled)"
+        except TimeoutError:
+            self.log("Telnet connection timed out", "WARN")
+            return False, "Telnet connection timed out"
+        except Exception as e:
+            self.log(f"Telnet session clear failed: {e}", "WARN")
+            return False, f"Telnet failed: {e}"
+    
     # =========================================================================
     # Session Management
     # =========================================================================
@@ -636,6 +697,19 @@ class PDUHandler(BaseHandler):
         try:
             success, message = self._login(pdu_url, username, password)
             
+            # If session conflict detected, try Telnet clear and retry
+            if not success and self._is_session_conflict(message):
+                self.log("Session conflict detected, attempting Telnet session clear", "WARN")
+                clear_success, clear_msg = self._clear_pdu_sessions_via_telnet(ip_address, username, password)
+                
+                if clear_success:
+                    self.log("Telnet clear successful, retrying NMC login")
+                    import time
+                    time.sleep(2)  # Give PDU time to release the session
+                    success, message = self._login(pdu_url, username, password)
+                else:
+                    self.log(f"Telnet clear failed: {clear_msg}", "WARN")
+            
             if success:
                 self._update_pdu_status(pdu_id, 'online', last_seen=True)
                 self._logout()
@@ -647,9 +721,9 @@ class PDUHandler(BaseHandler):
                     'protocol_used': 'nmc'
                 }
             
-            # If auto mode and session conflict, try SNMP fallback
+            # If auto mode and still session conflict after Telnet attempt, try SNMP fallback
             if protocol == 'auto' and self._is_session_conflict(message):
-                self.log("NMC session blocked, trying SNMP fallback", "WARN")
+                self.log("NMC session still blocked after Telnet clear, trying SNMP fallback", "WARN")
                 snmp_success, snmp_message = self._snmp_test_connection(ip_address, snmp_community)
                 
                 if snmp_success:
@@ -737,10 +811,23 @@ class PDUHandler(BaseHandler):
         try:
             success, message = self._login(pdu_url, username, password)
             
+            # If session conflict detected, try Telnet clear and retry
+            if not success and self._is_session_conflict(message):
+                self.log("Session conflict detected, attempting Telnet session clear", "WARN")
+                clear_success, clear_msg = self._clear_pdu_sessions_via_telnet(ip_address, username, password)
+                
+                if clear_success:
+                    self.log("Telnet clear successful, retrying NMC login")
+                    import time
+                    time.sleep(2)
+                    success, message = self._login(pdu_url, username, password)
+                else:
+                    self.log(f"Telnet clear failed: {clear_msg}", "WARN")
+            
             if not success:
                 # Try SNMP fallback in auto mode
                 if protocol == 'auto' and self._is_session_conflict(message):
-                    self.log("NMC blocked, trying SNMP for discovery", "WARN")
+                    self.log("NMC still blocked, trying SNMP for discovery", "WARN")
                     snmp_community = pdu.get('snmp_community', 'public')
                     outlet_states = self._snmp_get_all_outlet_states(ip_address, snmp_community)
                     
@@ -947,10 +1034,23 @@ class PDUHandler(BaseHandler):
         try:
             success, message = self._login(pdu_url, username, password)
             
+            # If session conflict detected, try Telnet clear and retry
+            if not success and self._is_session_conflict(message):
+                self.log("Session conflict detected, attempting Telnet session clear", "WARN")
+                clear_success, clear_msg = self._clear_pdu_sessions_via_telnet(ip_address, username, password)
+                
+                if clear_success:
+                    self.log("Telnet clear successful, retrying NMC login")
+                    import time
+                    time.sleep(2)
+                    success, message = self._login(pdu_url, username, password)
+                else:
+                    self.log(f"Telnet clear failed: {clear_msg}", "WARN")
+            
             if not success:
                 # Try SNMP fallback in auto mode for control operations
                 if protocol == 'auto' and self._is_session_conflict(message):
-                    self.log("NMC session blocked, using SNMP for outlet control", "WARN")
+                    self.log("NMC still blocked, using SNMP for outlet control", "WARN")
                     
                     if action == 'status':
                         outlet_states = self._snmp_get_all_outlet_states(ip_address, snmp_read_community)
@@ -1097,10 +1197,23 @@ class PDUHandler(BaseHandler):
         try:
             success, message = self._login(pdu_url, username, password)
             
+            # If session conflict detected, try Telnet clear and retry
+            if not success and self._is_session_conflict(message):
+                self.log("Session conflict detected, attempting Telnet session clear", "WARN")
+                clear_success, clear_msg = self._clear_pdu_sessions_via_telnet(ip_address, username, password)
+                
+                if clear_success:
+                    self.log("Telnet clear successful, retrying NMC login")
+                    import time
+                    time.sleep(2)
+                    success, message = self._login(pdu_url, username, password)
+                else:
+                    self.log(f"Telnet clear failed: {clear_msg}", "WARN")
+            
             if not success:
                 # Try SNMP fallback in auto mode
                 if protocol == 'auto' and self._is_session_conflict(message):
-                    self.log("NMC blocked, using SNMP for sync", "WARN")
+                    self.log("NMC still blocked, using SNMP for sync", "WARN")
                     outlet_states = self._snmp_get_all_outlet_states(ip_address, snmp_community)
                     
                     if outlet_states:
