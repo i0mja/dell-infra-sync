@@ -4863,6 +4863,83 @@ chmod 600 ~/.ssh/authorized_keys
         
         return True
 
+    def _unregister_conflicting_vms(self, content, datastore, source_vm_name: str, dr_shell_name: str, job_id: str) -> bool:
+        """
+        Find and unregister any VMs that reference files in the target folder.
+        This prevents file locking conflicts during test failover when the replicated
+        source VM's .vmx file may be registered and holding locks on VMDKs.
+        
+        Returns False if an active (powered-on) DR Shell exists, True otherwise.
+        """
+        from pyVmomi import vim
+        
+        folder_pattern = f"[{datastore.name}] {source_vm_name}/"
+        self._add_console_log(job_id, f"Checking for conflicting VMs in: {folder_pattern}")
+        
+        container = content.viewManager.CreateContainerView(
+            content.rootFolder, [vim.VirtualMachine], True
+        )
+        
+        conflicting_vms = []
+        try:
+            for vm in container.view:
+                try:
+                    # Check VM's configuration file path
+                    if vm.config and vm.config.files:
+                        vm_path = vm.config.files.vmPathName or ""
+                        if folder_pattern in vm_path:
+                            conflicting_vms.append(vm)
+                            continue
+                    
+                    # Check all disk backing file paths
+                    if vm.config and vm.config.hardware:
+                        for device in vm.config.hardware.device:
+                            if isinstance(device, vim.vm.device.VirtualDisk):
+                                backing = device.backing
+                                if hasattr(backing, 'fileName') and backing.fileName:
+                                    if folder_pattern in backing.fileName:
+                                        conflicting_vms.append(vm)
+                                        break
+                except Exception:
+                    continue  # Skip VMs we can't inspect
+        finally:
+            container.Destroy()
+        
+        if not conflicting_vms:
+            self._add_console_log(job_id, "No conflicting VMs found")
+            return True
+        
+        self._add_console_log(job_id, f"Found {len(conflicting_vms)} conflicting VM(s)")
+        
+        for vm in conflicting_vms:
+            vm_name = vm.name
+            power_state = vm.runtime.powerState
+            is_dr_shell = vm_name == dr_shell_name or vm_name.endswith('-DR')
+            
+            self._add_console_log(job_id, f"Conflicting VM: {vm_name} (state: {power_state}, is_dr_shell: {is_dr_shell})")
+            
+            if power_state == vim.VirtualMachine.PowerState.poweredOn:
+                if is_dr_shell:
+                    # Active test in progress - cannot proceed
+                    self._add_console_log(job_id, f"ERROR: Active DR Shell VM {vm_name} is powered on - test failover in progress", "ERROR")
+                    return False
+                else:
+                    # Source VM copy is powered on at DR site - unusual but warn and continue
+                    self._add_console_log(job_id, f"WARNING: Source VM {vm_name} is powered on at DR site - cannot unregister", "WARN")
+                    continue
+            
+            # VM is powered off - safe to unregister to release file locks
+            try:
+                vm.UnregisterVM()
+                if is_dr_shell:
+                    self._add_console_log(job_id, f"Unregistered existing DR Shell VM: {vm_name}")
+                else:
+                    self._add_console_log(job_id, f"Unregistered source VM copy: {vm_name} to release file locks")
+            except Exception as e:
+                self._add_console_log(job_id, f"Failed to unregister {vm_name}: {e}", "WARN")
+        
+        return True
+
     def _discover_replicated_vmdks(self, content, datastore, source_vm_name: str, job_id: str) -> list:
         """
         Discover replicated VMDK files in the VM folder on the target datastore.
@@ -5130,8 +5207,14 @@ chmod 600 ~/.ssh/authorized_keys
                     
                     raise ValueError(f"Datastore not found: {datastore_name}. Available on this vCenter: [{available_list}]")
                 
-                # Step 6b: Discover replicated VMDKs
+                # Step 6b: Check for and unregister conflicting VMs to release file locks
                 source_vm_name = protected_vm.get('vm_name')
+                can_proceed = self._unregister_conflicting_vms(content, datastore, source_vm_name, shell_vm_name, job_id)
+                
+                if not can_proceed:
+                    raise ValueError(f"Cannot create DR Shell: Active test failover in progress for {source_vm_name}")
+                
+                # Step 6c: Discover replicated VMDKs
                 self._add_console_log(job_id, f"Discovering replicated VMDKs for: {source_vm_name}")
                 disk_paths = self._discover_replicated_vmdks(content, datastore, source_vm_name, job_id)
                 
