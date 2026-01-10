@@ -145,33 +145,52 @@ class PDUHandler(BaseHandler):
         """Fetch PDU credentials from database using REST API"""
         from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
         
+        # Debug logging
+        self.log(f"Fetching PDU {pdu_id} from {DSM_URL}/rest/v1/pdus")
+        
+        if not SERVICE_ROLE_KEY:
+            self.log("ERROR: SERVICE_ROLE_KEY is not set!", "ERROR")
+            return None
+        
         try:
+            url = f"{DSM_URL}/rest/v1/pdus"
+            params = {'id': f'eq.{pdu_id}', 'select': '*'}
+            
+            self.log(f"Making request to: {url} with params: {params}")
+            
             response = requests.get(
-                f"{DSM_URL}/rest/v1/pdus",
+                url,
                 headers={
                     'apikey': SERVICE_ROLE_KEY,
                     'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
                 },
-                params={'id': f'eq.{pdu_id}', 'select': '*'},
+                params=params,
                 verify=VERIFY_SSL,
                 timeout=10
             )
             
+            self.log(f"Response status: {response.status_code}")
+            
             if response.status_code == 200:
                 data = response.json()
+                self.log(f"PDU query returned {len(data)} records")
                 if data and len(data) > 0:
                     pdu = data[0]
+                    self.log(f"Found PDU: {pdu.get('name')} at {pdu.get('ip_address')}")
                     # Decrypt password if needed
                     if pdu.get('password_encrypted'):
                         pdu['password'] = self.executor.decrypt_value(pdu['password_encrypted'])
                     else:
                         pdu['password'] = 'apc'  # Default APC password
                     return pdu
+            else:
+                self.log(f"PDU query failed: {response.status_code} - {response.text}", "ERROR")
             
-            self.log(f"PDU query returned status {response.status_code}", "WARN")
             return None
         except Exception as e:
             self.log(f"Failed to fetch PDU credentials: {e}", "ERROR")
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
             return None
     
     def _create_session(self) -> requests.Session:
