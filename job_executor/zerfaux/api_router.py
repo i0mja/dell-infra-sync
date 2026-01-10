@@ -958,8 +958,37 @@ class ZerfauxAPIRouter:
                             disk_paths.append(full_path)
                             logger.info(f"Valid sparse disk: {filename}")
                     
+                    # Handle snapshot-only scenario - find latest delta to attach
                     if not disk_paths and snapshot_disks:
-                        logger.warning(f"No base disks found, only {len(snapshot_disks)} snapshot descriptors. Source VM needs consolidation.")
+                        logger.warning(f"No base disks found, {len(snapshot_disks)} snapshot descriptors. Attempting delta fallback.")
+                        
+                        # Find the highest-numbered snapshot descriptor
+                        snapshot_numbers = {}
+                        for filename in snapshot_disks.keys():
+                            match = re.search(r'-(\d{6})\.vmdk$', filename)
+                            if match:
+                                num = int(match.group(1))
+                                snapshot_numbers[num] = filename
+                        
+                        if snapshot_numbers:
+                            latest_num = max(snapshot_numbers.keys())
+                            latest_snapshot = snapshot_numbers[latest_num]
+                            base_name = latest_snapshot.replace('.vmdk', '')
+                            expected_delta = f"{base_name}-delta.vmdk"
+                            
+                            logger.info(f"Latest snapshot: {latest_snapshot} (#{latest_num})")
+                            
+                            if expected_delta in all_vmdks:
+                                delta_path, delta_size = all_vmdks[expected_delta]
+                                if delta_size > 1024:
+                                    disk_paths.append(delta_path)
+                                    logger.info(f"Using snapshot delta: {expected_delta} ({delta_size / (1024*1024):.1f} MB)")
+                            else:
+                                # Fall back to descriptor itself
+                                desc_path, desc_size = snapshot_disks[latest_snapshot]
+                                if desc_size > 1024:
+                                    disk_paths.append(desc_path)
+                                    logger.warning(f"No delta file, using descriptor: {latest_snapshot}")
                     
                     return disk_paths
                     

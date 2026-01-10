@@ -5057,14 +5057,52 @@ chmod 600 ~/.ssh/authorized_keys
                     else:
                         self._add_console_log(job_id, f"WARNING: Skipping {filename} - file too small ({file_size} bytes)", "WARN")
                 
-                # Handle snapshot-only scenario
+                # Handle snapshot-only scenario - find latest delta to attach
                 if not disk_paths and snapshot_disks:
                     self._add_console_log(job_id, 
-                        f"WARNING: No base disks found, only {len(snapshot_disks)} snapshot descriptors. "
-                        "Source VM should be consolidated before replication. Snapshot chains cannot be attached.", "WARN")
-                    # Do NOT attach snapshots - they won't work without the full chain and correct internal paths
+                        f"No base disks found, {len(snapshot_disks)} snapshot descriptors present. "
+                        "Attempting to use latest snapshot delta file.", "WARN")
+                    
+                    # Find the highest-numbered snapshot descriptor
+                    snapshot_numbers = {}
+                    for filename in snapshot_disks.keys():
+                        match = re.search(r'-(\d{6})\.vmdk$', filename)
+                        if match:
+                            num = int(match.group(1))
+                            snapshot_numbers[num] = filename
+                    
+                    if snapshot_numbers:
+                        latest_num = max(snapshot_numbers.keys())
+                        latest_snapshot = snapshot_numbers[latest_num]
+                        base_name = latest_snapshot.replace('.vmdk', '')
+                        expected_delta = f"{base_name}-delta.vmdk"
+                        
+                        self._add_console_log(job_id, f"Latest snapshot: {latest_snapshot} (#{latest_num})")
+                        
+                        # Check if delta file exists and has data
+                        if expected_delta in all_vmdks:
+                            delta_path, delta_size = all_vmdks[expected_delta]
+                            if delta_size > 1024:  # More than 1KB
+                                disk_paths.append(delta_path)
+                                self._add_console_log(job_id, 
+                                    f"Using snapshot delta file: {expected_delta} ({delta_size / (1024*1024):.1f} MB)")
+                            else:
+                                self._add_console_log(job_id, 
+                                    f"WARNING: Delta file {expected_delta} is too small ({delta_size} bytes)", "WARN")
+                        else:
+                            # Fall back to attaching the descriptor itself (may work for thin disks)
+                            desc_path, desc_size = snapshot_disks[latest_snapshot]
+                            if desc_size > 1024:
+                                disk_paths.append(desc_path)
+                                self._add_console_log(job_id, 
+                                    f"WARNING: No delta file found, using descriptor: {latest_snapshot}", "WARN")
+                            else:
+                                self._add_console_log(job_id, 
+                                    f"ERROR: Cannot attach snapshot {latest_snapshot} - no usable delta file found", "ERROR")
+                    else:
+                        self._add_console_log(job_id, "ERROR: Could not parse snapshot numbers from descriptors", "ERROR")
                 
-                self._add_console_log(job_id, f"Total valid base VMDKs to attach: {len(disk_paths)}")
+                self._add_console_log(job_id, f"Total valid VMDKs to attach: {len(disk_paths)}")
         
         except Exception as e:
             self._add_console_log(job_id, f"VMDK discovery error: {e}", "ERROR")
