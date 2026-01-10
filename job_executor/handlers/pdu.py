@@ -142,17 +142,33 @@ class PDUHandler(BaseHandler):
     # =========================================================================
     
     def _get_pdu_credentials(self, pdu_id: str) -> Optional[Dict[str, Any]]:
-        """Fetch PDU credentials from database"""
+        """Fetch PDU credentials from database using REST API"""
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        
         try:
-            result = self.executor.supabase.table('pdus').select('*').eq('id', pdu_id).single().execute()
-            if result.data:
-                pdu = result.data
-                # Decrypt password if needed
-                if pdu.get('password_encrypted'):
-                    pdu['password'] = self.executor.decrypt_value(pdu['password_encrypted'])
-                else:
-                    pdu['password'] = 'apc'  # Default APC password
-                return pdu
+            response = requests.get(
+                f"{DSM_URL}/rest/v1/pdus",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}'
+                },
+                params={'id': f'eq.{pdu_id}', 'select': '*'},
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data and len(data) > 0:
+                    pdu = data[0]
+                    # Decrypt password if needed
+                    if pdu.get('password_encrypted'):
+                        pdu['password'] = self.executor.decrypt_value(pdu['password_encrypted'])
+                    else:
+                        pdu['password'] = 'apc'  # Default APC password
+                    return pdu
+            
+            self.log(f"PDU query returned status {response.status_code}", "WARN")
             return None
         except Exception as e:
             self.log(f"Failed to fetch PDU credentials: {e}", "ERROR")
@@ -270,13 +286,30 @@ class PDUHandler(BaseHandler):
         self._session = None
     
     def _update_pdu_status(self, pdu_id: str, status: str, last_seen: bool = False) -> None:
-        """Update PDU connection status in database"""
+        """Update PDU connection status in database using REST API"""
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        
         try:
             update_data = {'connection_status': status}
             if last_seen:
                 update_data['last_seen'] = 'now()'
             
-            self.executor.supabase.table('pdus').update(update_data).eq('id', pdu_id).execute()
+            response = requests.patch(
+                f"{DSM_URL}/rest/v1/pdus",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=minimal'
+                },
+                params={'id': f'eq.{pdu_id}'},
+                json=update_data,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.status_code not in [200, 204]:
+                self.log(f"PDU status update returned {response.status_code}", "WARN")
         except Exception as e:
             self.log(f"Failed to update PDU status: {e}", "WARN")
     
@@ -634,7 +667,9 @@ class PDUHandler(BaseHandler):
                     # Default to 8 outlets if we can't detect
                     discovered['total_outlets'] = 8
             
-            # Update PDU record with discovered info
+            # Update PDU record with discovered info using REST API
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            
             update_data = {'last_sync': 'now()'}
             if discovered['model']:
                 update_data['model'] = discovered['model']
@@ -643,7 +678,19 @@ class PDUHandler(BaseHandler):
             if discovered['total_outlets']:
                 update_data['total_outlets'] = discovered['total_outlets']
             
-            self.executor.supabase.table('pdus').update(update_data).eq('id', pdu_id).execute()
+            requests.patch(
+                f"{DSM_URL}/rest/v1/pdus",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=minimal'
+                },
+                params={'id': f'eq.{pdu_id}'},
+                json=update_data,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
             
             # Create outlet records if they don't exist
             if discovered['total_outlets']:
@@ -877,9 +924,21 @@ class PDUHandler(BaseHandler):
                 for outlet_num, state in outlet_states.items():
                     self._update_outlet_state(pdu_id, outlet_num, state)
                 
-                self.executor.supabase.table('pdus').update({
-                    'last_sync': 'now()'
-                }).eq('id', pdu_id).execute()
+                # Update last_sync using REST API
+                from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+                requests.patch(
+                    f"{DSM_URL}/rest/v1/pdus",
+                    headers={
+                        'apikey': SERVICE_ROLE_KEY,
+                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal'
+                    },
+                    params={'id': f'eq.{pdu_id}'},
+                    json={'last_sync': 'now()'},
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
                 
                 self._update_pdu_status(pdu_id, 'online', last_seen=True)
                 
@@ -906,9 +965,21 @@ class PDUHandler(BaseHandler):
                         for outlet_num, state in outlet_states.items():
                             self._update_outlet_state(pdu_id, outlet_num, state)
                         
-                        self.executor.supabase.table('pdus').update({
-                            'last_sync': 'now()'
-                        }).eq('id', pdu_id).execute()
+                        # Update last_sync using REST API
+                        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+                        requests.patch(
+                            f"{DSM_URL}/rest/v1/pdus",
+                            headers={
+                                'apikey': SERVICE_ROLE_KEY,
+                                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                'Content-Type': 'application/json',
+                                'Prefer': 'return=minimal'
+                            },
+                            params={'id': f'eq.{pdu_id}'},
+                            json={'last_sync': 'now()'},
+                            verify=VERIFY_SSL,
+                            timeout=10
+                        )
                         
                         self._update_pdu_status(pdu_id, 'online', last_seen=True)
                         
@@ -932,10 +1003,21 @@ class PDUHandler(BaseHandler):
             for outlet_num, state in outlet_states.items():
                 self._update_outlet_state(pdu_id, outlet_num, state)
             
-            # Update PDU last_sync
-            self.executor.supabase.table('pdus').update({
-                'last_sync': 'now()'
-            }).eq('id', pdu_id).execute()
+            # Update PDU last_sync using REST API
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            requests.patch(
+                f"{DSM_URL}/rest/v1/pdus",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=minimal'
+                },
+                params={'id': f'eq.{pdu_id}'},
+                json={'last_sync': 'now()'},
+                verify=VERIFY_SSL,
+                timeout=10
+            )
             
             self._logout()
             
@@ -1100,28 +1182,65 @@ class PDUHandler(BaseHandler):
     # =========================================================================
     
     def _ensure_outlet_records(self, pdu_id: str, outlet_count: int) -> None:
-        """Ensure outlet records exist in database for all outlets"""
+        """Ensure outlet records exist in database for all outlets using REST API"""
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        
         try:
             for outlet_num in range(1, outlet_count + 1):
-                # Upsert outlet record
-                self.executor.supabase.table('pdu_outlets').upsert({
-                    'pdu_id': pdu_id,
-                    'outlet_number': outlet_num,
-                    'outlet_name': f'Outlet {outlet_num}',
-                    'outlet_state': 'unknown'
-                }, on_conflict='pdu_id,outlet_number').execute()
+                # Upsert outlet record using REST API
+                response = requests.post(
+                    f"{DSM_URL}/rest/v1/pdu_outlets",
+                    headers={
+                        'apikey': SERVICE_ROLE_KEY,
+                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                        'Content-Type': 'application/json',
+                        'Prefer': 'resolution=merge-duplicates,return=minimal'
+                    },
+                    params={'on_conflict': 'pdu_id,outlet_number'},
+                    json={
+                        'pdu_id': pdu_id,
+                        'outlet_number': outlet_num,
+                        'outlet_name': f'Outlet {outlet_num}',
+                        'outlet_state': 'unknown'
+                    },
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
+                
+                if response.status_code not in [200, 201, 204]:
+                    self.log(f"Outlet {outlet_num} upsert returned {response.status_code}", "WARN")
         except Exception as e:
             self.log(f"Error creating outlet records: {e}", "WARN")
     
     def _update_outlet_state(self, pdu_id: str, outlet_number: int, state: str) -> None:
-        """Update single outlet state in database"""
+        """Update single outlet state in database using REST API"""
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        
         try:
-            self.executor.supabase.table('pdu_outlets').upsert({
+            outlet_data = {
                 'pdu_id': pdu_id,
                 'outlet_number': outlet_number,
                 'outlet_state': state,
-                'last_updated': 'now()',
-                'last_state_change': 'now()' if state != 'unknown' else None
-            }, on_conflict='pdu_id,outlet_number').execute()
+                'last_updated': 'now()'
+            }
+            if state != 'unknown':
+                outlet_data['last_state_change'] = 'now()'
+            
+            response = requests.post(
+                f"{DSM_URL}/rest/v1/pdu_outlets",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                    'Prefer': 'resolution=merge-duplicates,return=minimal'
+                },
+                params={'on_conflict': 'pdu_id,outlet_number'},
+                json=outlet_data,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            if response.status_code not in [200, 201, 204]:
+                self.log(f"Outlet state update returned {response.status_code}", "WARN")
         except Exception as e:
             self.log(f"Error updating outlet state: {e}", "WARN")
