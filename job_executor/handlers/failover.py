@@ -2096,7 +2096,7 @@ class FailoverHandler:
                     'schedule_at': cleanup_at.isoformat(),
                     'created_by': created_by,
                     'details': {
-                        'failover_event_id': event_id,
+                        'event_id': event_id,  # Must match what execute_rollback_failover expects
                         'protection_group_id': protection_group_id,
                         'triggered_by': 'test_auto_cleanup',
                         'auto_scheduled': True
