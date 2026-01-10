@@ -253,7 +253,13 @@ class PDUHandler(BaseHandler):
                     self.log(f"Found PDU: {pdu.get('name')} at {pdu.get('ip_address')}")
                     # Decrypt password if needed
                     if pdu.get('password_encrypted'):
-                        pdu['password'] = self.executor.decrypt_password(pdu['password_encrypted'])
+                        decrypted = self.executor.decrypt_password(pdu['password_encrypted'])
+                        if decrypted:
+                            pdu['password'] = decrypted
+                        else:
+                            # Decryption failed - might be plain text, use raw value with warning
+                            self.log("Password decryption failed - using raw value (may be plain text)", "WARN")
+                            pdu['password'] = pdu['password_encrypted']
                     else:
                         pdu['password'] = 'apc'  # Default APC password
                     return pdu
