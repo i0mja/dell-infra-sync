@@ -142,39 +142,61 @@ except Exception:
 # ============================================================================
 # OPTIONAL DEPENDENCIES CHECK
 # ============================================================================
-def log_optional_dependencies():
-    """Log availability of optional libraries at startup for diagnostics"""
-    print("\nOptional Dependencies:")
+def ensure_optional_dependencies():
+    """Check and auto-install missing optional libraries at startup"""
+    import subprocess
     
-    # Check pysnmp (for PDU SNMP control)
-    try:
-        import pysnmp
-        version = getattr(pysnmp, '__version__', 'unknown')
-        print(f"  - pysnmp: {version} (available)")
-    except ImportError:
-        print("  - pysnmp: NOT AVAILABLE (PDU SNMP control disabled)")
+    print("\nOptional Dependencies Check:")
     
-    # Check telnetlib (for PDU session clearing)
+    optional_packages = [
+        ('pysnmp', 'pysnmp', 'PDU SNMP control'),
+        ('paramiko', 'paramiko', 'SSH operations'),
+    ]
+    
+    for import_name, pip_name, description in optional_packages:
+        try:
+            module = __import__(import_name)
+            version = getattr(module, '__version__', 'unknown')
+            print(f"  [OK] {import_name}: {version}")
+        except ImportError:
+            print(f"  [MISSING] {import_name} - attempting auto-install for {description}...")
+            try:
+                # Use the same Python executable that's running this script
+                result = subprocess.run(
+                    [sys.executable, '-m', 'pip', 'install', pip_name, '--quiet'],
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                if result.returncode == 0:
+                    # Try importing again
+                    try:
+                        module = __import__(import_name)
+                        version = getattr(module, '__version__', 'unknown')
+                        print(f"  [INSTALLED] {import_name}: {version}")
+                    except ImportError:
+                        print(f"  [FAILED] {import_name}: Installed but import still fails")
+                else:
+                    error_msg = result.stderr[:100] if result.stderr else 'Unknown error'
+                    print(f"  [FAILED] {import_name}: pip install failed - {error_msg}")
+            except subprocess.TimeoutExpired:
+                print(f"  [FAILED] {import_name}: Installation timed out (120s)")
+            except Exception as e:
+                print(f"  [FAILED] {import_name}: {str(e)[:100]}")
+    
+    # Check telnetlib (built-in, cannot be installed via pip)
     try:
         import telnetlib
-        print("  - telnetlib: available")
+        print(f"  [OK] telnetlib: built-in")
     except ImportError:
-        print("  - telnetlib: NOT AVAILABLE (PDU Telnet session clearing disabled)")
-    
-    # Check paramiko (for SSH operations)
-    try:
-        import paramiko
-        version = getattr(paramiko, '__version__', 'unknown')
-        print(f"  - paramiko: {version} (available)")
-    except ImportError:
-        print("  - paramiko: NOT AVAILABLE (SSH operations disabled)")
+        print(f"  [N/A] telnetlib: Not available in Python 3.13+ (PDU Telnet disabled)")
     
     print(f"  - Python: {sys.version}")
     print(f"  - Executable: {sys.executable}")
     print("")
 
-# Log optional dependencies at startup
-log_optional_dependencies()
+# Auto-install missing dependencies at startup
+ensure_optional_dependencies()
 
 # ============================================================================
 # STARTUP CONFIGURATION DEBUG
