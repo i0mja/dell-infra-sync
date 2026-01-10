@@ -4866,12 +4866,12 @@ chmod 600 ~/.ssh/authorized_keys
     def _discover_replicated_vmdks(self, content, datastore, source_vm_name: str, job_id: str) -> list:
         """
         Discover replicated VMDK files in the VM folder on the target datastore.
-        Validates that flat files exist for each descriptor.
+        Handles both thick (descriptor+flat) and sparse/thin (single file) formats.
         """
         from pyVmomi import vim
         
         disk_paths = []
-        flat_files = {}  # Track available flat files and their sizes
+        all_vmdks = {}  # filename -> (full_path, size)
         
         try:
             browser = datastore.browser
@@ -4902,7 +4902,7 @@ chmod 600 ~/.ssh/authorized_keys
                 return []
             
             if task.info.state == vim.TaskInfo.State.success and task.info.result:
-                # First pass: collect all flat files and their sizes
+                # Collect all VMDK files with their sizes
                 for result in task.info.result:
                     result_folder = result.folderPath
                     # Ensure folder path ends with space for proper path construction
@@ -4915,43 +4915,49 @@ chmod 600 ~/.ssh/authorized_keys
                     for file_info in result.file:
                         file_size = getattr(file_info, 'fileSize', 0) or 0
                         file_size_mb = file_size / (1024 * 1024)
-                        
-                        if '-flat.vmdk' in file_info.path:
-                            flat_files[file_info.path] = file_size
-                            self._add_console_log(job_id, f"Found flat file: {file_info.path} ({file_size_mb:.1f} MB)")
-                
-                self._add_console_log(job_id, f"Total flat files found: {len(flat_files)}")
-                
-                # Second pass: collect descriptor files that have matching flat files
-                for result in task.info.result:
-                    result_folder = result.folderPath
-                    if not result_folder.endswith('/') and not result_folder.endswith(' '):
-                        result_folder = result_folder + ' '
-                    elif result_folder.endswith('/'):
-                        result_folder = result_folder[:-1] + ' '
-                    
-                    for file_info in result.file:
-                        # Skip flat/delta/ctk files - we only want descriptors
-                        if any(x in file_info.path for x in ['-flat.vmdk', '-delta.vmdk', '-ctk.vmdk']):
-                            continue
-                        
-                        # Verify the corresponding flat file exists
-                        base_name = file_info.path.replace('.vmdk', '')
-                        expected_flat = f"{base_name}-flat.vmdk"
-                        
-                        if expected_flat not in flat_files:
-                            self._add_console_log(job_id, f"WARNING: Skipping {file_info.path} - missing {expected_flat}", "WARN")
-                            continue
-                        
-                        flat_size = flat_files[expected_flat]
-                        if flat_size == 0:
-                            self._add_console_log(job_id, f"WARNING: Skipping {file_info.path} - flat file is 0 bytes", "WARN")
-                            continue
-                        
                         full_path = f"{result_folder}{file_info.path}"
-                        disk_paths.append(full_path)
-                        flat_size_mb = flat_size / (1024 * 1024)
-                        self._add_console_log(job_id, f"Valid VMDK: {file_info.path} (flat: {flat_size_mb:.1f} MB)")
+                        all_vmdks[file_info.path] = (full_path, file_size)
+                        self._add_console_log(job_id, f"Found: {file_info.path} ({file_size_mb:.1f} MB)")
+                
+                self._add_console_log(job_id, f"Total VMDK files found: {len(all_vmdks)}")
+                
+                # Process VMDKs - identify which are usable disk descriptors/data files
+                for filename, (full_path, file_size) in all_vmdks.items():
+                    file_size_mb = file_size / (1024 * 1024)
+                    
+                    # Skip metadata files
+                    if any(x in filename for x in ['-ctk.vmdk', '-digest.vmdk']):
+                        self._add_console_log(job_id, f"Skipping metadata file: {filename}")
+                        continue
+                    
+                    # Skip flat files - they're data companions to descriptors
+                    if '-flat.vmdk' in filename:
+                        continue
+                    
+                    # Skip delta files - they're snapshot chains (we want the numbered snapshots instead)
+                    if '-delta.vmdk' in filename:
+                        continue
+                    
+                    # Check if this descriptor has a flat file companion (thick provisioned)
+                    base_name = filename.replace('.vmdk', '')
+                    expected_flat = f"{base_name}-flat.vmdk"
+                    
+                    if expected_flat in all_vmdks:
+                        # Thick provisioned: validate flat file has data
+                        flat_size = all_vmdks[expected_flat][1]
+                        if flat_size > 0:
+                            disk_paths.append(full_path)
+                            self._add_console_log(job_id, f"Valid thick disk: {filename} (flat: {flat_size / (1024*1024):.1f} MB)")
+                        else:
+                            self._add_console_log(job_id, f"WARNING: Skipping {filename} - flat file is 0 bytes", "WARN")
+                    else:
+                        # Sparse/thin provisioned: single file must have substantial size
+                        # Minimum 1KB to filter out empty/corrupt descriptors
+                        if file_size > 1024:
+                            disk_paths.append(full_path)
+                            self._add_console_log(job_id, f"Valid sparse disk: {filename} ({file_size_mb:.1f} MB)")
+                        else:
+                            self._add_console_log(job_id, f"WARNING: Skipping {filename} - file too small ({file_size} bytes)", "WARN")
                 
                 self._add_console_log(job_id, f"Total valid VMDKs to attach: {len(disk_paths)}")
         
