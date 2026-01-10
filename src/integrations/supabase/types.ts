@@ -5003,6 +5003,7 @@ export type Database = {
           overall_status: string | null
           power_state: string | null
           resource_pool: string | null
+          scsi_controller_type: string | null
           snapshot_count: number | null
           source_vcenter_id: string | null
           tools_status: string | null
@@ -5031,6 +5032,7 @@ export type Database = {
           overall_status?: string | null
           power_state?: string | null
           resource_pool?: string | null
+          scsi_controller_type?: string | null
           snapshot_count?: number | null
           source_vcenter_id?: string | null
           tools_status?: string | null
@@ -5059,6 +5061,7 @@ export type Database = {
           overall_status?: string | null
           power_state?: string | null
           resource_pool?: string | null
+          scsi_controller_type?: string | null
           snapshot_count?: number | null
           source_vcenter_id?: string | null
           tools_status?: string | null

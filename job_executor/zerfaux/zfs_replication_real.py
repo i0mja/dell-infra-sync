@@ -1574,7 +1574,8 @@ class ZFSReplicationReal:
                            target_datastore: str, cpu_count: int,
                            memory_mb: int, disk_paths: List[str],
                            guest_id: str = 'otherGuest64',
-                           firmware: str = 'bios') -> Dict:
+                           firmware: str = 'bios',
+                           scsi_controller_type: str = 'lsilogic') -> Dict:
         """
         Create a shell VM at DR site with replicated disks attached.
         
@@ -1590,11 +1591,12 @@ class ZFSReplicationReal:
             disk_paths: List of VMDK paths to attach
             guest_id: vSphere guestId (e.g., 'rhel7_64Guest') - defaults to 'otherGuest64'
             firmware: VM firmware type ('bios' or 'efi') - defaults to 'bios'
+            scsi_controller_type: SCSI controller type ('lsilogic', 'lsilogic-sas', 'pvscsi', 'buslogic') - defaults to 'lsilogic'
             
         Returns:
             Dict with VM creation result
         """
-        logger.info(f"Creating DR shell VM: {vm_name} with guest_id: {guest_id}, firmware: {firmware}")
+        logger.info(f"Creating DR shell VM: {vm_name} with guest_id: {guest_id}, firmware: {firmware}, scsi: {scsi_controller_type}")
         start_time = time.time()
         
         if not PYVMOMI_AVAILABLE:
@@ -1711,12 +1713,21 @@ class ZFSReplicationReal:
                 files=vim.vm.FileInfo(vmPathName=vm_path)
             )
             
-            # Add SCSI controller
+            # Add SCSI controller (Phase 12: Match source VM controller type)
             # Use negative key for new devices - vSphere will auto-assign
             scsi_controller_key = -100
             scsi_ctr = vim.vm.device.VirtualDeviceSpec()
             scsi_ctr.operation = vim.vm.device.VirtualDeviceSpec.Operation.add
-            scsi_ctr.device = vim.vm.device.VirtualLsiLogicController()
+            # Phase 12: Map controller type to pyvmomi class
+            scsi_controller_classes = {
+                'pvscsi': vim.vm.device.ParaVirtualSCSIController,
+                'lsilogic-sas': vim.vm.device.VirtualLsiLogicSASController,
+                'lsilogic': vim.vm.device.VirtualLsiLogicController,
+                'buslogic': vim.vm.device.VirtualBusLogicController,
+            }
+            controller_class = scsi_controller_classes.get(scsi_controller_type, vim.vm.device.VirtualLsiLogicController)
+            logger.info(f"Using SCSI controller type: {scsi_controller_type} ({controller_class.__name__})")
+            scsi_ctr.device = controller_class()
             scsi_ctr.device.key = scsi_controller_key
             scsi_ctr.device.busNumber = 0
             scsi_ctr.device.sharedBus = vim.vm.device.VirtualSCSIController.Sharing.noSharing

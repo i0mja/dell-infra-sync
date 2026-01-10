@@ -5159,10 +5159,11 @@ chmod 600 ~/.ssh/authorized_keys
             if not protected_vm:
                 raise ValueError(f"Protected VM not found: {protected_vm_id}")
             
-            # Fetch source VM details for guest_id and firmware (Phase 10+11)
+            # Fetch source VM details for guest_id, firmware, and SCSI controller (Phase 10+11+12)
             source_vm_id = protected_vm.get('vm_id')
             source_vm_guest_id = 'otherGuest64'  # Default fallback
             source_vm_firmware = 'bios'  # Default firmware type
+            source_scsi_controller_type = 'lsilogic'  # Phase 12: Default SCSI controller type
             if source_vm_id:
                 source_vm = self._get_vcenter_vm(source_vm_id)
                 if source_vm:
@@ -5170,7 +5171,9 @@ chmod 600 ~/.ssh/authorized_keys
                         source_vm_guest_id = source_vm.get('guest_id')
                     if source_vm.get('firmware'):
                         source_vm_firmware = source_vm.get('firmware')
-                    self._add_console_log(job_id, f"Using source VM guest ID: {source_vm_guest_id}, firmware: {source_vm_firmware}")
+                    if source_vm.get('scsi_controller_type'):
+                        source_scsi_controller_type = source_vm.get('scsi_controller_type')
+                    self._add_console_log(job_id, f"Using source VM guest ID: {source_vm_guest_id}, firmware: {source_vm_firmware}, SCSI: {source_scsi_controller_type}")
             
             self.update_job_status(job_id, 'running', details={
                 **details,
@@ -5346,12 +5349,21 @@ chmod 600 ~/.ssh/authorized_keys
                 # Build device changes list
                 device_changes = []
                 
-                # Add SCSI controller for disks
+                # Add SCSI controller for disks (Phase 12: Match source VM controller type)
                 # Use negative key for new devices - vSphere will auto-assign
                 scsi_controller_key = -100
                 scsi_ctr = vim.vm.device.VirtualDeviceSpec()
                 scsi_ctr.operation = vim.vm.device.VirtualDeviceSpec.Operation.add
-                scsi_ctr.device = vim.vm.device.VirtualLsiLogicController()
+                # Phase 12: Map controller type to pyvmomi class
+                scsi_controller_classes = {
+                    'pvscsi': vim.vm.device.ParaVirtualSCSIController,
+                    'lsilogic-sas': vim.vm.device.VirtualLsiLogicSASController,
+                    'lsilogic': vim.vm.device.VirtualLsiLogicController,
+                    'buslogic': vim.vm.device.VirtualBusLogicController,
+                }
+                controller_class = scsi_controller_classes.get(source_scsi_controller_type, vim.vm.device.VirtualLsiLogicController)
+                self._add_console_log(job_id, f"Using SCSI controller type: {source_scsi_controller_type} ({controller_class.__name__})")
+                scsi_ctr.device = controller_class()
                 scsi_ctr.device.key = scsi_controller_key
                 scsi_ctr.device.busNumber = 0
                 scsi_ctr.device.sharedBus = vim.vm.device.VirtualSCSIController.Sharing.noSharing

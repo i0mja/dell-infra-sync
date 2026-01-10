@@ -1225,7 +1225,9 @@ def _vm_to_dict(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
             disk_gb = 0.0
     
     # Phase 8: Extract network interfaces (NICs)
+    # Phase 12: Extract SCSI controller type
     network_interfaces = []
+    scsi_controller_type = 'lsilogic'  # Default to LSI Logic Parallel
     devices = props.get("config.hardware.device", [])
     guest_nets = props.get("guest.net", [])
     
@@ -1254,8 +1256,20 @@ def _vm_to_dict(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
     if devices:
         try:
             for device in devices:
-                # Check if it's a virtual ethernet adapter
                 device_type = type(device).__name__
+                
+                # Phase 12: Check for SCSI controllers (extract first one found)
+                if scsi_controller_type == 'lsilogic':  # Only update if still default
+                    if 'ParaVirtualSCSIController' in device_type:
+                        scsi_controller_type = 'pvscsi'
+                    elif 'VirtualLsiLogicSASController' in device_type:
+                        scsi_controller_type = 'lsilogic-sas'
+                    elif 'VirtualBusLogicController' in device_type:
+                        scsi_controller_type = 'buslogic'
+                    elif 'VirtualLsiLogicController' in device_type:
+                        scsi_controller_type = 'lsilogic'
+                
+                # Check if it's a virtual ethernet adapter
                 if 'VirtualEthernetCard' in device_type or 'VirtualVmxnet' in device_type or 'VirtualE1000' in device_type:
                     backing = getattr(device, 'backing', None)
                     network_moref = None
@@ -1294,7 +1308,7 @@ def _vm_to_dict(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
                         'ip_addresses': ip_addresses,
                     })
         except Exception as e:
-            logger.warning(f"Error extracting NICs for VM {props.get('name', '')}: {e}")
+            logger.warning(f"Error extracting NICs/SCSI for VM {props.get('name', '')}: {e}")
     
     # Phase 9: Extract resource pool name
     resource_pool = ""
@@ -1383,6 +1397,7 @@ def _vm_to_dict(obj, props: Dict, lookups: Dict) -> Dict[str, Any]:
         "guest_os": guest_os,
         "guest_id": guest_id,                               # Phase 10: vSphere guestId for VM creation
         "firmware": firmware,                               # Phase 11: Firmware type (bios/efi)
+        "scsi_controller_type": scsi_controller_type,       # Phase 12: SCSI controller type
         "ip_address": ip_address,
         "is_template": is_template,
         
