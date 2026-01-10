@@ -913,24 +913,53 @@ class ZerfauxAPIRouter:
                     task = browser.SearchDatastoreSubFolders_Task(datastore_path, search_spec)
                     WaitForTask(task)
                     
-                    disk_paths = []
+                    import re
+                    
+                    # Collect all VMDKs with metadata
+                    all_vmdks = {}  # filename -> (full_path, file_size)
                     for result in task.info.result:
                         folder_path = result.folderPath
                         for file_info in result.file:
-                            # Skip -flat.vmdk files (they're data files, not descriptors)
-                            if '-flat.vmdk' in file_info.path:
-                                continue
-                            # Skip -delta.vmdk files (snapshot deltas)
-                            if '-delta.vmdk' in file_info.path:
-                                continue
-                            # Skip -ctk.vmdk files (change tracking)
-                            if '-ctk.vmdk' in file_info.path:
-                                continue
-                            
-                            # Build full path
+                            file_size = getattr(file_info, 'fileSize', 0) or 0
                             full_path = f"{folder_path}{file_info.path}"
+                            all_vmdks[file_info.path] = (full_path, file_size)
+                    
+                    # Categorize: base disks vs snapshot descriptors
+                    base_disks = {}
+                    snapshot_disks = {}
+                    
+                    for filename, (full_path, file_size) in all_vmdks.items():
+                        # Skip metadata and data companion files
+                        if any(x in filename for x in ['-ctk.vmdk', '-digest.vmdk', '-flat.vmdk', '-delta.vmdk']):
+                            continue
+                        
+                        # Identify snapshot descriptors: VM-000001.vmdk, VM-000002.vmdk, etc.
+                        if re.search(r'-\d{6}\.vmdk$', filename):
+                            snapshot_disks[filename] = (full_path, file_size)
+                            logger.info(f"Found snapshot descriptor (will skip): {filename}")
+                        else:
+                            base_disks[filename] = (full_path, file_size)
+                            logger.info(f"Found potential base disk: {filename}")
+                    
+                    logger.info(f"Base disks: {len(base_disks)}, Snapshot descriptors: {len(snapshot_disks)}")
+                    
+                    # Validate and select base disks only
+                    disk_paths = []
+                    for filename, (full_path, file_size) in base_disks.items():
+                        base_name = filename.replace('.vmdk', '')
+                        expected_flat = f"{base_name}-flat.vmdk"
+                        
+                        if expected_flat in all_vmdks:
+                            flat_size = all_vmdks[expected_flat][1]
+                            if flat_size > 0:
+                                disk_paths.append(full_path)
+                                logger.info(f"Valid thick disk: {filename}")
+                        elif file_size > 1024:
                             disk_paths.append(full_path)
-                            logger.info(f"Discovered replicated VMDK: {full_path}")
+                            logger.info(f"Valid sparse disk: {filename}")
+                    
+                    if not disk_paths and snapshot_disks:
+                        logger.warning(f"No base disks found, only {len(snapshot_disks)} snapshot descriptors. Source VM needs consolidation.")
                     
                     return disk_paths
                     
