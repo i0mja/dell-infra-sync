@@ -140,6 +140,43 @@ except Exception:
 # UNICODE_FALLBACKS imported from job_executor.utils
 
 # ============================================================================
+# OPTIONAL DEPENDENCIES CHECK
+# ============================================================================
+def log_optional_dependencies():
+    """Log availability of optional libraries at startup for diagnostics"""
+    print("\nOptional Dependencies:")
+    
+    # Check pysnmp (for PDU SNMP control)
+    try:
+        import pysnmp
+        version = getattr(pysnmp, '__version__', 'unknown')
+        print(f"  - pysnmp: {version} (available)")
+    except ImportError:
+        print("  - pysnmp: NOT AVAILABLE (PDU SNMP control disabled)")
+    
+    # Check telnetlib (for PDU session clearing)
+    try:
+        import telnetlib
+        print("  - telnetlib: available")
+    except ImportError:
+        print("  - telnetlib: NOT AVAILABLE (PDU Telnet session clearing disabled)")
+    
+    # Check paramiko (for SSH operations)
+    try:
+        import paramiko
+        version = getattr(paramiko, '__version__', 'unknown')
+        print(f"  - paramiko: {version} (available)")
+    except ImportError:
+        print("  - paramiko: NOT AVAILABLE (SSH operations disabled)")
+    
+    print(f"  - Python: {sys.version}")
+    print(f"  - Executable: {sys.executable}")
+    print("")
+
+# Log optional dependencies at startup
+log_optional_dependencies()
+
+# ============================================================================
 # STARTUP CONFIGURATION DEBUG
 # ============================================================================
 print("=" * 60)
