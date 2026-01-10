@@ -5124,28 +5124,33 @@ chmod 600 ~/.ssh/authorized_keys
                 device_changes = []
                 
                 # Add SCSI controller for disks
+                # Use negative key for new devices - vSphere will auto-assign
+                scsi_controller_key = -100
                 scsi_ctr = vim.vm.device.VirtualDeviceSpec()
                 scsi_ctr.operation = vim.vm.device.VirtualDeviceSpec.Operation.add
                 scsi_ctr.device = vim.vm.device.VirtualLsiLogicController()
-                scsi_ctr.device.key = 1000
+                scsi_ctr.device.key = scsi_controller_key
                 scsi_ctr.device.busNumber = 0
                 scsi_ctr.device.sharedBus = vim.vm.device.VirtualSCSIController.Sharing.noSharing
                 device_changes.append(scsi_ctr)
                 
                 # Attach replicated disks
                 for i, disk_path in enumerate(disk_paths):
+                    # Calculate unit number, skipping 7 (reserved for SCSI controller)
+                    unit_number = i if i < 7 else i + 1
+                    
                     disk_spec = vim.vm.device.VirtualDeviceSpec()
                     disk_spec.operation = vim.vm.device.VirtualDeviceSpec.Operation.add
                     disk_spec.device = vim.vm.device.VirtualDisk()
-                    disk_spec.device.key = 2000 + i
-                    disk_spec.device.controllerKey = 1000
-                    disk_spec.device.unitNumber = i
+                    disk_spec.device.key = -101 - i  # Negative keys for new devices
+                    disk_spec.device.controllerKey = scsi_controller_key
+                    disk_spec.device.unitNumber = unit_number
                     disk_spec.device.backing = vim.vm.device.VirtualDisk.FlatVer2BackingInfo()
                     disk_spec.device.backing.fileName = disk_path
                     disk_spec.device.backing.diskMode = 'persistent'
                     disk_spec.device.backing.datastore = datastore
                     device_changes.append(disk_spec)
-                    self._add_console_log(job_id, f"Attaching disk {i}: {disk_path}")
+                    self._add_console_log(job_id, f"Attaching disk {i} at unit {unit_number}: {disk_path}")
                 
                 # Add network adapter if network specified
                 if network:
