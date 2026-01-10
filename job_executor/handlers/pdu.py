@@ -282,15 +282,45 @@ class PDUHandler(BaseHandler):
             if response.status_code != 200:
                 return False, f"Login page returned status {response.status_code}"
             
+            # Diagnostic: Log login page HTML structure
+            self.log(f"Login page HTML snippet: {response.text[:500]}")
+            
+            # Try to detect the actual form action and field names
+            form_action_match = re.search(r'<form[^>]*action=["\']([^"\']+)["\']', response.text, re.IGNORECASE)
+            if form_action_match:
+                detected_action = form_action_match.group(1)
+                self.log(f"Detected form action: {detected_action}")
+            else:
+                detected_action = None
+                self.log("No form action detected in login page")
+            
+            # Detect form field names
+            username_field_match = re.search(r'<input[^>]*name=["\']([^"\']*user[^"\']*)["\']', response.text, re.IGNORECASE)
+            password_field_match = re.search(r'<input[^>]*name=["\']([^"\']*pass[^"\']*)["\']', response.text, re.IGNORECASE)
+            
+            username_field = username_field_match.group(1) if username_field_match else 'login_username'
+            password_field = password_field_match.group(1) if password_field_match else 'login_password'
+            self.log(f"Detected form fields: username='{username_field}', password='{password_field}'")
+            
             # Check for session conflict on the login page itself
             if self._is_session_conflict(response.text):
                 return False, "Someone is currently logged into the APC Management Web Server"
             
-            # Submit login form
-            login_url = f"{self._pdu_url}/Forms/login1"
+            # Determine login URL - use detected action or default
+            if detected_action:
+                if detected_action.startswith('/'):
+                    login_url = f"{self._pdu_url}{detected_action}"
+                elif detected_action.startswith('http'):
+                    login_url = detected_action
+                else:
+                    login_url = f"{self._pdu_url}/{detected_action}"
+            else:
+                login_url = f"{self._pdu_url}/Forms/login1"
+            
+            # Build payload with detected field names
             payload = {
-                'login_username': username,
-                'login_password': password,
+                username_field: username,
+                password_field: password,
                 'submit': 'Log On'
             }
             headers = {
@@ -298,7 +328,7 @@ class PDUHandler(BaseHandler):
                 'Referer': login_page_url
             }
             
-            self.log(f"Submitting login to: {login_url}")
+            self.log(f"Submitting login to: {login_url} with fields: {list(payload.keys())}")
             response = self._session.post(
                 login_url, 
                 data=payload, 
@@ -306,6 +336,11 @@ class PDUHandler(BaseHandler):
                 allow_redirects=True, 
                 timeout=self._request_timeout
             )
+            
+            # Diagnostic: Log post-login response details
+            self.log(f"Post-login URL: {response.url}")
+            self.log(f"Post-login status: {response.status_code}")
+            self.log(f"Post-login body snippet: {response.text[:300]}")
             
             if response.status_code != 200:
                 return False, f"Login returned status {response.status_code}"
@@ -326,9 +361,32 @@ class PDUHandler(BaseHandler):
                 self.log(f"Session token acquired: {self._session_token[:8]}...")
                 return True, "Login successful"
             
+            # Alternative success detection: Look for logout/logoff links
+            if 'logoff' in response.text.lower() or 'logout' in response.text.lower():
+                self.log("Detected logout link - login appears successful")
+                self._session_token = "no-token-required"
+                return True, "Login successful (detected logout link)"
+            
+            # Alternative: Check if we landed on a home/status page (not login)
+            if 'home.htm' in final_url.lower() or 'status' in final_url.lower():
+                self.log("Landed on home/status page - login successful")
+                self._session_token = "no-token-required"
+                return True, "Login successful (redirected to home)"
+            
+            # Alternative: No login form in response means we're authenticated
+            if 'logon.htm' not in response.text.lower() and '<input' not in response.text.lower():
+                self.log("No login form in response - likely authenticated")
+                self._session_token = "no-token-required"
+                return True, "Login successful"
+            
             # Check if we're still on the login page (bad credentials)
             if 'logon.htm' in final_url or 'login' in final_url.lower():
-                return False, "Invalid credentials"
+                # But also check if response contains error messages
+                if 'invalid' in response.text.lower() or 'incorrect' in response.text.lower() or 'failed' in response.text.lower():
+                    return False, "Invalid credentials (server reported authentication failure)"
+                # Still on login page but no explicit error - could be redirect issue
+                self.log("Still on login page but no explicit error - may need different auth flow")
+                return False, "Login failed - still on login page"
             
             # Try to find session token in response content
             content_match = re.search(r'/NMC/([a-zA-Z0-9+/=]+)/', response.text)
