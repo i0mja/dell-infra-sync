@@ -1,7 +1,10 @@
 """
 PDU (Power Distribution Unit) management handler for Schneider Electric/APC PDUs.
 
-Supports NMC (Network Management Card) web interface for outlet control.
+Supports:
+- NMC (Network Management Card) web interface for outlet control
+- SNMP v1/v2c for outlet control (no session limitations)
+- Auto mode: tries NMC first, falls back to SNMP if session is blocked
 """
 
 import re
@@ -12,10 +15,49 @@ from typing import Dict, List, Optional, Any, Tuple
 
 import requests
 
+try:
+    from pysnmp.hlapi import (
+        setCmd, getCmd, nextCmd, SnmpEngine, CommunityData,
+        UdpTransportTarget, ContextData, ObjectType, ObjectIdentity, Integer
+    )
+    SNMP_AVAILABLE = True
+except ImportError:
+    SNMP_AVAILABLE = False
+
 from .base import BaseHandler
 
 # Suppress InsecureRequestWarning for self-signed certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+# =============================================================================
+# APC SNMP OIDs for PDU outlet control
+# =============================================================================
+
+# Switched Rack PDU (older models: AP7XXX, AP8XXX)
+SPDU_OUTLET_CTL_OID = '1.3.6.1.4.1.318.1.1.4.4.2.1.3'  # sPDUOutletCtl
+SPDU_OUTLET_STATE_OID = '1.3.6.1.4.1.318.1.1.4.4.2.1.4'  # sPDUOutletCtlOutletState
+
+# Rack PDU2 (newer models)
+RPDU2_OUTLET_CMD_OID = '1.3.6.1.4.1.318.1.1.12.3.3.1.1.4'  # rPDUOutletControlOutletCommand
+RPDU2_OUTLET_STATE_OID = '1.3.6.1.4.1.318.1.1.12.3.5.1.1.4'  # rPDU2OutletSwitchedStatusOutletState
+
+
+class SnmpOutletCommand(IntEnum):
+    """APC SNMP outlet control commands"""
+    IMMEDIATE_ON = 1
+    IMMEDIATE_OFF = 2
+    IMMEDIATE_REBOOT = 3
+    DELAYED_ON = 4
+    DELAYED_OFF = 5
+    DELAYED_REBOOT = 6
+    CANCEL_PENDING = 7
+
+
+class SnmpOutletState(IntEnum):
+    """APC SNMP outlet state values"""
+    ON = 1
+    OFF = 2
 
 
 class OutletCommand(IntEnum):
@@ -40,16 +82,30 @@ class OutletState(IntEnum):
 class PDUHandler(BaseHandler):
     """
     Handler for PDU management operations using Schneider Electric/APC 
-    Network Management Card (NMC) web interface.
+    Network Management Card (NMC) web interface or SNMP.
     
     Supported job types:
     - pdu_test_connection: Test connectivity and authentication
     - pdu_discover: Discover PDU model, firmware, and outlets
     - pdu_outlet_control: Control outlet power (on/off/reboot)
     - pdu_sync_status: Sync outlet status to database
+    
+    Protocol modes:
+    - 'nmc': Use NMC web interface only
+    - 'snmp': Use SNMP only (no session limitations)
+    - 'auto': Try NMC first, fall back to SNMP if session is blocked
     """
     
     JOB_TYPES = ['pdu_test_connection', 'pdu_discover', 'pdu_outlet_control', 'pdu_sync_status']
+    
+    # Session conflict messages that trigger SNMP fallback
+    SESSION_CONFLICT_PATTERNS = [
+        'currently logged in',
+        'session in use',
+        'another user',
+        'session active',
+        'already logged in',
+    ]
     
     def __init__(self, executor):
         super().__init__(executor)
@@ -73,6 +129,13 @@ class PDUHandler(BaseHandler):
             return self._handle_sync_status(job, details)
         else:
             return {'success': False, 'error': f'Unknown job type: {job_type}'}
+    
+    def _is_session_conflict(self, message: str) -> bool:
+        """Check if error message indicates a session conflict"""
+        if not message:
+            return False
+        message_lower = message.lower()
+        return any(pattern in message_lower for pattern in self.SESSION_CONFLICT_PATTERNS)
     
     # =========================================================================
     # Session Management
@@ -132,6 +195,10 @@ class PDUHandler(BaseHandler):
             if response.status_code != 200:
                 return False, f"Login page returned status {response.status_code}"
             
+            # Check for session conflict on the login page itself
+            if self._is_session_conflict(response.text):
+                return False, "Someone is currently logged into the APC Management Web Server"
+            
             # Submit login form
             login_url = f"{self._pdu_url}/Forms/login1"
             payload = {
@@ -155,6 +222,10 @@ class PDUHandler(BaseHandler):
             
             if response.status_code != 200:
                 return False, f"Login returned status {response.status_code}"
+            
+            # Check for session conflict in response
+            if self._is_session_conflict(response.text):
+                return False, "Someone is currently logged into the APC Management Web Server"
             
             # Extract session token from redirect URL
             # URL format: /NMC/{session_token}/home.htm
@@ -210,6 +281,144 @@ class PDUHandler(BaseHandler):
             self.log(f"Failed to update PDU status: {e}", "WARN")
     
     # =========================================================================
+    # SNMP Operations
+    # =========================================================================
+    
+    def _snmp_control_outlet(self, ip: str, community: str, outlet: int, 
+                              command: SnmpOutletCommand) -> Tuple[bool, str]:
+        """
+        Control PDU outlet via SNMP - no session limitations.
+        
+        Tries both SPDU and RPDU2 OIDs for compatibility with different models.
+        """
+        if not SNMP_AVAILABLE:
+            return False, "SNMP library (pysnmp) not available"
+        
+        self.log(f"SNMP control: outlet={outlet}, command={command.name}, ip={ip}")
+        
+        # Try primary OID first (sPDUOutletCtl for older models)
+        oids_to_try = [
+            (f'{SPDU_OUTLET_CTL_OID}.{outlet}', 'sPDUOutletCtl'),
+            (f'{RPDU2_OUTLET_CMD_OID}.{outlet}', 'rPDUOutletControlOutletCommand'),
+        ]
+        
+        last_error = None
+        
+        for oid, oid_name in oids_to_try:
+            try:
+                self.log(f"Trying SNMP SET with OID {oid_name}: {oid}")
+                
+                error_indication, error_status, error_index, var_binds = next(
+                    setCmd(
+                        SnmpEngine(),
+                        CommunityData(community, mpModel=0),  # SNMP v1
+                        UdpTransportTarget((ip, 161), timeout=5, retries=2),
+                        ContextData(),
+                        ObjectType(ObjectIdentity(oid), Integer(command.value))
+                    )
+                )
+                
+                if error_indication:
+                    last_error = str(error_indication)
+                    self.log(f"SNMP error indication ({oid_name}): {error_indication}", "WARN")
+                    continue
+                elif error_status:
+                    last_error = f"SNMP error: {error_status.prettyPrint()} at {error_index}"
+                    self.log(f"SNMP error status ({oid_name}): {last_error}", "WARN")
+                    continue
+                else:
+                    self.log(f"SNMP command successful via {oid_name}")
+                    return True, f"Outlet command sent via SNMP ({oid_name})"
+                    
+            except Exception as e:
+                last_error = str(e)
+                self.log(f"SNMP exception ({oid_name}): {e}", "WARN")
+                continue
+        
+        return False, f"SNMP control failed: {last_error}"
+    
+    def _snmp_get_outlet_state(self, ip: str, community: str, outlet: int) -> Optional[str]:
+        """Get single outlet state via SNMP"""
+        if not SNMP_AVAILABLE:
+            return None
+        
+        # Try both OID types
+        oids_to_try = [
+            f'{SPDU_OUTLET_STATE_OID}.{outlet}',
+            f'{RPDU2_OUTLET_STATE_OID}.{outlet}',
+        ]
+        
+        for oid in oids_to_try:
+            try:
+                error_indication, error_status, error_index, var_binds = next(
+                    getCmd(
+                        SnmpEngine(),
+                        CommunityData(community, mpModel=0),
+                        UdpTransportTarget((ip, 161), timeout=5, retries=2),
+                        ContextData(),
+                        ObjectType(ObjectIdentity(oid))
+                    )
+                )
+                
+                if error_indication or error_status:
+                    continue
+                
+                for var_bind in var_binds:
+                    value = int(var_bind[1])
+                    if value == SnmpOutletState.ON:
+                        return 'on'
+                    elif value == SnmpOutletState.OFF:
+                        return 'off'
+                    
+            except Exception:
+                continue
+        
+        return None
+    
+    def _snmp_get_all_outlet_states(self, ip: str, community: str, 
+                                     max_outlets: int = 24) -> Dict[int, str]:
+        """Get all outlet states via SNMP walk"""
+        if not SNMP_AVAILABLE:
+            return {}
+        
+        outlet_states = {}
+        
+        # Try walking the outlet state OIDs
+        base_oids = [SPDU_OUTLET_STATE_OID, RPDU2_OUTLET_STATE_OID]
+        
+        for base_oid in base_oids:
+            try:
+                for outlet_num in range(1, max_outlets + 1):
+                    state = self._snmp_get_outlet_state(ip, community, outlet_num)
+                    if state:
+                        outlet_states[outlet_num] = state
+                    else:
+                        # If we get no response, assume we've reached the end
+                        if outlet_num > 1 and not outlet_states:
+                            break
+                
+                if outlet_states:
+                    break
+                    
+            except Exception as e:
+                self.log(f"SNMP walk error: {e}", "WARN")
+                continue
+        
+        self.log(f"SNMP retrieved {len(outlet_states)} outlet states")
+        return outlet_states
+    
+    def _snmp_test_connection(self, ip: str, community: str) -> Tuple[bool, str]:
+        """Test SNMP connectivity by trying to read outlet 1 state"""
+        if not SNMP_AVAILABLE:
+            return False, "SNMP library (pysnmp) not available"
+        
+        state = self._snmp_get_outlet_state(ip, community, 1)
+        if state:
+            return True, f"SNMP connection successful (outlet 1 is {state})"
+        else:
+            return False, "SNMP connection failed - could not read outlet state"
+    
+    # =========================================================================
     # Job Handlers
     # =========================================================================
     
@@ -226,10 +435,29 @@ class PDUHandler(BaseHandler):
         if not pdu:
             return {'success': False, 'error': 'PDU not found'}
         
-        pdu_url = f"https://{pdu['ip_address']}"
+        protocol = pdu.get('protocol', 'auto')
+        ip_address = pdu['ip_address']
+        pdu_url = f"https://{ip_address}"
         username = pdu.get('username', 'apc')
         password = pdu.get('password', 'apc')
+        snmp_community = pdu.get('snmp_community', 'public')
         
+        self.log(f"Protocol mode: {protocol}")
+        
+        # SNMP-only mode
+        if protocol == 'snmp':
+            success, message = self._snmp_test_connection(ip_address, snmp_community)
+            status = 'online' if success else 'error'
+            self._update_pdu_status(pdu_id, status, last_seen=success)
+            return {
+                'success': success,
+                'message': message,
+                'pdu_name': pdu.get('name'),
+                'ip_address': ip_address,
+                'protocol_used': 'snmp'
+            }
+        
+        # NMC or Auto mode - try NMC first
         try:
             success, message = self._login(pdu_url, username, password)
             
@@ -238,18 +466,45 @@ class PDUHandler(BaseHandler):
                 self._logout()
                 return {
                     'success': True,
-                    'message': 'Connection successful',
+                    'message': 'Connection successful via NMC',
                     'pdu_name': pdu.get('name'),
-                    'ip_address': pdu.get('ip_address')
+                    'ip_address': ip_address,
+                    'protocol_used': 'nmc'
                 }
-            else:
-                self._update_pdu_status(pdu_id, 'error')
-                return {
-                    'success': False,
-                    'error': message,
-                    'pdu_name': pdu.get('name'),
-                    'ip_address': pdu.get('ip_address')
-                }
+            
+            # If auto mode and session conflict, try SNMP fallback
+            if protocol == 'auto' and self._is_session_conflict(message):
+                self.log("NMC session blocked, trying SNMP fallback", "WARN")
+                snmp_success, snmp_message = self._snmp_test_connection(ip_address, snmp_community)
+                
+                if snmp_success:
+                    self._update_pdu_status(pdu_id, 'online', last_seen=True)
+                    return {
+                        'success': True,
+                        'message': f'Connection successful via SNMP (NMC: {message})',
+                        'pdu_name': pdu.get('name'),
+                        'ip_address': ip_address,
+                        'protocol_used': 'snmp',
+                        'nmc_blocked': True
+                    }
+                else:
+                    self._update_pdu_status(pdu_id, 'error')
+                    return {
+                        'success': False,
+                        'error': f'NMC: {message}; SNMP: {snmp_message}',
+                        'pdu_name': pdu.get('name'),
+                        'ip_address': ip_address
+                    }
+            
+            # NMC failed (not session conflict or nmc-only mode)
+            self._update_pdu_status(pdu_id, 'error')
+            return {
+                'success': False,
+                'error': message,
+                'pdu_name': pdu.get('name'),
+                'ip_address': ip_address
+            }
+            
         except Exception as e:
             self._update_pdu_status(pdu_id, 'offline')
             return {'success': False, 'error': str(e)}
@@ -269,14 +524,69 @@ class PDUHandler(BaseHandler):
         if not pdu:
             return {'success': False, 'error': 'PDU not found'}
         
-        pdu_url = f"https://{pdu['ip_address']}"
+        protocol = pdu.get('protocol', 'auto')
+        ip_address = pdu['ip_address']
+        pdu_url = f"https://{ip_address}"
         username = pdu.get('username', 'apc')
         password = pdu.get('password', 'apc')
         
+        # Discovery requires NMC for detailed info
+        # SNMP-only mode will have limited discovery
+        if protocol == 'snmp':
+            self.log("SNMP-only mode: limited discovery available")
+            # Just verify SNMP works and count outlets
+            snmp_community = pdu.get('snmp_community', 'public')
+            outlet_states = self._snmp_get_all_outlet_states(ip_address, snmp_community)
+            
+            if outlet_states:
+                total_outlets = max(outlet_states.keys())
+                self._ensure_outlet_records(pdu_id, total_outlets)
+                self._update_pdu_status(pdu_id, 'online', last_seen=True)
+                
+                return {
+                    'success': True,
+                    'discovered': {
+                        'model': None,
+                        'firmware_version': None,
+                        'total_outlets': total_outlets,
+                        'serial_number': None
+                    },
+                    'pdu_name': pdu.get('name'),
+                    'protocol_used': 'snmp',
+                    'note': 'Limited discovery via SNMP - use NMC for full details'
+                }
+            else:
+                return {'success': False, 'error': 'SNMP discovery failed'}
+        
+        # NMC or Auto mode
         try:
             success, message = self._login(pdu_url, username, password)
             
             if not success:
+                # Try SNMP fallback in auto mode
+                if protocol == 'auto' and self._is_session_conflict(message):
+                    self.log("NMC blocked, trying SNMP for discovery", "WARN")
+                    snmp_community = pdu.get('snmp_community', 'public')
+                    outlet_states = self._snmp_get_all_outlet_states(ip_address, snmp_community)
+                    
+                    if outlet_states:
+                        total_outlets = max(outlet_states.keys())
+                        self._ensure_outlet_records(pdu_id, total_outlets)
+                        self._update_pdu_status(pdu_id, 'online', last_seen=True)
+                        
+                        return {
+                            'success': True,
+                            'discovered': {
+                                'model': None,
+                                'firmware_version': None,
+                                'total_outlets': total_outlets,
+                                'serial_number': None
+                            },
+                            'pdu_name': pdu.get('name'),
+                            'protocol_used': 'snmp',
+                            'nmc_blocked': True
+                        }
+                
                 self._update_pdu_status(pdu_id, 'error')
                 return {'success': False, 'error': message}
             
@@ -344,7 +654,8 @@ class PDUHandler(BaseHandler):
             return {
                 'success': True,
                 'discovered': discovered,
-                'pdu_name': pdu.get('name')
+                'pdu_name': pdu.get('name'),
+                'protocol_used': 'nmc'
             }
             
         except Exception as e:
@@ -376,28 +687,126 @@ class PDUHandler(BaseHandler):
         if not pdu:
             return {'success': False, 'error': 'PDU not found'}
         
-        pdu_url = f"https://{pdu['ip_address']}"
+        protocol = pdu.get('protocol', 'auto')
+        ip_address = pdu['ip_address']
+        pdu_url = f"https://{ip_address}"
         username = pdu.get('username', 'apc')
         password = pdu.get('password', 'apc')
+        snmp_read_community = pdu.get('snmp_community', 'public')
+        snmp_write_community = pdu.get('snmp_write_community', pdu.get('snmp_community', 'private'))
         
+        # Map action to SNMP command
+        snmp_command_map = {
+            'on': SnmpOutletCommand.IMMEDIATE_ON,
+            'off': SnmpOutletCommand.IMMEDIATE_OFF,
+            'reboot': SnmpOutletCommand.IMMEDIATE_REBOOT,
+        }
+        
+        # Map action to NMC command
+        nmc_command_map = {
+            'on': OutletCommand.ON_IMMEDIATE,
+            'off': OutletCommand.OFF_IMMEDIATE,
+            'reboot': OutletCommand.REBOOT_IMMEDIATE,
+            'on_delayed': OutletCommand.ON_DELAYED,
+            'off_delayed': OutletCommand.OFF_DELAYED,
+            'reboot_delayed': OutletCommand.REBOOT_DELAYED,
+        }
+        
+        # SNMP-only mode
+        if protocol == 'snmp':
+            if action == 'status':
+                outlet_states = self._snmp_get_all_outlet_states(ip_address, snmp_read_community)
+                for outlet_num, state in outlet_states.items():
+                    self._update_outlet_state(pdu_id, outlet_num, state)
+                return {
+                    'success': True,
+                    'action': 'status',
+                    'outlet_states': outlet_states,
+                    'protocol_used': 'snmp'
+                }
+            
+            snmp_command = snmp_command_map.get(action)
+            if not snmp_command:
+                return {'success': False, 'error': f'Invalid action: {action}'}
+            
+            # Control each outlet
+            results = []
+            all_success = True
+            for outlet in outlet_numbers:
+                success, message = self._snmp_control_outlet(ip_address, snmp_write_community, outlet, snmp_command)
+                results.append({'outlet': outlet, 'success': success, 'message': message})
+                if not success:
+                    all_success = False
+            
+            if all_success:
+                self._update_pdu_status(pdu_id, 'online', last_seen=True)
+                # Update outlet states
+                new_state = 'on' if action == 'on' else ('off' if action == 'off' else 'unknown')
+                if action != 'reboot':
+                    for outlet_num in outlet_numbers:
+                        self._update_outlet_state(pdu_id, outlet_num, new_state)
+            
+            return {
+                'success': all_success,
+                'action': action,
+                'outlet_numbers': outlet_numbers,
+                'results': results,
+                'protocol_used': 'snmp'
+            }
+        
+        # NMC or Auto mode - try NMC first
         try:
             success, message = self._login(pdu_url, username, password)
             
             if not success:
+                # Try SNMP fallback in auto mode for control operations
+                if protocol == 'auto' and self._is_session_conflict(message):
+                    self.log("NMC session blocked, using SNMP for outlet control", "WARN")
+                    
+                    if action == 'status':
+                        outlet_states = self._snmp_get_all_outlet_states(ip_address, snmp_read_community)
+                        for outlet_num, state in outlet_states.items():
+                            self._update_outlet_state(pdu_id, outlet_num, state)
+                        return {
+                            'success': True,
+                            'action': 'status',
+                            'outlet_states': outlet_states,
+                            'protocol_used': 'snmp',
+                            'nmc_blocked': True
+                        }
+                    
+                    snmp_command = snmp_command_map.get(action)
+                    if snmp_command:
+                        results = []
+                        all_success = True
+                        for outlet in outlet_numbers:
+                            snmp_success, snmp_msg = self._snmp_control_outlet(
+                                ip_address, snmp_write_community, outlet, snmp_command
+                            )
+                            results.append({'outlet': outlet, 'success': snmp_success, 'message': snmp_msg})
+                            if not snmp_success:
+                                all_success = False
+                        
+                        if all_success:
+                            self._update_pdu_status(pdu_id, 'online', last_seen=True)
+                            new_state = 'on' if action == 'on' else ('off' if action == 'off' else 'unknown')
+                            if action != 'reboot':
+                                for outlet_num in outlet_numbers:
+                                    self._update_outlet_state(pdu_id, outlet_num, new_state)
+                        
+                        return {
+                            'success': all_success,
+                            'action': action,
+                            'outlet_numbers': outlet_numbers,
+                            'results': results,
+                            'protocol_used': 'snmp',
+                            'nmc_blocked': True
+                        }
+                
                 self._update_pdu_status(pdu_id, 'error')
                 return {'success': False, 'error': message}
             
             self._update_pdu_status(pdu_id, 'online', last_seen=True)
-            
-            # Map action to command
-            command_map = {
-                'on': OutletCommand.ON_IMMEDIATE,
-                'off': OutletCommand.OFF_IMMEDIATE,
-                'reboot': OutletCommand.REBOOT_IMMEDIATE,
-                'on_delayed': OutletCommand.ON_DELAYED,
-                'off_delayed': OutletCommand.OFF_DELAYED,
-                'reboot_delayed': OutletCommand.REBOOT_DELAYED,
-            }
             
             if action == 'status':
                 # Just get status, don't send command
@@ -406,10 +815,11 @@ class PDUHandler(BaseHandler):
                 return {
                     'success': True,
                     'action': 'status',
-                    'outlet_states': outlet_states
+                    'outlet_states': outlet_states,
+                    'protocol_used': 'nmc'
                 }
             
-            command = command_map.get(action)
+            command = nmc_command_map.get(action)
             if not command:
                 return {'success': False, 'error': f'Invalid action: {action}'}
             
@@ -429,7 +839,8 @@ class PDUHandler(BaseHandler):
                 'success': success,
                 'action': action,
                 'outlet_numbers': outlet_numbers,
-                'message': ctrl_message
+                'message': ctrl_message,
+                'protocol_used': 'nmc'
             }
             
         except Exception as e:
@@ -451,14 +862,64 @@ class PDUHandler(BaseHandler):
         if not pdu:
             return {'success': False, 'error': 'PDU not found'}
         
-        pdu_url = f"https://{pdu['ip_address']}"
+        protocol = pdu.get('protocol', 'auto')
+        ip_address = pdu['ip_address']
+        pdu_url = f"https://{ip_address}"
         username = pdu.get('username', 'apc')
         password = pdu.get('password', 'apc')
+        snmp_community = pdu.get('snmp_community', 'public')
         
+        # SNMP-only mode
+        if protocol == 'snmp':
+            outlet_states = self._snmp_get_all_outlet_states(ip_address, snmp_community)
+            
+            if outlet_states:
+                for outlet_num, state in outlet_states.items():
+                    self._update_outlet_state(pdu_id, outlet_num, state)
+                
+                self.executor.supabase.table('pdus').update({
+                    'last_sync': 'now()'
+                }).eq('id', pdu_id).execute()
+                
+                self._update_pdu_status(pdu_id, 'online', last_seen=True)
+                
+                return {
+                    'success': True,
+                    'outlet_states': outlet_states,
+                    'outlets_synced': len(outlet_states),
+                    'protocol_used': 'snmp'
+                }
+            else:
+                return {'success': False, 'error': 'SNMP sync failed'}
+        
+        # NMC or Auto mode
         try:
             success, message = self._login(pdu_url, username, password)
             
             if not success:
+                # Try SNMP fallback in auto mode
+                if protocol == 'auto' and self._is_session_conflict(message):
+                    self.log("NMC blocked, using SNMP for sync", "WARN")
+                    outlet_states = self._snmp_get_all_outlet_states(ip_address, snmp_community)
+                    
+                    if outlet_states:
+                        for outlet_num, state in outlet_states.items():
+                            self._update_outlet_state(pdu_id, outlet_num, state)
+                        
+                        self.executor.supabase.table('pdus').update({
+                            'last_sync': 'now()'
+                        }).eq('id', pdu_id).execute()
+                        
+                        self._update_pdu_status(pdu_id, 'online', last_seen=True)
+                        
+                        return {
+                            'success': True,
+                            'outlet_states': outlet_states,
+                            'outlets_synced': len(outlet_states),
+                            'protocol_used': 'snmp',
+                            'nmc_blocked': True
+                        }
+                
                 self._update_pdu_status(pdu_id, 'error')
                 return {'success': False, 'error': message}
             
@@ -481,7 +942,8 @@ class PDUHandler(BaseHandler):
             return {
                 'success': True,
                 'outlet_states': outlet_states,
-                'outlets_synced': len(outlet_states)
+                'outlets_synced': len(outlet_states),
+                'protocol_used': 'nmc'
             }
             
         except Exception as e:
