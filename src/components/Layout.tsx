@@ -1,7 +1,7 @@
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { Server, Database, Activity, LogOut, Menu, Settings, LayoutDashboard, ChevronRight, Calendar, FileBarChart } from "lucide-react";
+import { Server, Database, Activity, LogOut, Menu, Settings, LayoutDashboard, ChevronRight, Calendar, FileBarChart, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
 import {
@@ -62,6 +62,7 @@ const Layout = () => {
     { name: "Dashboard", href: "/", icon: LayoutDashboard },
     { name: "Servers", href: "/servers", icon: Server },
     { name: "vCenter", href: "/vcenter", icon: Database },
+    { name: "PDUs", href: "/pdus", icon: Zap },
     { name: "Maintenance Planner", href: "/maintenance-planner", icon: Calendar },
     { name: "Activity Monitor", href: "/activity", icon: Activity },
   ];

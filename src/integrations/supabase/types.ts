@@ -2094,6 +2094,113 @@ export type Database = {
         }
         Relationships: []
       }
+      pdu_outlets: {
+        Row: {
+          id: string
+          last_state_change: string | null
+          last_updated: string | null
+          outlet_name: string | null
+          outlet_number: number
+          outlet_state: string | null
+          pdu_id: string
+        }
+        Insert: {
+          id?: string
+          last_state_change?: string | null
+          last_updated?: string | null
+          outlet_name?: string | null
+          outlet_number: number
+          outlet_state?: string | null
+          pdu_id: string
+        }
+        Update: {
+          id?: string
+          last_state_change?: string | null
+          last_updated?: string | null
+          outlet_name?: string | null
+          outlet_number?: number
+          outlet_state?: string | null
+          pdu_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pdu_outlets_pdu_id_fkey"
+            columns: ["pdu_id"]
+            isOneToOne: false
+            referencedRelation: "pdus"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pdus: {
+        Row: {
+          connection_status: string | null
+          created_at: string | null
+          datacenter: string | null
+          firmware_version: string | null
+          hostname: string | null
+          id: string
+          ip_address: string
+          last_seen: string | null
+          last_sync: string | null
+          manufacturer: string | null
+          model: string | null
+          name: string
+          notes: string | null
+          password_encrypted: string | null
+          protocol: string | null
+          rack_id: string | null
+          snmp_community: string | null
+          total_outlets: number | null
+          updated_at: string | null
+          username: string | null
+        }
+        Insert: {
+          connection_status?: string | null
+          created_at?: string | null
+          datacenter?: string | null
+          firmware_version?: string | null
+          hostname?: string | null
+          id?: string
+          ip_address: string
+          last_seen?: string | null
+          last_sync?: string | null
+          manufacturer?: string | null
+          model?: string | null
+          name: string
+          notes?: string | null
+          password_encrypted?: string | null
+          protocol?: string | null
+          rack_id?: string | null
+          snmp_community?: string | null
+          total_outlets?: number | null
+          updated_at?: string | null
+          username?: string | null
+        }
+        Update: {
+          connection_status?: string | null
+          created_at?: string | null
+          datacenter?: string | null
+          firmware_version?: string | null
+          hostname?: string | null
+          id?: string
+          ip_address?: string
+          last_seen?: string | null
+          last_sync?: string | null
+          manufacturer?: string | null
+          model?: string | null
+          name?: string
+          notes?: string | null
+          password_encrypted?: string | null
+          protocol?: string | null
+          rack_id?: string | null
+          snmp_community?: string | null
+          total_outlets?: number | null
+          updated_at?: string | null
+          username?: string | null
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
@@ -3686,6 +3793,51 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "server_nics_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      server_pdu_mappings: {
+        Row: {
+          created_at: string | null
+          feed_label: string | null
+          id: string
+          notes: string | null
+          outlet_number: number
+          pdu_id: string
+          server_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          feed_label?: string | null
+          id?: string
+          notes?: string | null
+          outlet_number: number
+          pdu_id: string
+          server_id: string
+        }
+        Update: {
+          created_at?: string | null
+          feed_label?: string | null
+          id?: string
+          notes?: string | null
+          outlet_number?: number
+          pdu_id?: string
+          server_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "server_pdu_mappings_pdu_id_fkey"
+            columns: ["pdu_id"]
+            isOneToOne: false
+            referencedRelation: "pdus"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "server_pdu_mappings_server_id_fkey"
             columns: ["server_id"]
             isOneToOne: false
             referencedRelation: "servers"
@@ -5748,6 +5900,10 @@ export type Database = {
         | "scheduled_vcenter_sync"
         | "repair_data_transfer"
         | "repair_nfs_export"
+        | "pdu_test_connection"
+        | "pdu_outlet_control"
+        | "pdu_sync_status"
+        | "pdu_discover"
       operation_type:
         | "idrac_api"
         | "vcenter_api"
@@ -5977,6 +6133,10 @@ export const Constants = {
         "scheduled_vcenter_sync",
         "repair_data_transfer",
         "repair_nfs_export",
+        "pdu_test_connection",
+        "pdu_outlet_control",
+        "pdu_sync_status",
+        "pdu_discover",
       ],
       operation_type: [
         "idrac_api",

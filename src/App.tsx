@@ -23,6 +23,7 @@ import ActivityMonitor from "./pages/ActivityMonitor";
 import MaintenancePlanner from "./pages/MaintenancePlanner";
 import Reports from "./pages/Reports";
 import UpdateReport from "./pages/UpdateReport";
+import Pdus from "./pages/Pdus";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -52,6 +53,7 @@ const App = () => (
                 <Route path="replication" element={<Navigate to="/vcenter?tab=replication" replace />} />
                 <Route path="maintenance-planner" element={<MaintenancePlanner />} />
                 <Route path="activity" element={<ActivityMonitor />} />
+                <Route path="pdus" element={<Pdus />} />
                 <Route path="reports" element={<Reports />} />
                 <Route path="reports/updates/:scanId" element={<UpdateReport />} />
                 <Route path="settings" element={<Settings />} />
