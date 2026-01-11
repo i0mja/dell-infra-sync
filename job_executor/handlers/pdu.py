@@ -42,6 +42,9 @@ SPDU_OUTLET_STATE_OID = '1.3.6.1.4.1.318.1.1.4.4.2.1.4'  # sPDUOutletCtlOutletSt
 RPDU2_OUTLET_CMD_OID = '1.3.6.1.4.1.318.1.1.12.3.3.1.1.4'  # rPDUOutletControlOutletCommand
 RPDU2_OUTLET_STATE_OID = '1.3.6.1.4.1.318.1.1.12.3.5.1.1.4'  # rPDU2OutletSwitchedStatusOutletState
 
+# rPDU Bank Outlet State (bank-aware models like AP8XXX with multiple banks)
+RPDU_BANK_OUTLET_STATE_OID = '1.3.6.1.4.1.318.1.1.12.3.4.1.1.4'  # rPDUOutletStatusOutletState
+
 
 class SnmpOutletCommand(IntEnum):
     """APC SNMP outlet control commands"""
@@ -601,46 +604,68 @@ class PDUHandler(BaseHandler):
         return False, f"SNMP control failed: {last_error}"
     
     def _snmp_get_outlet_state(self, ip: str, community: str, outlet: int) -> Optional[str]:
-        """Get single outlet state via SNMP"""
+        """Get single outlet state via SNMP with detailed error logging"""
         if not SNMP_AVAILABLE:
+            self.log("SNMP library (pysnmp) not available", "DEBUG")
             return None
         
-        # Try both OID types
+        # Try multiple OID types for different APC PDU models
         oids_to_try = [
-            f'{SPDU_OUTLET_STATE_OID}.{outlet}',
-            f'{RPDU2_OUTLET_STATE_OID}.{outlet}',
+            (f'{SPDU_OUTLET_STATE_OID}.{outlet}', 'sPDU'),
+            (f'{RPDU2_OUTLET_STATE_OID}.{outlet}', 'rPDU2'),
+            (f'{RPDU_BANK_OUTLET_STATE_OID}.{outlet}', 'rPDU-Bank'),
         ]
         
-        for oid in oids_to_try:
+        last_error = None
+        for oid, oid_name in oids_to_try:
             try:
                 error_indication, error_status, error_index, var_binds = next(
                     getCmd(
                         SnmpEngine(),
                         CommunityData(community, mpModel=0),
-                        UdpTransportTarget((ip, 161), timeout=5, retries=2),
+                        UdpTransportTarget((ip, 161), timeout=10, retries=3),  # Increased timeout
                         ContextData(),
                         ObjectType(ObjectIdentity(oid))
                     )
                 )
                 
-                if error_indication or error_status:
+                if error_indication:
+                    last_error = f"{oid_name}: {error_indication}"
+                    self.log(f"SNMP {oid_name} outlet {outlet}: error_indication={error_indication}", "DEBUG")
+                    continue
+                    
+                if error_status:
+                    last_error = f"{oid_name}: {error_status.prettyPrint()} at {error_index}"
+                    self.log(f"SNMP {oid_name} outlet {outlet}: error_status={error_status.prettyPrint()}", "DEBUG")
                     continue
                 
                 for var_bind in var_binds:
-                    value = int(var_bind[1])
-                    if value == SnmpOutletState.ON:
-                        return 'on'
-                    elif value == SnmpOutletState.OFF:
-                        return 'off'
+                    try:
+                        value = int(var_bind[1])
+                        if value == SnmpOutletState.ON:
+                            return 'on'
+                        elif value == SnmpOutletState.OFF:
+                            return 'off'
+                        else:
+                            self.log(f"SNMP {oid_name} outlet {outlet}: unknown state value={value}", "DEBUG")
+                    except (ValueError, TypeError) as e:
+                        self.log(f"SNMP {oid_name} outlet {outlet}: value parse error={e}", "DEBUG")
+                        continue
                     
-            except Exception:
+            except Exception as e:
+                last_error = f"{oid_name}: {str(e)}"
+                self.log(f"SNMP {oid_name} outlet {outlet}: exception={e}", "DEBUG")
                 continue
+        
+        if last_error and outlet == 1:
+            # Log detailed error only for first outlet to avoid spam
+            self.log(f"SNMP failed for outlet 1: {last_error}", "WARN")
         
         return None
     
     def _snmp_get_all_outlet_states(self, ip: str, community: str, 
                                      max_outlets: int = 24) -> Dict[int, str]:
-        """Get all outlet states via SNMP walk"""
+        """Get all outlet states via SNMP walk with detailed diagnostics"""
         if not SNMP_AVAILABLE:
             self.log("SNMP library not available - cannot get outlet states", "WARN")
             return {}
@@ -648,31 +673,39 @@ class PDUHandler(BaseHandler):
         self.log(f"Attempting SNMP outlet state retrieval from {ip} (community: {community})")
         outlet_states = {}
         
-        # Try walking the outlet state OIDs
-        base_oids = [SPDU_OUTLET_STATE_OID, RPDU2_OUTLET_STATE_OID]
+        # Try all OID bases - now includes bank-aware OID
+        base_oids = [
+            (SPDU_OUTLET_STATE_OID, 'sPDU'),
+            (RPDU2_OUTLET_STATE_OID, 'rPDU2'),
+            (RPDU_BANK_OUTLET_STATE_OID, 'rPDU-Bank'),
+        ]
         
-        for base_oid in base_oids:
+        for base_oid, oid_name in base_oids:
             try:
-                self.log(f"Trying SNMP OID base: {base_oid}")
+                self.log(f"Trying SNMP OID base: {oid_name} ({base_oid})")
                 for outlet_num in range(1, max_outlets + 1):
                     state = self._snmp_get_outlet_state(ip, community, outlet_num)
                     if state:
                         outlet_states[outlet_num] = state
                     else:
-                        # If we get no response, assume we've reached the end
-                        if outlet_num > 1 and not outlet_states:
+                        # If we get no response after trying first outlet, try next OID base
+                        if outlet_num == 1:
+                            self.log(f"OID base {oid_name} returned no data for outlet 1, trying next", "DEBUG")
+                            break
+                        # If we had some results but hit a gap, we've reached the end
+                        elif outlet_states:
                             break
                 
                 if outlet_states:
-                    self.log(f"SNMP retrieved {len(outlet_states)} outlet states via {base_oid}: {outlet_states}")
+                    self.log(f"SNMP retrieved {len(outlet_states)} outlet states via {oid_name}: {outlet_states}")
                     break
                     
             except Exception as e:
-                self.log(f"SNMP walk error: {e}", "WARN")
+                self.log(f"SNMP walk error for {oid_name}: {e}", "WARN")
                 continue
         
         if not outlet_states:
-            self.log(f"SNMP returned no outlet states - check community string '{community}' and PDU SNMP settings", "WARN")
+            self.log(f"SNMP returned no outlet states - check: 1) SNMP enabled on PDU 2) community '{community}' is correct 3) UDP port 161 is accessible", "WARN")
         
         return outlet_states
     
@@ -1208,7 +1241,7 @@ class PDUHandler(BaseHandler):
         password = pdu.get('password', 'apc')
         snmp_community = pdu.get('snmp_community', 'public')
         
-        # SNMP-only mode
+        # SNMP-only mode (with NMC fallback)
         if protocol == 'snmp':
             outlet_states = self._snmp_get_all_outlet_states(ip_address, snmp_community)
             
@@ -1244,7 +1277,64 @@ class PDUHandler(BaseHandler):
                     'protocol_used': 'snmp'
                 }
             else:
-                return {'success': False, 'error': 'SNMP sync failed'}
+                # SNMP failed - fall back to NMC web interface
+                self.log("SNMP sync failed for snmp-mode PDU, falling back to NMC web interface", "WARN")
+                try:
+                    success, message = self._login(pdu_url, username, password)
+                    
+                    # If session conflict detected, try Telnet clear and retry
+                    if not success and self._is_session_conflict(message):
+                        self.log("Session conflict detected, attempting Telnet session clear", "WARN")
+                        clear_success, clear_msg = self._clear_pdu_sessions_via_telnet(ip_address, username, password)
+                        if clear_success:
+                            self.log("Telnet clear successful, retrying NMC login")
+                            time.sleep(2)
+                            success, message = self._login(pdu_url, username, password)
+                    
+                    if success:
+                        outlet_states = self._get_outlet_states()
+                        if outlet_states:
+                            for outlet_num, state in outlet_states.items():
+                                self._update_outlet_state(pdu_id, outlet_num, state)
+                            
+                            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+                            from datetime import datetime, timezone
+                            
+                            current_time = datetime.now(timezone.utc).isoformat()
+                            requests.patch(
+                                f"{DSM_URL}/rest/v1/pdus",
+                                headers={
+                                    'apikey': SERVICE_ROLE_KEY,
+                                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                    'Content-Type': 'application/json',
+                                    'Prefer': 'return=minimal'
+                                },
+                                params={'id': f'eq.{pdu_id}'},
+                                json={'last_sync': current_time},
+                                verify=VERIFY_SSL,
+                                timeout=10
+                            )
+                            
+                            self._logout()
+                            self._update_pdu_status(pdu_id, 'online', last_seen=True)
+                            
+                            return {
+                                'success': True,
+                                'outlet_states': outlet_states,
+                                'outlets_synced': len(outlet_states),
+                                'protocol_used': 'nmc_fallback',
+                                'warning': 'SNMP failed, used NMC web interface as fallback'
+                            }
+                        else:
+                            self._logout()
+                            return {'success': False, 'error': 'SNMP failed and NMC returned no outlet data'}
+                    else:
+                        return {'success': False, 'error': f'SNMP failed and NMC login failed: {message}'}
+                except Exception as e:
+                    self.log(f"NMC fallback error: {e}", "ERROR")
+                    return {'success': False, 'error': f'SNMP failed and NMC fallback failed: {e}'}
+                finally:
+                    self._logout()
         
         # Auto mode - try SNMP first (fast and reliable), fall back to NMC
         if protocol == 'auto':
