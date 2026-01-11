@@ -1592,9 +1592,9 @@ class PDUHandler(BaseHandler):
                             self._logout()
                             return {'success': False, 'error': 'SNMP failed and NMC returned no outlet data'}
                     else:
-                    self._add_diagnostic('ERROR', 'sync_failed', f'SNMP failed and NMC login failed: {message}')
-                    self._save_diagnostics(pdu_id)
-                    return {'success': False, 'error': f'SNMP failed and NMC login failed: {message}'}
+                        self._add_diagnostic('ERROR', 'sync_failed', f'SNMP failed and NMC login failed: {message}')
+                        self._save_diagnostics(pdu_id)
+                        return {'success': False, 'error': f'SNMP failed and NMC login failed: {message}'}
             except Exception as e:
                 self.log(f"NMC fallback error: {e}", "ERROR")
                 self._add_diagnostic('ERROR', 'sync_failed', f'NMC fallback exception: {e}')
