@@ -1879,7 +1879,7 @@ class PDUHandler(BaseHandler):
                         'Prefer': 'return=minimal'
                     },
                     params={'id': f'eq.{pdu_id}'},
-                    json={'last_sync': current_time},
+                    json={'last_sync': current_time, 'total_outlets': len(outlet_states)},
                     verify=VERIFY_SSL,
                     timeout=10
                 )
@@ -1928,7 +1928,7 @@ class PDUHandler(BaseHandler):
                                     'Prefer': 'return=minimal'
                                 },
                                 params={'id': f'eq.{pdu_id}'},
-                                json={'last_sync': current_time},
+                                json={'last_sync': current_time, 'total_outlets': len(outlet_states)},
                                 verify=VERIFY_SSL,
                                 timeout=10
                             )
@@ -1987,7 +1987,7 @@ class PDUHandler(BaseHandler):
                         'Prefer': 'return=minimal'
                     },
                     params={'id': f'eq.{pdu_id}'},
-                    json={'last_sync': current_time},
+                    json={'last_sync': current_time, 'total_outlets': len(outlet_states)},
                     verify=VERIFY_SSL,
                     timeout=10
                 )
@@ -2053,7 +2053,7 @@ class PDUHandler(BaseHandler):
                         'Prefer': 'return=minimal'
                     },
                     params={'id': f'eq.{pdu_id}'},
-                    json={'last_sync': current_time},
+                    json={'last_sync': current_time, 'total_outlets': len(outlet_states)},
                     verify=VERIFY_SSL,
                     timeout=10
                 )
@@ -2090,7 +2090,7 @@ class PDUHandler(BaseHandler):
                     'Prefer': 'return=minimal'
                 },
                 params={'id': f'eq.{pdu_id}'},
-                json={'last_sync': current_time},
+                json={'last_sync': current_time, 'total_outlets': len(outlet_states)},
                 verify=VERIFY_SSL,
                 timeout=10
             )
