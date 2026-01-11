@@ -1798,6 +1798,26 @@ class PDUHandler(BaseHandler):
                             outlet_states[outlet_num] = state
                             self.log(f"Pattern 14 found: Outlet {outlet_num} = {state}")
             
+            # Pattern 15: APC text-concatenated format without HTML delimiters
+            # Matches: On[1-N]1 HUS-110On[1-N]2 s06-els-qua-d04...
+            # Format: State[PendingIndicator]Bank OutletName - repeated for each outlet
+            if not outlet_states:
+                self.log("Trying Pattern 15 (APC text-concatenated format)...")
+                # This pattern matches: On or Off, followed by [X-Y], then bank number, then outlet name
+                # The outlet name continues until the next On/Off[, asterisk, or end
+                text_concat_pattern = r'(On|Off)\[\d+-[A-Z]\]\d+\s+([^\[]+?)(?=(?:On|Off)\[|\*\s*Indicates|$)'
+                text_matches = re.findall(text_concat_pattern, content, re.IGNORECASE)
+                self.log(f"Pattern 15 matches: {len(text_matches)}")
+                
+                outlet_num = 1
+                for match in text_matches:
+                    state = 'on' if match[0].lower() == 'on' else 'off'
+                    outlet_name = match[1].strip()
+                    if outlet_num <= 48:
+                        outlet_states[outlet_num] = state
+                        self.log(f"Pattern 15 found: Outlet {outlet_num} ({outlet_name}) = {state}")
+                    outlet_num += 1
+            
             # Store HTML for debugging (increased to 8000 chars)
             self._last_outlet_html = content[:8000] if content else "EMPTY_CONTENT"
             
