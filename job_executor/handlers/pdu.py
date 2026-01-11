@@ -663,51 +663,99 @@ class PDUHandler(BaseHandler):
         
         return None
     
+    def _snmp_walk_outlet_states(self, ip: str, community: str, base_oid: str, oid_name: str) -> Dict[int, str]:
+        """
+        Walk an SNMP OID subtree to discover all outlet states.
+        This works regardless of the PDU's OID indexing scheme (sequential, bank-indexed, etc.)
+        
+        Returns dict mapping outlet number (1-based) to state ('on' or 'off')
+        """
+        outlet_states = {}
+        
+        try:
+            self.log(f"SNMP walking OID: {oid_name} ({base_oid})")
+            outlet_index = 1  # Sequential outlet numbering
+            
+            for error_indication, error_status, error_index, var_binds in nextCmd(
+                SnmpEngine(),
+                CommunityData(community, mpModel=0),
+                UdpTransportTarget((ip, 161), timeout=10, retries=2),
+                ContextData(),
+                ObjectType(ObjectIdentity(base_oid)),
+                lexicographicMode=False  # Stop when leaving this OID subtree
+            ):
+                if error_indication:
+                    self.log(f"SNMP walk error_indication: {error_indication}", "DEBUG")
+                    break
+                if error_status:
+                    self.log(f"SNMP walk error_status: {error_status.prettyPrint()}", "DEBUG")
+                    break
+                
+                for var_bind in var_binds:
+                    oid_str = str(var_bind[0])
+                    # Verify we're still in the target OID subtree
+                    if not oid_str.startswith(base_oid):
+                        self.log(f"SNMP walk left subtree at {oid_str}", "DEBUG")
+                        break
+                    
+                    try:
+                        value = int(var_bind[1])
+                        if value == SnmpOutletState.ON:
+                            state = 'on'
+                        elif value == SnmpOutletState.OFF:
+                            state = 'off'
+                        else:
+                            self.log(f"SNMP walk: unknown state value {value} at {oid_str}", "DEBUG")
+                            continue
+                        
+                        outlet_states[outlet_index] = state
+                        self.log(f"SNMP walk: outlet {outlet_index} = {state} (OID: {oid_str})", "DEBUG")
+                        outlet_index += 1
+                    except (ValueError, TypeError) as e:
+                        self.log(f"SNMP walk: parse error at {oid_str}: {e}", "DEBUG")
+                        continue
+            
+            if outlet_states:
+                self.log(f"SNMP walk via {oid_name} found {len(outlet_states)} outlets")
+                
+        except Exception as e:
+            self.log(f"SNMP walk exception for {oid_name}: {e}", "WARN")
+        
+        return outlet_states
+    
     def _snmp_get_all_outlet_states(self, ip: str, community: str, 
                                      max_outlets: int = 24) -> Dict[int, str]:
-        """Get all outlet states via SNMP walk with detailed diagnostics"""
+        """
+        Get all outlet states via SNMP walk with automatic OID discovery.
+        Tries multiple OID bases to support different APC PDU models.
+        """
         if not SNMP_AVAILABLE:
             self.log("SNMP library not available - cannot get outlet states", "WARN")
             return {}
         
-        self.log(f"Attempting SNMP outlet state retrieval from {ip} (community: {community})")
-        outlet_states = {}
+        self.log(f"Starting SNMP outlet discovery from {ip} using walk (community: {community})")
         
-        # Try all OID bases - now includes bank-aware OID
-        base_oids = [
+        # Try all OID bases using SNMP walk
+        oid_bases = [
             (SPDU_OUTLET_STATE_OID, 'sPDU'),
             (RPDU2_OUTLET_STATE_OID, 'rPDU2'),
             (RPDU_BANK_OUTLET_STATE_OID, 'rPDU-Bank'),
         ]
         
-        for base_oid, oid_name in base_oids:
-            try:
-                self.log(f"Trying SNMP OID base: {oid_name} ({base_oid})")
-                for outlet_num in range(1, max_outlets + 1):
-                    state = self._snmp_get_outlet_state(ip, community, outlet_num)
-                    if state:
-                        outlet_states[outlet_num] = state
-                    else:
-                        # If we get no response after trying first outlet, try next OID base
-                        if outlet_num == 1:
-                            self.log(f"OID base {oid_name} returned no data for outlet 1, trying next", "DEBUG")
-                            break
-                        # If we had some results but hit a gap, we've reached the end
-                        elif outlet_states:
-                            break
-                
-                if outlet_states:
-                    self.log(f"SNMP retrieved {len(outlet_states)} outlet states via {oid_name}: {outlet_states}")
-                    break
-                    
-            except Exception as e:
-                self.log(f"SNMP walk error for {oid_name}: {e}", "WARN")
-                continue
+        for base_oid, oid_name in oid_bases:
+            outlet_states = self._snmp_walk_outlet_states(ip, community, base_oid, oid_name)
+            if outlet_states:
+                self.log(f"SNMP walk discovered {len(outlet_states)} outlets via {oid_name}: {outlet_states}")
+                return outlet_states
         
-        if not outlet_states:
-            self.log(f"SNMP returned no outlet states - check: 1) SNMP enabled on PDU 2) community '{community}' is correct 3) UDP port 161 is accessible", "WARN")
-        
-        return outlet_states
+        self.log(
+            f"SNMP walk returned no outlets - verify: "
+            f"1) SNMP is enabled on PDU "
+            f"2) Community string '{community}' has read access "
+            f"3) UDP port 161 is accessible from executor", 
+            "WARN"
+        )
+        return {}
     
     def _snmp_test_connection(self, ip: str, community: str) -> Tuple[bool, str]:
         """Test SNMP connectivity by trying to read outlet 1 state"""
