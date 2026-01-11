@@ -224,7 +224,7 @@ export function PduDetailsSidebar({
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <h4 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
-                  Outlets ({selectedPdu.total_outlets || outlets.length})
+                  Outlets ({outlets.length || selectedPdu.total_outlets || 0})
                 </h4>
                 <div className="flex items-center gap-2 text-xs">
                   <span className="flex items-center gap-1">
@@ -282,7 +282,7 @@ export function PduDetailsSidebar({
                 </div>
                 <div className="p-2 rounded-md bg-muted/30">
                   <p className="text-[10px] text-muted-foreground uppercase">Outlets</p>
-                  <p className="font-medium">{selectedPdu.total_outlets || 0}</p>
+                  <p className="font-medium">{outlets.length || selectedPdu.total_outlets || 0}</p>
                 </div>
                 {selectedPdu.firmware_version && (
                   <div className="p-2 rounded-md bg-muted/30 col-span-2">
