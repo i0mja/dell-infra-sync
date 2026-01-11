@@ -49,7 +49,7 @@ interface GroupData {
 interface ServerDetailsSidebarProps {
   selectedServer: Server | null;
   selectedGroup: GroupData | null;
-  hardwareIssues?: Map<string, { drive_issues: number; memory_issues: number }>;
+  hardwareIssues?: Map<string, { drive_issues: number; memory_issues: number; has_critical?: boolean; has_warning?: boolean }>;
   isRefreshing?: boolean;
   isTesting?: boolean;
   isLaunchingConsole?: boolean;
@@ -78,15 +78,15 @@ interface ServerDetailsSidebarProps {
 }
 
 // Status bar color based on connection status
-function getStatusBarColor(status: string | null, isDegraded: boolean): string {
+function getStatusBarColor(status: string | null, isDegraded: boolean, hasCritical: boolean): string {
   if (status === "online" && isDegraded) {
-    return "bg-amber-500";
+    return hasCritical ? "bg-destructive" : "bg-amber-500";
   }
   switch (status) {
     case "online":
       return "bg-success";
     case "offline":
-      return "bg-destructive";
+      return "bg-muted"; // Grey for offline (not red - it's not an error state)
     default:
       return "bg-muted";
   }
@@ -185,17 +185,18 @@ export function ServerDetailsSidebar({
     const issues = hardwareIssues?.get(selectedServer.id);
     const isDegraded = selectedServer.connection_status === "online" && 
                        ((issues?.drive_issues || 0) + (issues?.memory_issues || 0)) > 0;
+    const hasCritical = issues?.has_critical || false;
 
     const statusBadgeColors: Record<string, string> = {
       online: "bg-success text-success-foreground",
-      offline: "bg-destructive text-destructive-foreground",
+      offline: "bg-muted text-muted-foreground", // Grey for offline
       unknown: "bg-muted text-muted-foreground",
     };
 
     return (
       <div className="w-[440px] flex-shrink-0 border-l bg-card h-full flex flex-col overflow-hidden">
         {/* Status Bar */}
-        <div className={`h-1.5 ${getStatusBarColor(selectedServer.connection_status, isDegraded)}`} />
+        <div className={`h-1.5 ${getStatusBarColor(selectedServer.connection_status, isDegraded, hasCritical)}`} />
 
         {/* Header */}
         <CardHeader className="pb-2 pt-3">
@@ -242,8 +243,12 @@ export function ServerDetailsSidebar({
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Badge className={isDegraded ? "bg-amber-500 text-white" : statusBadgeColors[selectedServer.connection_status || "unknown"]}>
-                    {isDegraded ? "Degraded" : (selectedServer.connection_status || "Unknown")}
+                  <Badge className={
+                    isDegraded 
+                      ? (hasCritical ? "bg-destructive text-destructive-foreground" : "bg-amber-500 text-white")
+                      : statusBadgeColors[selectedServer.connection_status || "unknown"]
+                  }>
+                    {isDegraded ? (hasCritical ? "Critical" : "Warning") : (selectedServer.connection_status || "Unknown")}
                   </Badge>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" className="text-xs">

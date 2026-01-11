@@ -26,6 +26,14 @@ export function formatDellPartNumber(partNumber: string | null): string | null {
     return noDashMatch[1];
   }
   
+  // Format 3: Toshiba/Seagate HDDs without dashes - PHxxxPARTNUM...
+  // Pattern: 2-letter prefix + 1 digit + Dell part number (starts with 0, 6-7 chars)
+  // Example: PH0F9NWJ... -> 0F9NWJ
+  const hddMatch = partNumber.match(/^[A-Z]{2}(0[0-9A-Z]{5,6})/i);
+  if (hddMatch) {
+    return hddMatch[1];
+  }
+  
   // If it doesn't match known formats, return as-is
   return partNumber;
 }
