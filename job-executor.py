@@ -319,7 +319,8 @@ class JobExecutor(DatabaseMixin, CredentialsMixin, VCenterMixin, VCenterDbUpsert
                 'capabilities': [
                     'firmware_update', 'ip_discovery', 'vcenter_sync', 
                     'esxi_upgrade', 'failover_preflight_check', 'group_failover',
-                    'replication_sync', 'sla_check', 'cluster_safety_check'
+                    'replication_sync', 'sla_check', 'cluster_safety_check',
+                    'pdu_test_connection', 'pdu_discover', 'pdu_outlet_control', 'pdu_sync_status'
                 ]
             }
             
