@@ -125,7 +125,7 @@ export const PriorityAlertCenter = () => {
           part_number, model, serial_number, media_type,
           servers!inner(id, hostname, ip_address, datacenter, rack_id, rack_position)
         `)
-        .or('health.eq.Critical,status.eq.Disabled,status.eq.UnavailableOffline,predicted_failure.eq.true');
+        .or('health.eq.Critical,health.eq.Warning,status.eq.Disabled,status.eq.UnavailableOffline,predicted_failure.eq.true');
 
       // Get servers with critical memory - include component details
       const { data: memoryIssues } = await supabase
@@ -134,7 +134,7 @@ export const PriorityAlertCenter = () => {
           server_id, slot_name, health, part_number, serial_number, manufacturer,
           servers!inner(id, hostname, ip_address, datacenter, rack_id, rack_position)
         `)
-        .eq('health', 'Critical');
+        .or('health.eq.Critical,health.eq.Warning');
 
       // Build a model -> part_number lookup from healthy drives for fallback
       const { data: modelPartNumbers } = await supabase
@@ -221,13 +221,14 @@ export const PriorityAlertCenter = () => {
           };
         }
         
+        const isCritical = m.health === 'Critical';
         serverIssues[server.id].components.push({
           type: 'memory',
           slot: m.slot_name || 'Unknown slot',
           partNumber: m.part_number,
           manufacturer: m.manufacturer,
-          severity: 'critical',
-          message: 'Critical'
+          severity: isCritical ? 'critical' : 'warning',
+          message: isCritical ? 'Critical' : 'Warning'
         });
       });
 
@@ -288,11 +289,14 @@ export const PriorityAlertCenter = () => {
 
   if (hardwareFaults && hardwareFaults.length > 0) {
     const totalComponents = hardwareFaults.reduce((sum, f) => sum + f.components.length, 0);
+    const hasCriticalComponent = hardwareFaults.some(f => 
+      f.components.some(c => c.severity === 'critical')
+    );
     categories.push({
       id: 'hardware',
       icon: HardDrive,
       title: 'Hardware Faults',
-      severity: 'critical',
+      severity: hasCriticalComponent ? 'critical' : 'warning',
       count: totalComponents,
       items: hardwareFaults.map(f => {
         const driveCount = f.components.filter(c => c.type === 'drive').length;
