@@ -1333,12 +1333,23 @@ class PDUHandler(BaseHandler):
             
             self._logout()
             
-            return {
+            # Build response with debug info when 0 outlets found
+            response_data = {
                 'success': True,
                 'outlet_states': outlet_states,
                 'outlets_synced': len(outlet_states),
                 'protocol_used': 'nmc'
             }
+            
+            # Include debug info when no outlets found
+            if len(outlet_states) == 0:
+                response_data['debug'] = {
+                    'session_token': self._session_token[:20] if self._session_token else None,
+                    'outlet_page_url': getattr(self, '_successful_outlet_url', None),
+                    'html_snippet': getattr(self, '_last_outlet_html', None)
+                }
+            
+            return response_data
             
         except Exception as e:
             self.log(f"Sync error: {e}", "ERROR")
@@ -1426,8 +1437,13 @@ class PDUHandler(BaseHandler):
         
         Returns dict of outlet_number -> state ('on', 'off', 'unknown')
         """
+        # Initialize debug attributes
+        self._last_outlet_html = None
+        self._successful_outlet_url = None
+        
         if not self._session_token or not self._session:
             self.log("Cannot get outlet states: no session token or session", "WARN")
+            self._last_outlet_html = "NO_SESSION"
             return {}
         
         try:
@@ -1441,6 +1457,9 @@ class PDUHandler(BaseHandler):
                     f"{self._pdu_url}/outlet.htm",
                     f"{self._pdu_url}/rPDUout.htm",
                     f"{self._pdu_url}/rPDUOutletControl.htm",
+                    f"{self._pdu_url}/rpdu/outlpwr.htm",
+                    f"{self._pdu_url}/rpdu/outlctrl.htm",
+                    f"{self._pdu_url}/ms/outlctrl.htm",
                 ]
             else:
                 # Token-based auth uses NMC path
@@ -1449,19 +1468,26 @@ class PDUHandler(BaseHandler):
                     f"{self._pdu_url}/NMC/{self._session_token}/outlet.htm",
                     f"{self._pdu_url}/NMC/{self._session_token}/rPDUout.htm",
                     f"{self._pdu_url}/NMC/{self._session_token}/rPDUOutletControl.htm",
-                    # Also try without token in case it's not needed
+                    # Rack PDU specific paths
+                    f"{self._pdu_url}/NMC/{self._session_token}/rpdu/outlpwr.htm",
+                    f"{self._pdu_url}/NMC/{self._session_token}/rpdu/outlctrl.htm",
+                    f"{self._pdu_url}/NMC/{self._session_token}/ms/outlctrl.htm",
+                    # Also try without token in case session is cookie-based
                     f"{self._pdu_url}/outlctrl.htm",
                     f"{self._pdu_url}/outlet.htm",
+                    f"{self._pdu_url}/rpdu/outlpwr.htm",
                 ]
             
             content = None
             successful_url = None
             
+            self.log(f"Session token being used: {self._session_token[:20] if self._session_token else 'None'}...")
+            
             for url in outlet_urls:
                 self.log(f"Trying outlet URL: {url}")
                 try:
                     response = self._session.get(url, timeout=self._request_timeout)
-                    self.log(f"Response: {response.status_code}")
+                    self.log(f"Response: {response.status_code}, length: {len(response.text)}")
                     
                     if response.status_code == 200:
                         # Check if this looks like an outlet control page
@@ -1472,13 +1498,18 @@ class PDUHandler(BaseHandler):
                             self.log(f"Found outlet page at: {url}")
                             break
                         else:
-                            self.log(f"Page doesn't contain outlet info, trying next")
+                            self.log(f"Page doesn't contain outlet/pdu/power keywords, trying next")
+                            self.log(f"Page snippet: {response.text[:200]}")
                 except Exception as e:
                     self.log(f"Error fetching {url}: {e}")
                     continue
             
+            # Store for debugging
+            self._successful_outlet_url = successful_url
+            
             if not content:
                 self.log("No outlet page found at any URL", "WARN")
+                self._last_outlet_html = "NO_PAGE_FOUND"
                 return {}
             
             self.log(f"Outlet page HTML snippet (first 800 chars): {content[:800]}")
@@ -1558,6 +1589,9 @@ class PDUHandler(BaseHandler):
                 if outlet_num not in outlet_states:
                     outlet_states[outlet_num] = state
             
+            # Store HTML for debugging
+            self._last_outlet_html = content[:2000] if content else "EMPTY_CONTENT"
+            
             if not outlet_states:
                 self.log("No outlet patterns matched in HTML - may need new regex patterns", "WARN")
                 self.log(f"Full HTML for debugging:\n{content[:2000]}", "DEBUG")
@@ -1568,6 +1602,7 @@ class PDUHandler(BaseHandler):
             
         except Exception as e:
             self.log(f"Error getting outlet states: {e}", "ERROR")
+            self._last_outlet_html = f"ERROR: {e}"
             return {}
     
     # =========================================================================
