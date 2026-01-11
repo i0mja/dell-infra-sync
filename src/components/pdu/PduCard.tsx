@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { PduStatusBadge } from './PduStatusBadge';
 import { OutletStateIndicator } from './OutletStateIndicator';
+import { PduDiagnosticsDialog } from './PduDiagnosticsDialog';
 import { usePduOutlets } from '@/hooks/usePdus';
 import {
   MoreVertical,
@@ -19,6 +20,7 @@ import {
   Zap,
   Loader2,
   Network,
+  AlertCircle,
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import type { Pdu } from '@/types/pdu';
@@ -42,8 +44,13 @@ export function PduCard({
 }: PduCardProps) {
   const [isTesting, setIsTesting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const { outlets } = usePduOutlets(pdu.id);
-
+  
+  // Check if there are error diagnostics
+  const hasErrorDiagnostics = pdu.last_sync_diagnostics?.entries?.some(
+    e => e.level === 'ERROR' || e.level === 'WARN'
+  );
   const handleTest = async () => {
     setIsTesting(true);
     try {
@@ -101,6 +108,12 @@ export function PduCard({
                   <Network className="mr-2 h-4 w-4" />
                   Manage Outlets
                 </DropdownMenuItem>
+                {pdu.last_sync_diagnostics && (
+                  <DropdownMenuItem onClick={() => setShowDiagnostics(true)}>
+                    <AlertCircle className="mr-2 h-4 w-4" />
+                    View Diagnostics
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem 
                   onClick={() => onDelete(pdu)}
@@ -116,6 +129,19 @@ export function PduCard({
       </CardHeader>
 
       <CardContent className="space-y-4">
+        {/* Error diagnostic warning */}
+        {hasErrorDiagnostics && pdu.connection_status === 'error' && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full text-destructive border-destructive/50 hover:bg-destructive/10"
+            onClick={() => setShowDiagnostics(true)}
+          >
+            <AlertCircle className="mr-2 h-4 w-4" />
+            View Sync Diagnostics
+          </Button>
+        )}
+        
         {/* Outlet Grid */}
         <div className="space-y-2">
           <div className="flex items-center justify-between text-sm">
@@ -211,6 +237,14 @@ export function PduCard({
           </Button>
         </div>
       </CardContent>
+      
+      {/* Diagnostics Dialog */}
+      <PduDiagnosticsDialog
+        pdu={pdu}
+        open={showDiagnostics}
+        onOpenChange={setShowDiagnostics}
+        onRefresh={handleSync}
+      />
     </Card>
   );
 }

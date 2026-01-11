@@ -22,6 +22,17 @@ export interface Pdu {
   datacenter?: string;
   rack_id?: string;
   notes?: string;
+  last_sync_diagnostics?: {
+    collected_at: string;
+    snmp_available: boolean;
+    entries: Array<{
+      timestamp: string;
+      level: string;
+      operation: string;
+      message: string;
+      details?: Record<string, unknown>;
+    }>;
+  };
   created_at: string;
   updated_at: string;
 }
