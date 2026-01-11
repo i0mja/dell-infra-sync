@@ -1083,3 +1083,185 @@ export async function syncPduStatusApi(pduId: string): Promise<PduSyncStatusResp
     throw new Error('Unknown error syncing PDU status');
   }
 }
+
+// ============================================================================
+// vCenter Instant API Functions
+// ============================================================================
+
+export interface VCenterSyncResponse {
+  success: boolean;
+  vcenter_id?: string | null;
+  message?: string;
+  response_time_ms?: number;
+  error?: string;
+}
+
+export interface PartialSyncResponse {
+  success: boolean;
+  vcenter_id?: string | null;
+  sync_scope?: string;
+  message?: string;
+  response_time_ms?: number;
+  error?: string;
+}
+
+/**
+ * Trigger vCenter sync via instant API
+ */
+export async function triggerVCenterSyncApi(vcenterId?: string): Promise<VCenterSyncResponse> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/vcenter-sync`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ vcenter_id: vcenterId }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to trigger vCenter sync');
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        throw new Error('Job Executor is not running or not reachable. Please ensure it is started on your local network.');
+      }
+      throw error;
+    }
+    throw new Error('Unknown error triggering vCenter sync');
+  }
+}
+
+/**
+ * Trigger partial vCenter sync (VMs, hosts, clusters, etc.) via instant API
+ */
+export async function triggerPartialSyncApi(
+  syncScope: 'vms' | 'hosts' | 'clusters' | 'datastores' | 'networks',
+  vcenterId?: string
+): Promise<PartialSyncResponse> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/partial-vcenter-sync`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ 
+        vcenter_id: vcenterId,
+        sync_scope: syncScope 
+      }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to trigger partial sync');
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        throw new Error('Job Executor is not running or not reachable. Please ensure it is started on your local network.');
+      }
+      throw error;
+    }
+    throw new Error('Unknown error triggering partial sync');
+  }
+}
+
+// ============================================================================
+// Datastore Instant API Functions
+// ============================================================================
+
+export type DatastoreOperation = 'status' | 'mount_all' | 'mount_hosts' | 'unmount_hosts' | 'unmount_all' | 'refresh' | 'rescan';
+
+export interface ManageDatastoreResponse {
+  success: boolean;
+  target_id?: string;
+  operation?: string;
+  message?: string;
+  response_time_ms?: number;
+  error?: string;
+}
+
+export interface ScanDatastoreStatusResponse {
+  success: boolean;
+  target_id?: string;
+  message?: string;
+  response_time_ms?: number;
+  error?: string;
+}
+
+/**
+ * Manage datastore mounts via instant API
+ */
+export async function manageDatastoreApi(
+  targetId: string,
+  operation: DatastoreOperation,
+  hostNames?: string[]
+): Promise<ManageDatastoreResponse> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/manage-datastore`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ 
+        target_id: targetId,
+        operation,
+        host_names: hostNames || []
+      }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to manage datastore');
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        throw new Error('Job Executor is not running or not reachable. Please ensure it is started on your local network.');
+      }
+      throw error;
+    }
+    throw new Error('Unknown error managing datastore');
+  }
+}
+
+/**
+ * Scan datastore status from vCenter via instant API
+ */
+export async function scanDatastoreStatusApi(targetId: string): Promise<ScanDatastoreStatusResponse> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/scan-datastore-status`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ target_id: targetId }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to scan datastore status');
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        throw new Error('Job Executor is not running or not reachable. Please ensure it is started on your local network.');
+      }
+      throw error;
+    }
+    throw new Error('Unknown error scanning datastore status');
+  }
+}

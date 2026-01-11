@@ -1,6 +1,17 @@
+/**
+ * useDatastoreManagement Hook
+ * 
+ * Provides datastore management operations with instant API support.
+ * Uses the centralized datastoreService for instant-first pattern.
+ */
+
 import { useState } from 'react';
-import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { 
+  manageDatastore, 
+  scanDatastoreStatus,
+  type DatastoreOperation 
+} from '@/services/datastoreService';
 
 export interface HostMountStatus {
   host_id: string;
@@ -18,21 +29,17 @@ export interface DatastoreMountResult {
   mounted_count: number;
 }
 
-export type DatastoreOperation = 
-  | 'status' 
-  | 'mount_all' 
-  | 'mount_hosts' 
-  | 'unmount_hosts' 
-  | 'unmount_all' 
-  | 'refresh'
-  | 'scan'
-  | 'rescan';
+// Re-export the type for backward compatibility
+export type { DatastoreOperation };
 
 export function useDatastoreManagement() {
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
-  const createDatastoreJob = async (
+  /**
+   * Execute a datastore operation using instant API with job queue fallback
+   */
+  const executeOperation = async (
     targetId: string,
     operation: DatastoreOperation,
     hostNames?: string[]
@@ -40,40 +47,31 @@ export function useDatastoreManagement() {
     try {
       setLoading(true);
 
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        throw new Error('Authentication required');
+      const result = await manageDatastore(targetId, operation, hostNames);
+
+      // If result is a string, it's a job ID (fallback to job queue)
+      if (typeof result === 'string') {
+        toast({
+          title: "Datastore job created",
+          description: `Operation: ${operation.replace('_', ' ')} (queued)`,
+        });
+        return result;
       }
 
-      // Create manage_datastore job
-      const { data: job, error } = await supabase
-        .from('jobs')
-        .insert({
-          job_type: 'manage_datastore',
-          status: 'pending',
-          created_by: user.id,
-          details: {
-            target_id: targetId,
-            operation,
-            host_names: hostNames || [],
-          },
-          target_scope: {}
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      toast({
-        title: "Datastore job created",
-        description: `Operation: ${operation.replace('_', ' ')}`,
-      });
-
-      return job.id;
+      // Instant API success
+      if (result.success) {
+        toast({
+          title: "Operation completed",
+          description: result.message || `${operation.replace('_', ' ')} completed`,
+        });
+        return null; // No job ID - completed instantly
+      } else {
+        throw new Error(result.error || 'Operation failed');
+      }
     } catch (error) {
-      console.error('Failed to create datastore job:', error);
+      console.error('Failed to execute datastore operation:', error);
       toast({
-        title: "Failed to create job",
+        title: "Operation failed",
         description: error instanceof Error ? error.message : 'Unknown error',
         variant: "destructive",
       });
@@ -84,65 +82,58 @@ export function useDatastoreManagement() {
   };
 
   const getDatastoreMountStatus = async (targetId: string) => {
-    return createDatastoreJob(targetId, 'status');
+    return executeOperation(targetId, 'status');
   };
 
   const mountOnAllHosts = async (targetId: string) => {
-    return createDatastoreJob(targetId, 'mount_all');
+    return executeOperation(targetId, 'mount_all');
   };
 
   const mountOnHosts = async (targetId: string, hostNames: string[]) => {
-    return createDatastoreJob(targetId, 'mount_hosts', hostNames);
+    return executeOperation(targetId, 'mount_hosts', hostNames);
   };
 
   const unmountFromHosts = async (targetId: string, hostNames: string[]) => {
-    return createDatastoreJob(targetId, 'unmount_hosts', hostNames);
+    return executeOperation(targetId, 'unmount_hosts', hostNames);
   };
 
   const unmountFromAllHosts = async (targetId: string) => {
-    return createDatastoreJob(targetId, 'unmount_all');
+    return executeOperation(targetId, 'unmount_all');
   };
 
   const refreshMounts = async (targetId: string) => {
-    return createDatastoreJob(targetId, 'refresh');
+    return executeOperation(targetId, 'refresh');
   };
 
   const rescanDatastore = async (targetId: string) => {
     try {
       setLoading(true);
 
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        throw new Error('Authentication required');
+      const result = await manageDatastore(targetId, 'rescan');
+
+      // If result is a string, it's a job ID (fallback to job queue)
+      if (typeof result === 'string') {
+        toast({
+          title: "Rescan job created",
+          description: "vCenter will refresh its view of the datastore contents (queued)",
+        });
+        return result;
       }
 
-      const { data: job, error } = await supabase
-        .from('jobs')
-        .insert({
-          job_type: 'manage_datastore',
-          status: 'pending',
-          created_by: user.id,
-          details: {
-            target_id: targetId,
-            operation: 'rescan',
-          },
-          target_scope: {}
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      toast({
-        title: "Rescan job created",
-        description: "vCenter will refresh its view of the datastore contents",
-      });
-
-      return job.id;
+      // Instant API success
+      if (result.success) {
+        toast({
+          title: "Rescan completed",
+          description: result.message || "Datastore rescan completed",
+        });
+        return null;
+      } else {
+        throw new Error(result.error || 'Rescan failed');
+      }
     } catch (error) {
       console.error('Failed to create rescan job:', error);
       toast({
-        title: "Failed to create rescan job",
+        title: "Failed to rescan datastore",
         description: error instanceof Error ? error.message : 'Unknown error',
         variant: "destructive",
       });
@@ -152,43 +143,35 @@ export function useDatastoreManagement() {
     }
   };
 
-  const scanDatastoreStatus = async (targetId: string) => {
+  const scanDatastoreStatusOp = async (targetId: string) => {
     try {
       setLoading(true);
 
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        throw new Error('Authentication required');
+      const result = await scanDatastoreStatus(targetId);
+
+      // If result is a string, it's a job ID (fallback to job queue)
+      if (typeof result === 'string') {
+        toast({
+          title: "Scan job created",
+          description: "Scanning datastore status from vCenter (queued)",
+        });
+        return result;
       }
 
-      // Create scan_datastore_status job
-      const { data: job, error } = await supabase
-        .from('jobs')
-        .insert({
-          job_type: 'scan_datastore_status',
-          status: 'pending',
-          created_by: user.id,
-          details: {
-            target_id: targetId,
-            auto_detect: true,
-          },
-          target_scope: {}
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      toast({
-        title: "Scan job created",
-        description: "Scanning datastore status from vCenter",
-      });
-
-      return job.id;
+      // Instant API success
+      if (result.success) {
+        toast({
+          title: "Scan completed",
+          description: result.message || "Datastore status scan completed",
+        });
+        return null;
+      } else {
+        throw new Error(result.error || 'Scan failed');
+      }
     } catch (error) {
       console.error('Failed to create scan job:', error);
       toast({
-        title: "Failed to create scan job",
+        title: "Failed to scan datastore status",
         description: error instanceof Error ? error.message : 'Unknown error',
         variant: "destructive",
       });
@@ -196,6 +179,15 @@ export function useDatastoreManagement() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Legacy function for backward compatibility
+  const createDatastoreJob = async (
+    targetId: string,
+    operation: DatastoreOperation,
+    hostNames?: string[]
+  ): Promise<string | null> => {
+    return executeOperation(targetId, operation, hostNames);
   };
 
   return {
@@ -207,7 +199,7 @@ export function useDatastoreManagement() {
     unmountFromAllHosts,
     refreshMounts,
     rescanDatastore,
-    scanDatastoreStatus,
+    scanDatastoreStatus: scanDatastoreStatusOp,
     createDatastoreJob,
   };
 }

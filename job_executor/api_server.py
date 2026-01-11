@@ -135,6 +135,16 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._handle_pdu_outlet_control()
             elif self.path == '/api/pdu-sync-status':
                 self._handle_pdu_sync_status()
+            # vCenter instant API endpoints
+            elif self.path == '/api/vcenter-sync':
+                self._handle_vcenter_sync()
+            elif self.path == '/api/partial-vcenter-sync':
+                self._handle_partial_vcenter_sync()
+            # Datastore instant API endpoints
+            elif self.path == '/api/manage-datastore':
+                self._handle_manage_datastore()
+            elif self.path == '/api/scan-datastore-status':
+                self._handle_scan_datastore_status()
             else:
                 self._send_error(f'Unknown endpoint: {self.path}', 404)
         except Exception as e:
@@ -2344,6 +2354,184 @@ class APIHandler(BaseHTTPRequestHandler):
             self.executor.log(f"PDU sync status failed: {e}", "ERROR")
             self._send_error(str(e), 500)
     
+    def _handle_vcenter_sync(self):
+        """Trigger vCenter sync via instant API"""
+        start_time = datetime.now()
+        data = self._read_json_body()
+        vcenter_id = data.get('vcenter_id')  # Optional - if not provided, syncs all
+        
+        self.executor.log(f"API: vCenter sync{' for ' + vcenter_id if vcenter_id else ' (all)'}")
+        
+        try:
+            from job_executor.handlers.vcenter_handlers import VCenterHandlers
+            handler = VCenterHandlers(self.executor)
+            
+            # Create a synthetic job object for the handler
+            synthetic_job = {
+                'id': f'instant-vcenter-sync-{int(datetime.now().timestamp())}',
+                'job_type': 'vcenter_sync',
+                'details': {'vcenter_id': vcenter_id} if vcenter_id else {},
+                'target_scope': {'vcenter_ids': [vcenter_id]} if vcenter_id else {}
+            }
+            
+            # Execute synchronously
+            handler.execute_vcenter_sync(synthetic_job)
+            
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            result = {
+                'success': True,
+                'vcenter_id': vcenter_id,
+                'message': 'vCenter sync completed',
+                'response_time_ms': response_time_ms
+            }
+            
+            self._send_json(result)
+        except Exception as e:
+            self.executor.log(f"vCenter sync failed: {e}", "ERROR")
+            import traceback
+            self.executor.log(f"Traceback: {traceback.format_exc()}", "ERROR")
+            self._send_error(str(e), 500)
+    
+    def _handle_partial_vcenter_sync(self):
+        """Trigger partial vCenter sync (VMs, hosts, etc.) via instant API"""
+        start_time = datetime.now()
+        data = self._read_json_body()
+        vcenter_id = data.get('vcenter_id')
+        sync_scope = data.get('sync_scope', 'vms')  # vms, hosts, clusters, datastores, networks
+        
+        self.executor.log(f"API: Partial vCenter sync (scope: {sync_scope})")
+        
+        try:
+            from job_executor.handlers.vcenter_handlers import VCenterHandlers
+            handler = VCenterHandlers(self.executor)
+            
+            # Create a synthetic job object for the handler
+            synthetic_job = {
+                'id': f'instant-partial-sync-{int(datetime.now().timestamp())}',
+                'job_type': 'partial_vcenter_sync',
+                'details': {
+                    'vcenter_id': vcenter_id,
+                    'sync_scope': sync_scope,
+                    'quick_refresh': True
+                }
+            }
+            
+            # Execute synchronously
+            handler.execute_partial_vcenter_sync(synthetic_job)
+            
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            result = {
+                'success': True,
+                'vcenter_id': vcenter_id,
+                'sync_scope': sync_scope,
+                'message': f'Partial sync ({sync_scope}) completed',
+                'response_time_ms': response_time_ms
+            }
+            
+            self._send_json(result)
+        except Exception as e:
+            self.executor.log(f"Partial vCenter sync failed: {e}", "ERROR")
+            import traceback
+            self.executor.log(f"Traceback: {traceback.format_exc()}", "ERROR")
+            self._send_error(str(e), 500)
+    
+    def _handle_manage_datastore(self):
+        """Manage datastore mounts via instant API"""
+        start_time = datetime.now()
+        data = self._read_json_body()
+        target_id = data.get('target_id')
+        operation = data.get('operation', 'status')  # status, mount_all, unmount_all, rescan, etc.
+        host_names = data.get('host_names', [])
+        
+        if not target_id:
+            self._send_error('target_id is required', 400)
+            return
+        
+        self.executor.log(f"API: Manage datastore {operation} for target {target_id}")
+        
+        try:
+            from job_executor.handlers.zfs_target import ZFSTargetHandler
+            handler = ZFSTargetHandler(self.executor)
+            
+            # Create a synthetic job object for the handler
+            synthetic_job = {
+                'id': f'instant-manage-datastore-{int(datetime.now().timestamp())}',
+                'job_type': 'manage_datastore',
+                'details': {
+                    'target_id': target_id,
+                    'operation': operation,
+                    'host_names': host_names
+                }
+            }
+            
+            # Execute synchronously
+            handler.execute_manage_datastore(synthetic_job)
+            
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            result = {
+                'success': True,
+                'target_id': target_id,
+                'operation': operation,
+                'message': f'Datastore {operation} completed',
+                'response_time_ms': response_time_ms
+            }
+            
+            self._send_json(result)
+        except Exception as e:
+            self.executor.log(f"Manage datastore failed: {e}", "ERROR")
+            import traceback
+            self.executor.log(f"Traceback: {traceback.format_exc()}", "ERROR")
+            self._send_error(str(e), 500)
+    
+    def _handle_scan_datastore_status(self):
+        """Scan datastore status from vCenter via instant API"""
+        start_time = datetime.now()
+        data = self._read_json_body()
+        target_id = data.get('target_id')
+        
+        if not target_id:
+            self._send_error('target_id is required', 400)
+            return
+        
+        self.executor.log(f"API: Scan datastore status for target {target_id}")
+        
+        try:
+            from job_executor.handlers.zfs_target import ZFSTargetHandler
+            handler = ZFSTargetHandler(self.executor)
+            
+            # Create a synthetic job object for the handler
+            synthetic_job = {
+                'id': f'instant-scan-datastore-{int(datetime.now().timestamp())}',
+                'job_type': 'scan_datastore_status',
+                'details': {
+                    'target_id': target_id,
+                    'auto_detect': True
+                }
+            }
+            
+            # Try to execute - this might use different handler method
+            if hasattr(handler, 'execute_scan_datastore_status'):
+                handler.execute_scan_datastore_status(synthetic_job)
+            else:
+                # Fallback to manage_datastore with status operation
+                synthetic_job['details']['operation'] = 'status'
+                handler.execute_manage_datastore(synthetic_job)
+            
+            response_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            result = {
+                'success': True,
+                'target_id': target_id,
+                'message': 'Datastore status scan completed',
+                'response_time_ms': response_time_ms
+            }
+            
+            self._send_json(result)
+        except Exception as e:
+            self.executor.log(f"Scan datastore status failed: {e}", "ERROR")
+            import traceback
+            self.executor.log(f"Traceback: {traceback.format_exc()}", "ERROR")
+            self._send_error(str(e), 500)
+    
     def log_message(self, format, *args):
         """Override to suppress default request logging"""
         pass
@@ -2413,6 +2601,10 @@ class APIServer:
             self.executor.log(f"  POST /api/pdu-discover")
             self.executor.log(f"  POST /api/pdu-outlet-control")
             self.executor.log(f"  POST /api/pdu-sync-status")
+            self.executor.log(f"  POST /api/vcenter-sync")
+            self.executor.log(f"  POST /api/partial-vcenter-sync")
+            self.executor.log(f"  POST /api/manage-datastore")
+            self.executor.log(f"  POST /api/scan-datastore-status")
             
             if not self.ssl_enabled and config.API_SERVER_SSL_ENABLED:
                 self.executor.log(f"WARNING: SSL was requested but not enabled. Remote HTTPS access may not work.", "WARN")

@@ -3,11 +3,13 @@
  * 
  * Triggers a quick background sync of VMs/datastores when wizards open,
  * ensuring data is fresh without blocking the UI.
+ * 
+ * Now uses instant API when available for faster responses.
  */
 
 import { useState, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { triggerPartialSync } from "@/services/vcenterService";
 
 type RefreshScope = 'vms' | 'datastores' | 'hosts' | 'clusters' | 'networks';
 
@@ -27,6 +29,25 @@ export function useQuickRefresh(vcenterId: string | null) {
   
   const activeJobIds = useRef<Map<string, string>>(new Map());
   
+  const invalidateQueriesForScopes = useCallback((scopes: RefreshScope[]) => {
+    if (scopes.includes('vms')) {
+      queryClient.invalidateQueries({ queryKey: ['vcenter-vms'] });
+    }
+    if (scopes.includes('datastores')) {
+      queryClient.invalidateQueries({ queryKey: ['accessible-datastores'] });
+      queryClient.invalidateQueries({ queryKey: ['vcenter-datastores'] });
+    }
+    if (scopes.includes('hosts')) {
+      queryClient.invalidateQueries({ queryKey: ['vcenter-hosts'] });
+    }
+    if (scopes.includes('clusters')) {
+      queryClient.invalidateQueries({ queryKey: ['vcenter-clusters'] });
+    }
+    if (scopes.includes('networks')) {
+      queryClient.invalidateQueries({ queryKey: ['vcenter-networks'] });
+    }
+  }, [queryClient]);
+  
   const triggerQuickRefresh = useCallback(async (scopes: RefreshScope[]) => {
     if (!vcenterId || state.isRefreshing) return;
     
@@ -37,43 +58,48 @@ export function useQuickRefresh(vcenterId: string | null) {
     }));
     
     try {
-      const { data: user } = await supabase.auth.getUser();
+      // Use instant API for all scopes in parallel
+      const results = await Promise.allSettled(
+        scopes.map(async (scope) => {
+          const result = await triggerPartialSync(scope, vcenterId);
+          
+          // If result is a string, it's a job ID (fallback occurred)
+          if (typeof result === 'string') {
+            activeJobIds.current.set(scope, result);
+            return { scope, jobId: result, instant: false };
+          }
+          
+          // Instant API succeeded
+          return { scope, instant: true, success: result.success };
+        })
+      );
       
-      // Create partial sync jobs for each scope
-      const jobPromises = scopes.map(async (scope) => {
-        const { data: job, error } = await supabase.from("jobs").insert({
-          job_type: "partial_vcenter_sync" as const,
-          status: "pending" as const,
-          created_by: user?.user?.id,
-          details: { 
-            sync_scope: scope, 
-            vcenter_id: vcenterId,
-            quick_refresh: true,
-          },
-        }).select().single();
-        
-        if (error) {
-          console.error(`Failed to create ${scope} sync job:`, error);
-          return null;
-        }
-        
-        activeJobIds.current.set(scope, job.id);
-        return { scope, jobId: job.id };
-      });
+      // Check if any fell back to job queue
+      const jobFallbacks = results
+        .filter((r): r is PromiseFulfilledResult<{ scope: RefreshScope; jobId: string; instant: false }> => 
+          r.status === 'fulfilled' && !r.value.instant
+        )
+        .map(r => r.value);
       
-      const jobs = await Promise.all(jobPromises);
-      const validJobs = jobs.filter(Boolean) as { scope: RefreshScope; jobId: string }[];
-      
-      if (validJobs.length === 0) {
-        setState(prev => ({ ...prev, isRefreshing: false, refreshingScopes: [] }));
+      if (jobFallbacks.length === 0) {
+        // All instant - immediately invalidate and complete
+        invalidateQueriesForScopes(scopes);
+        setState({
+          isRefreshing: false,
+          refreshingScopes: [],
+          lastRefresh: new Date(),
+        });
         return;
       }
       
-      // Poll for job completion
+      // Some fell back to job queue - need to poll for completion
+      // Import supabase only when needed for polling
+      const { supabase } = await import("@/integrations/supabase/client");
+      
       const pollInterval = setInterval(async () => {
         let allComplete = true;
         
-        for (const { scope, jobId } of validJobs) {
+        for (const { scope, jobId } of jobFallbacks) {
           const { data: job } = await supabase
             .from("jobs")
             .select("status")
@@ -89,25 +115,7 @@ export function useQuickRefresh(vcenterId: string | null) {
         
         if (allComplete) {
           clearInterval(pollInterval);
-          
-          // Invalidate queries based on scopes
-          if (scopes.includes('vms')) {
-            queryClient.invalidateQueries({ queryKey: ['vcenter-vms'] });
-          }
-          if (scopes.includes('datastores')) {
-            queryClient.invalidateQueries({ queryKey: ['accessible-datastores'] });
-            queryClient.invalidateQueries({ queryKey: ['vcenter-datastores'] });
-          }
-          if (scopes.includes('hosts')) {
-            queryClient.invalidateQueries({ queryKey: ['vcenter-hosts'] });
-          }
-          if (scopes.includes('clusters')) {
-            queryClient.invalidateQueries({ queryKey: ['vcenter-clusters'] });
-          }
-          if (scopes.includes('networks')) {
-            queryClient.invalidateQueries({ queryKey: ['vcenter-networks'] });
-          }
-          
+          invalidateQueriesForScopes(scopes);
           setState({
             isRefreshing: false,
             refreshingScopes: [],
@@ -136,7 +144,7 @@ export function useQuickRefresh(vcenterId: string | null) {
         refreshingScopes: [],
       }));
     }
-  }, [vcenterId, state.isRefreshing, queryClient]);
+  }, [vcenterId, state.isRefreshing, invalidateQueriesForScopes]);
   
   const refreshSingle = useCallback(async (scope: RefreshScope) => {
     if (!vcenterId) return;
@@ -148,48 +156,34 @@ export function useQuickRefresh(vcenterId: string | null) {
     }));
     
     try {
-      const { data: user } = await supabase.auth.getUser();
+      const result = await triggerPartialSync(scope, vcenterId);
       
-      const { data: job, error } = await supabase.from("jobs").insert({
-        job_type: "partial_vcenter_sync" as const,
-        status: "pending" as const,
-        created_by: user?.user?.id,
-        details: { 
-          sync_scope: scope, 
-          vcenter_id: vcenterId,
-          quick_refresh: true,
-        },
-      }).select().single();
+      // If result is NOT a string, instant API succeeded
+      if (typeof result !== 'string') {
+        invalidateQueriesForScopes([scope]);
+        setState({
+          isRefreshing: false,
+          refreshingScopes: [],
+          lastRefresh: new Date(),
+        });
+        return;
+      }
       
-      if (error) throw error;
+      // Fallback to job queue - poll for completion
+      const { supabase } = await import("@/integrations/supabase/client");
       
-      // Poll for completion
       let attempts = 0;
       const pollInterval = setInterval(async () => {
         attempts++;
         const { data: jobResult } = await supabase
           .from("jobs")
           .select("status")
-          .eq("id", job.id)
+          .eq("id", result)
           .single();
         
         if (jobResult?.status === 'completed' || jobResult?.status === 'failed' || attempts >= 30) {
           clearInterval(pollInterval);
-          
-          // Invalidate relevant queries
-          if (scope === 'vms') {
-            queryClient.invalidateQueries({ queryKey: ['vcenter-vms'] });
-          } else if (scope === 'datastores') {
-            queryClient.invalidateQueries({ queryKey: ['accessible-datastores'] });
-            queryClient.invalidateQueries({ queryKey: ['vcenter-datastores'] });
-          } else if (scope === 'hosts') {
-            queryClient.invalidateQueries({ queryKey: ['vcenter-hosts'] });
-          } else if (scope === 'clusters') {
-            queryClient.invalidateQueries({ queryKey: ['vcenter-clusters'] });
-          } else if (scope === 'networks') {
-            queryClient.invalidateQueries({ queryKey: ['vcenter-networks'] });
-          }
-          
+          invalidateQueriesForScopes([scope]);
           setState({
             isRefreshing: false,
             refreshingScopes: [],
@@ -206,7 +200,7 @@ export function useQuickRefresh(vcenterId: string | null) {
         refreshingScopes: [],
       }));
     }
-  }, [vcenterId, queryClient]);
+  }, [vcenterId, invalidateQueriesForScopes]);
   
   return {
     isRefreshing: state.isRefreshing,
