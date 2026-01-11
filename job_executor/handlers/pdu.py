@@ -498,11 +498,12 @@ class PDUHandler(BaseHandler):
     def _update_pdu_status(self, pdu_id: str, status: str, last_seen: bool = False) -> None:
         """Update PDU connection status in database using REST API"""
         from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        from datetime import datetime, timezone
         
         try:
             update_data = {'connection_status': status}
             if last_seen:
-                update_data['last_seen'] = 'now()'
+                update_data['last_seen'] = datetime.now(timezone.utc).isoformat()
             
             response = requests.patch(
                 f"{DSM_URL}/rest/v1/pdus",
@@ -622,8 +623,10 @@ class PDUHandler(BaseHandler):
                                      max_outlets: int = 24) -> Dict[int, str]:
         """Get all outlet states via SNMP walk"""
         if not SNMP_AVAILABLE:
+            self.log("SNMP library not available - cannot get outlet states", "WARN")
             return {}
         
+        self.log(f"Attempting SNMP outlet state retrieval from {ip} (community: {community})")
         outlet_states = {}
         
         # Try walking the outlet state OIDs
@@ -631,6 +634,7 @@ class PDUHandler(BaseHandler):
         
         for base_oid in base_oids:
             try:
+                self.log(f"Trying SNMP OID base: {base_oid}")
                 for outlet_num in range(1, max_outlets + 1):
                     state = self._snmp_get_outlet_state(ip, community, outlet_num)
                     if state:
@@ -641,13 +645,16 @@ class PDUHandler(BaseHandler):
                             break
                 
                 if outlet_states:
+                    self.log(f"SNMP retrieved {len(outlet_states)} outlet states via {base_oid}: {outlet_states}")
                     break
                     
             except Exception as e:
                 self.log(f"SNMP walk error: {e}", "WARN")
                 continue
         
-        self.log(f"SNMP retrieved {len(outlet_states)} outlet states")
+        if not outlet_states:
+            self.log(f"SNMP returned no outlet states - check community string '{community}' and PDU SNMP settings", "WARN")
+        
         return outlet_states
     
     def _snmp_test_connection(self, ip: str, community: str) -> Tuple[bool, str]:
@@ -919,8 +926,9 @@ class PDUHandler(BaseHandler):
             
             # Update PDU record with discovered info using REST API
             from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            from datetime import datetime, timezone
             
-            update_data = {'last_sync': 'now()'}
+            update_data = {'last_sync': datetime.now(timezone.utc).isoformat()}
             if discovered['model']:
                 update_data['model'] = discovered['model']
             if discovered['firmware_version']:
@@ -1189,6 +1197,9 @@ class PDUHandler(BaseHandler):
                 
                 # Update last_sync using REST API
                 from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+                from datetime import datetime, timezone
+                
+                current_time = datetime.now(timezone.utc).isoformat()
                 requests.patch(
                     f"{DSM_URL}/rest/v1/pdus",
                     headers={
@@ -1198,7 +1209,7 @@ class PDUHandler(BaseHandler):
                         'Prefer': 'return=minimal'
                     },
                     params={'id': f'eq.{pdu_id}'},
-                    json={'last_sync': 'now()'},
+                    json={'last_sync': current_time},
                     verify=VERIFY_SSL,
                     timeout=10
                 )
@@ -1243,6 +1254,9 @@ class PDUHandler(BaseHandler):
                         
                         # Update last_sync using REST API
                         from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+                        from datetime import datetime, timezone
+                        
+                        current_time = datetime.now(timezone.utc).isoformat()
                         requests.patch(
                             f"{DSM_URL}/rest/v1/pdus",
                             headers={
@@ -1252,7 +1266,7 @@ class PDUHandler(BaseHandler):
                                 'Prefer': 'return=minimal'
                             },
                             params={'id': f'eq.{pdu_id}'},
-                            json={'last_sync': 'now()'},
+                            json={'last_sync': current_time},
                             verify=VERIFY_SSL,
                             timeout=10
                         )
@@ -1281,6 +1295,9 @@ class PDUHandler(BaseHandler):
             
             # Update PDU last_sync using REST API
             from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            from datetime import datetime, timezone
+            
+            current_time = datetime.now(timezone.utc).isoformat()
             requests.patch(
                 f"{DSM_URL}/rest/v1/pdus",
                 headers={
@@ -1290,7 +1307,7 @@ class PDUHandler(BaseHandler):
                     'Prefer': 'return=minimal'
                 },
                 params={'id': f'eq.{pdu_id}'},
-                json={'last_sync': 'now()'},
+                json={'last_sync': current_time},
                 verify=VERIFY_SSL,
                 timeout=10
             )
@@ -1491,16 +1508,21 @@ class PDUHandler(BaseHandler):
     def _update_outlet_state(self, pdu_id: str, outlet_number: int, state: str) -> None:
         """Update single outlet state in database using REST API"""
         from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        from datetime import datetime, timezone
         
         try:
+            current_time = datetime.now(timezone.utc).isoformat()
+            
             outlet_data = {
                 'pdu_id': pdu_id,
                 'outlet_number': outlet_number,
                 'outlet_state': state,
-                'last_updated': 'now()'
+                'last_updated': current_time
             }
             if state != 'unknown':
-                outlet_data['last_state_change'] = 'now()'
+                outlet_data['last_state_change'] = current_time
+            
+            self.log(f"Upserting outlet {outlet_number} state: {state}")
             
             response = requests.post(
                 f"{DSM_URL}/rest/v1/pdu_outlets",
@@ -1517,6 +1539,8 @@ class PDUHandler(BaseHandler):
             )
             
             if response.status_code not in [200, 201, 204]:
-                self.log(f"Outlet state update returned {response.status_code}", "WARN")
+                self.log(f"Outlet {outlet_number} upsert failed: {response.status_code} - {response.text}", "WARN")
+            else:
+                self.log(f"Outlet {outlet_number} updated successfully")
         except Exception as e:
-            self.log(f"Error updating outlet state: {e}", "WARN")
+            self.log(f"Error updating outlet state: {e}", "ERROR")
