@@ -45,6 +45,7 @@ except ImportError:
         SNMP_AVAILABLE = False
 
 from .base import BaseHandler
+from datetime import datetime, timezone
 
 # Suppress InsecureRequestWarning for self-signed certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -136,6 +137,58 @@ class PDUHandler(BaseHandler):
         self._session_token = None
         self._pdu_url = None
         self._request_timeout = 15
+        self._diagnostics = []  # Collect diagnostics during operations
+    
+    def _add_diagnostic(self, level: str, operation: str, message: str, details: dict = None):
+        """Add a diagnostic entry for later saving to database"""
+        self._diagnostics.append({
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'level': level,
+            'operation': operation,
+            'message': message,
+            'details': details
+        })
+        # Also log it
+        self.log(f"[DIAG:{operation}] {message}", level)
+    
+    def _save_diagnostics(self, pdu_id: str):
+        """Save collected diagnostics to the PDU record in the database"""
+        if not self._diagnostics:
+            return
+        
+        try:
+            from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+            
+            diagnostics_data = {
+                'last_sync_diagnostics': {
+                    'collected_at': datetime.now(timezone.utc).isoformat(),
+                    'snmp_available': SNMP_AVAILABLE,
+                    'entries': self._diagnostics[-50:]  # Keep last 50 entries
+                }
+            }
+            
+            resp = requests.patch(
+                f"{DSM_URL}/rest/v1/pdus",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=minimal'
+                },
+                params={'id': f'eq.{pdu_id}'},
+                json=diagnostics_data,
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            self.log(f"Saved {len(self._diagnostics)} diagnostic entries to PDU record (status: {resp.status_code})")
+        except Exception as e:
+            self.log(f"Failed to save diagnostics: {e}", "WARN")
+        finally:
+            self._diagnostics = []  # Clear after saving
+    
+    def _clear_diagnostics(self):
+        """Clear collected diagnostics"""
+        self._diagnostics = []
     
     def handle(self, job: Dict[str, Any]) -> Dict[str, Any]:
         """Route job to appropriate handler method"""
@@ -372,13 +425,29 @@ class PDUHandler(BaseHandler):
             if response.status_code != 200:
                 # Enhanced diagnostics for 403 and other errors
                 if response.status_code == 403:
-                    self.log(f"403 Forbidden - Response headers: {dict(response.headers)}", "DEBUG")
-                    self.log(f"403 Forbidden - Response body snippet: {response.text[:500]}", "DEBUG")
+                    headers_dict = dict(response.headers)
+                    body_snippet = response.text[:1000]
+                    self._add_diagnostic('ERROR', 'nmc_login', f'403 Forbidden on login page', {
+                        'url': login_page_url,
+                        'response_headers': headers_dict,
+                        'response_body_snippet': body_snippet,
+                        'possible_causes': [
+                            'IP access control enabled on PDU',
+                            'Rate limiting/account lockout',
+                            'Firewall or proxy blocking',
+                            'PDU requires HTTPS only'
+                        ]
+                    })
                     body_lower = response.text.lower()
                     if 'access denied' in body_lower or 'blocked' in body_lower:
                         return False, "Login page returned status 403 - IP may be blocked or access control enabled on PDU"
                     if 'rate limit' in body_lower or 'too many' in body_lower:
                         return False, "Login page returned status 403 - Rate limited, wait and retry"
+                else:
+                    self._add_diagnostic('ERROR', 'nmc_login', f'Unexpected HTTP status {response.status_code}', {
+                        'url': login_page_url,
+                        'status_code': response.status_code
+                    })
                 return False, f"Login page returned status {response.status_code}"
             
             # Diagnostic: Log login page HTML structure
@@ -753,16 +822,23 @@ class PDUHandler(BaseHandler):
         return outlet_states
     
     def _snmp_get_all_outlet_states(self, ip: str, community: str, 
-                                     max_outlets: int = 24) -> Dict[int, str]:
+                                     max_outlets: int = 24, pdu_id: str = None) -> Dict[int, str]:
         """
         Get all outlet states via SNMP walk with automatic OID discovery.
         Tries multiple OID bases to support different APC PDU models.
         """
         if not SNMP_AVAILABLE:
-            self.log("SNMP library not available - cannot get outlet states", "WARN")
+            self._add_diagnostic('ERROR', 'snmp_sync', 'SNMP library (pysnmp) not available', {
+                'snmp_available': False,
+                'ip': ip
+            })
             return {}
         
-        self.log(f"Starting SNMP outlet discovery from {ip} using walk (community: {community})")
+        self._add_diagnostic('INFO', 'snmp_sync', f'Starting SNMP discovery from {ip}', {
+            'snmp_available': True,
+            'ip': ip,
+            'community_length': len(community) if community else 0
+        })
         
         # Try all OID bases using SNMP walk
         oid_bases = [
@@ -772,18 +848,28 @@ class PDUHandler(BaseHandler):
         ]
         
         for base_oid, oid_name in oid_bases:
+            self._add_diagnostic('DEBUG', 'snmp_walk', f'Trying OID: {oid_name}', {
+                'base_oid': base_oid,
+                'oid_name': oid_name
+            })
             outlet_states = self._snmp_walk_outlet_states(ip, community, base_oid, oid_name)
             if outlet_states:
-                self.log(f"SNMP walk discovered {len(outlet_states)} outlets via {oid_name}: {outlet_states}")
+                self._add_diagnostic('INFO', 'snmp_sync', f'SNMP walk discovered {len(outlet_states)} outlets via {oid_name}', {
+                    'oid_used': oid_name,
+                    'outlet_count': len(outlet_states),
+                    'outlets': outlet_states
+                })
                 return outlet_states
         
-        self.log(
-            f"SNMP walk returned no outlets - verify: "
-            f"1) SNMP is enabled on PDU "
-            f"2) Community string '{community}' has read access "
-            f"3) UDP port 161 is accessible from executor", 
-            "WARN"
-        )
+        self._add_diagnostic('WARN', 'snmp_sync', 'SNMP walk returned no outlets', {
+            'oids_tried': [oid[1] for oid in oid_bases],
+            'possible_causes': [
+                'SNMP not enabled on PDU',
+                f"Community string '{community}' lacks read access",
+                'UDP port 161 blocked by firewall',
+                'Wrong SNMP version (trying v1/v2c)',
+            ]
+        })
         return {}
     
     def _snmp_test_connection(self, ip: str, community: str) -> Tuple[bool, str]:
@@ -1305,6 +1391,10 @@ class PDUHandler(BaseHandler):
         if not pdu_id:
             return {'success': False, 'error': 'Missing pdu_id'}
         
+        # Clear any previous diagnostics
+        self._clear_diagnostics()
+        self._add_diagnostic('INFO', 'sync_start', f'Starting sync for PDU {pdu_id}')
+        
         self.log(f"Syncing status for PDU: {pdu_id}")
         
         pdu = self._get_pdu_credentials(pdu_id)
@@ -1406,12 +1496,16 @@ class PDUHandler(BaseHandler):
                             self._logout()
                             return {'success': False, 'error': 'SNMP failed and NMC returned no outlet data'}
                     else:
-                        return {'success': False, 'error': f'SNMP failed and NMC login failed: {message}'}
-                except Exception as e:
-                    self.log(f"NMC fallback error: {e}", "ERROR")
-                    return {'success': False, 'error': f'SNMP failed and NMC fallback failed: {e}'}
-                finally:
-                    self._logout()
+                    self._add_diagnostic('ERROR', 'sync_failed', f'SNMP failed and NMC login failed: {message}')
+                    self._save_diagnostics(pdu_id)
+                    return {'success': False, 'error': f'SNMP failed and NMC login failed: {message}'}
+            except Exception as e:
+                self.log(f"NMC fallback error: {e}", "ERROR")
+                self._add_diagnostic('ERROR', 'sync_failed', f'NMC fallback exception: {e}')
+                self._save_diagnostics(pdu_id)
+                return {'success': False, 'error': f'SNMP failed and NMC fallback failed: {e}'}
+            finally:
+                self._logout()
         
         # Auto mode - try SNMP first (fast and reliable), fall back to NMC
         if protocol == 'auto':
@@ -1472,7 +1566,11 @@ class PDUHandler(BaseHandler):
             if not success:
                 # SNMP already tried for auto mode above
                 if protocol == 'auto':
+                    self._add_diagnostic('ERROR', 'sync_failed', f'Both SNMP and NMC failed: {message}')
+                    self._save_diagnostics(pdu_id)
                     return {'success': False, 'error': f'Both SNMP and NMC failed: {message}'}
+                self._add_diagnostic('ERROR', 'sync_failed', f'NMC login failed: {message}')
+                self._save_diagnostics(pdu_id)
                 return {'success': False, 'error': f'NMC login failed: {message}'}
             
             # Get outlet states via NMC

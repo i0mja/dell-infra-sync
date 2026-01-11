@@ -2143,6 +2143,7 @@ export type Database = {
           ip_address: string
           last_seen: string | null
           last_sync: string | null
+          last_sync_diagnostics: Json | null
           manufacturer: string | null
           model: string | null
           name: string
@@ -2166,6 +2167,7 @@ export type Database = {
           ip_address: string
           last_seen?: string | null
           last_sync?: string | null
+          last_sync_diagnostics?: Json | null
           manufacturer?: string | null
           model?: string | null
           name: string
@@ -2189,6 +2191,7 @@ export type Database = {
           ip_address?: string
           last_seen?: string | null
           last_sync?: string | null
+          last_sync_diagnostics?: Json | null
           manufacturer?: string | null
           model?: string | null
           name?: string
