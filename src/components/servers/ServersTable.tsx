@@ -64,6 +64,8 @@ import {
   MoreHorizontal,
   Loader2,
   CheckSquare,
+  Circle,
+  AlertCircle,
   ExternalLink,
   Upload,
   Cpu,
@@ -137,7 +139,7 @@ interface ServersTableProps {
   onViewInVCenter?: (clusterName: string) => void;
   onCheckForUpdates?: (serverIds: string[], name: string) => void;
   onIdracSettings?: (server: Server) => void;
-  hardwareIssues?: Map<string, { drive_issues: number; memory_issues: number }>;
+  hardwareIssues?: Map<string, { drive_issues: number; memory_issues: number; has_critical?: boolean; has_warning?: boolean }>;
 }
 
 export function ServersTable({
@@ -421,21 +423,45 @@ export function ServersTable({
   const getStatusBadge = (server: Server) => {
     // Check for hardware issues if server is online
     const issues = hardwareIssues?.get(server.id);
-    const hasCriticalIssue = issues && (issues.drive_issues > 0 || issues.memory_issues > 0);
+    const hasIssue = issues && (issues.drive_issues > 0 || issues.memory_issues > 0);
+    const hasCritical = issues?.has_critical;
     
-    if (server.connection_status === "online" && hasCriticalIssue) {
+    if (server.connection_status === "online" && hasIssue) {
       const totalIssues = (issues?.drive_issues || 0) + (issues?.memory_issues || 0);
+      
+      // Critical issues = red badge with AlertCircle
+      // Warning-only issues = amber badge with AlertTriangle
+      if (hasCritical) {
+        return (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge variant="destructive" className="text-xs">
+                  <AlertCircle className="mr-1 h-3 w-3" />
+                  Critical
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{totalIssues} critical hardware issue{totalIssues > 1 ? 's' : ''}</p>
+                <p className="text-muted-foreground text-xs mt-1">Pinned to top until resolved</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        );
+      }
+      
+      // Warning only
       return (
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Badge variant="default" className="bg-warning hover:bg-warning/90 text-warning-foreground text-xs">
+              <Badge className="bg-amber-500 hover:bg-amber-500/90 text-white text-xs">
                 <AlertTriangle className="mr-1 h-3 w-3" />
-                Degraded
+                Warning
               </Badge>
             </TooltipTrigger>
             <TooltipContent>
-              <p>{totalIssues} hardware issue{totalIssues > 1 ? 's' : ''} detected</p>
+              <p>{totalIssues} hardware warning{totalIssues > 1 ? 's' : ''}</p>
               <p className="text-muted-foreground text-xs mt-1">Pinned to top until resolved</p>
             </TooltipContent>
           </Tooltip>
@@ -452,7 +478,8 @@ export function ServersTable({
         );
       case "offline":
         return (
-          <Badge variant="destructive" className="text-xs">
+          <Badge variant="outline" className="text-muted-foreground border-muted-foreground/50 text-xs">
+            <Circle className="mr-1 h-3 w-3" />
             Offline
           </Badge>
         );

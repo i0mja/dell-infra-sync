@@ -1,4 +1,4 @@
-import { Server, Activity, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Server, Activity, AlertCircle, CheckCircle2, AlertTriangle } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -20,15 +20,36 @@ export const FleetStatusBar = () => {
     }
   });
 
-  const { data: eventLogs, isLoading: logsLoading } = useQuery({
-    queryKey: ['critical-events-count'],
+  // Query for hardware issues (drives and memory with problems)
+  const { data: hardwareIssues, isLoading: hardwareLoading } = useQuery({
+    queryKey: ['hardware-issues-count'],
     queryFn: async () => {
-      const { data } = await supabase
-        .from('server_event_logs')
-        .select('id')
-        .in('severity', ['Critical', 'Error', 'Warning'])
-        .gte('timestamp', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
-      return data || [];
+      const { data: driveData } = await supabase
+        .from("server_drives")
+        .select("server_id, health, status, predicted_failure");
+      
+      const { data: memoryData } = await supabase
+        .from("server_memory")
+        .select("server_id, health, status");
+      
+      // Count unique servers with issues
+      const serversWithIssues = new Set<string>();
+      
+      driveData?.forEach(d => {
+        if (d.health === "Critical" || d.health === "Warning" || 
+            d.status === "Disabled" || d.status === "UnavailableOffline" ||
+            d.predicted_failure === true) {
+          serversWithIssues.add(d.server_id);
+        }
+      });
+      
+      memoryData?.forEach(m => {
+        if ((m.health && m.health !== "OK") || m.status === "Disabled") {
+          serversWithIssues.add(m.server_id);
+        }
+      });
+      
+      return serversWithIssues.size;
     }
   });
 
@@ -50,9 +71,9 @@ export const FleetStatusBar = () => {
   const totalServers = servers?.length || 0;
   const healthyClusters = clusters?.filter(c => c.ha_enabled && c.drs_enabled).length || 0;
   const totalClusters = clusters?.length || 0;
-  const criticalEvents = eventLogs?.length || 0;
+  const degradedCount = hardwareIssues || 0;
 
-  const isLoading = serversLoading || clustersLoading || logsLoading || apiLoading;
+  const isLoading = serversLoading || clustersLoading || hardwareLoading || apiLoading;
 
   if (isLoading) {
     return (
@@ -73,18 +94,18 @@ export const FleetStatusBar = () => {
       color: onlineServers === totalServers ? "text-green-600" : "text-amber-600"
     },
     {
+      icon: AlertTriangle,
+      label: "Hardware Issues",
+      value: degradedCount.toString(),
+      subtext: "servers degraded",
+      color: degradedCount === 0 ? "text-green-600" : "text-amber-600"
+    },
+    {
       icon: Activity,
       label: "vCenter Clusters",
       value: `${healthyClusters}/${totalClusters}`,
       subtext: "healthy",
       color: healthyClusters === totalClusters ? "text-green-600" : "text-amber-600"
-    },
-    {
-      icon: AlertCircle,
-      label: "Critical Alerts",
-      value: criticalEvents.toString(),
-      subtext: "last 24h",
-      color: criticalEvents === 0 ? "text-green-600" : "text-destructive"
     },
     {
       icon: CheckCircle2,
