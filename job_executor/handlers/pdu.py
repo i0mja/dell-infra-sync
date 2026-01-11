@@ -247,6 +247,11 @@ RPDU2_OUTLET_STATE_OID = '1.3.6.1.4.1.318.1.1.12.3.5.1.1.4'  # rPDU2OutletSwitch
 # rPDU Bank Outlet State (bank-aware models like AP8XXX with multiple banks)
 RPDU_BANK_OUTLET_STATE_OID = '1.3.6.1.4.1.318.1.1.12.3.4.1.1.4'  # rPDUOutletStatusOutletState
 
+# Outlet Name OIDs (for retrieving configured outlet labels)
+RPDU_OUTLET_NAME_OID = '1.3.6.1.4.1.318.1.1.12.3.4.1.1.2'  # rPDUOutletConfigOutletName
+SPDU_OUTLET_NAME_OID = '1.3.6.1.4.1.318.1.1.4.4.2.1.4'  # sPDUOutletName (older models)
+RPDU2_OUTLET_NAME_OID = '1.3.6.1.4.1.318.1.1.26.9.2.3.1.3'  # rPDU2OutletSwitchedConfigName
+
 
 class SnmpOutletCommand(IntEnum):
     """APC SNMP outlet control commands"""
@@ -1050,6 +1055,208 @@ class PDUHandler(BaseHandler):
         
         return outlet_states
     
+    def _snmp_walk_outlet_names(self, ip: str, community: str) -> Dict[int, str]:
+        """
+        Walk SNMP to get all outlet names configured on the PDU.
+        Returns dict mapping outlet number (1-based) to name string.
+        Skips default names like "Outlet 1", "Outlet 2", etc.
+        """
+        outlet_names = {}
+        
+        if not SNMP_AVAILABLE:
+            return outlet_names
+        
+        # OID bases for outlet names - try multiple to support different PDU models
+        name_oid_bases = [
+            (RPDU_OUTLET_NAME_OID, 'rPDU-OutletName'),
+            (RPDU2_OUTLET_NAME_OID, 'rPDU2-OutletName'),
+            (SPDU_OUTLET_NAME_OID, 'sPDU-OutletName'),
+        ]
+        
+        for base_oid, oid_name in name_oid_bases:
+            try:
+                self.log(f"SNMP walking outlet names: {oid_name} ({base_oid})")
+                outlet_index = 1
+                
+                if PYSNMP_V7_PLUS:
+                    # Use async-to-sync wrapper for v7+
+                    var_binds_list = _run_snmp_walk_v7(ip, 161, community, base_oid)
+                    
+                    for var_bind in var_binds_list:
+                        oid_str = str(var_bind[0])
+                        try:
+                            # Outlet names are strings
+                            name = str(var_bind[1]).strip()
+                            
+                            # Skip default/empty names
+                            if name and not re.match(r'^Outlet\s*\d+$', name, re.IGNORECASE):
+                                outlet_names[outlet_index] = name
+                                self.log(f"SNMP outlet name: {outlet_index} = '{name}'", "DEBUG")
+                            
+                            outlet_index += 1
+                        except Exception as e:
+                            self.log(f"SNMP name walk parse error at {oid_str}: {e}", "DEBUG")
+                            continue
+                else:
+                    # Classic API (v4-6)
+                    iterator = nextCmd(
+                        SnmpEngine(),
+                        CommunityData(community, mpModel=0),
+                        UdpTransportTarget((ip, 161), timeout=10, retries=2),
+                        ContextData(),
+                        ObjectType(ObjectIdentity(base_oid)),
+                        lexicographicMode=False
+                    )
+                    
+                    for error_indication, error_status, error_index, var_binds in iterator:
+                        if error_indication or error_status:
+                            break
+                        
+                        for var_bind in var_binds:
+                            oid_str = str(var_bind[0])
+                            if not oid_str.startswith(base_oid):
+                                break
+                            
+                            try:
+                                name = str(var_bind[1]).strip()
+                                
+                                # Skip default/empty names
+                                if name and not re.match(r'^Outlet\s*\d+$', name, re.IGNORECASE):
+                                    outlet_names[outlet_index] = name
+                                    self.log(f"SNMP outlet name: {outlet_index} = '{name}'", "DEBUG")
+                                
+                                outlet_index += 1
+                            except Exception as e:
+                                self.log(f"SNMP name walk parse error at {oid_str}: {e}", "DEBUG")
+                                continue
+                
+                if outlet_names:
+                    self.log(f"SNMP walk via {oid_name} found {len(outlet_names)} outlet names")
+                    return outlet_names
+                    
+            except Exception as e:
+                self.log(f"SNMP outlet name walk exception for {oid_name}: {e}", "WARN")
+                continue
+        
+        return outlet_names
+    
+    def _auto_link_outlets_to_servers(self, pdu_id: str, outlet_names: Dict[int, str]) -> int:
+        """
+        Auto-link outlets to servers based on name matching.
+        Matches outlet names to server hostnames (case-insensitive, partial match).
+        
+        Returns count of outlets successfully linked.
+        """
+        if not outlet_names:
+            return 0
+        
+        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+        
+        linked_count = 0
+        
+        try:
+            # Fetch all servers
+            resp = requests.get(
+                f"{DSM_URL}/rest/v1/servers",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json'
+                },
+                params={'select': 'id,hostname,ip_address'},
+                verify=VERIFY_SSL,
+                timeout=15
+            )
+            
+            if resp.status_code != 200:
+                self.log(f"Failed to fetch servers for auto-link: {resp.status_code}", "WARN")
+                return 0
+            
+            servers = resp.json()
+            if not servers:
+                self.log("No servers found for auto-link")
+                return 0
+            
+            self.log(f"Auto-link: checking {len(outlet_names)} outlet names against {len(servers)} servers")
+            
+            # Check existing mappings to avoid duplicates
+            existing_resp = requests.get(
+                f"{DSM_URL}/rest/v1/server_pdu_mappings",
+                headers={
+                    'apikey': SERVICE_ROLE_KEY,
+                    'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                    'Content-Type': 'application/json'
+                },
+                params={
+                    'pdu_id': f'eq.{pdu_id}',
+                    'select': 'outlet_number'
+                },
+                verify=VERIFY_SSL,
+                timeout=10
+            )
+            
+            existing_outlets = set()
+            if existing_resp.status_code == 200:
+                existing_outlets = {m['outlet_number'] for m in existing_resp.json()}
+                self.log(f"Auto-link: {len(existing_outlets)} outlets already mapped")
+            
+            # Match outlet names to servers
+            for outlet_num, outlet_name in outlet_names.items():
+                if outlet_num in existing_outlets:
+                    continue  # Skip already mapped outlets
+                
+                outlet_name_lower = outlet_name.lower()
+                
+                for server in servers:
+                    hostname = (server.get('hostname') or '').lower()
+                    
+                    if not hostname:
+                        continue
+                    
+                    # Match logic: outlet name is contained in hostname or vice versa
+                    # Also handle common patterns like "S06-CDP-QUA-D01" matching "s06-cdp-qua-d01.domain.local"
+                    hostname_base = hostname.split('.')[0]  # Remove domain suffix
+                    
+                    if (outlet_name_lower == hostname_base or 
+                        outlet_name_lower in hostname or 
+                        hostname_base in outlet_name_lower):
+                        
+                        # Create mapping
+                        mapping_data = {
+                            'server_id': server['id'],
+                            'pdu_id': pdu_id,
+                            'outlet_number': outlet_num,
+                            'notes': f'Auto-linked from outlet name: {outlet_name}'
+                        }
+                        
+                        create_resp = requests.post(
+                            f"{DSM_URL}/rest/v1/server_pdu_mappings",
+                            headers={
+                                'apikey': SERVICE_ROLE_KEY,
+                                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                                'Content-Type': 'application/json',
+                                'Prefer': 'return=minimal'
+                            },
+                            json=mapping_data,
+                            verify=VERIFY_SSL,
+                            timeout=10
+                        )
+                        
+                        if create_resp.status_code in [200, 201, 204]:
+                            linked_count += 1
+                            self.log(f"Auto-linked outlet {outlet_num} ('{outlet_name}') to server '{hostname}'")
+                        else:
+                            self.log(f"Failed to create mapping for outlet {outlet_num}: {create_resp.status_code}", "WARN")
+                        
+                        break  # Move to next outlet after first match
+            
+            self.log(f"Auto-link complete: {linked_count} outlets linked to servers")
+            
+        except Exception as e:
+            self.log(f"Auto-link error: {e}", "ERROR")
+        
+        return linked_count
+    
     def _snmp_get_all_outlet_states(self, ip: str, community: str, 
                                      max_outlets: int = 24, pdu_id: str = None) -> Dict[int, str]:
         """
@@ -1637,13 +1844,26 @@ class PDUHandler(BaseHandler):
         password = pdu.get('password', 'apc')
         snmp_community = pdu.get('snmp_community', 'public')
         
+        # Fetch outlet names via SNMP (works for all protocol modes)
+        outlet_names = self._snmp_walk_outlet_names(ip_address, snmp_community)
+        if outlet_names:
+            self._add_diagnostic('INFO', 'outlet_names', f'Discovered {len(outlet_names)} outlet names via SNMP', {
+                'names': outlet_names
+            })
+        
         # SNMP-only mode (with NMC fallback)
         if protocol == 'snmp':
             outlet_states = self._snmp_get_all_outlet_states(ip_address, snmp_community)
             
             if outlet_states:
                 for outlet_num, state in outlet_states.items():
-                    self._update_outlet_state(pdu_id, outlet_num, state)
+                    name = outlet_names.get(outlet_num)
+                    self._update_outlet_state(pdu_id, outlet_num, state, name)
+                
+                # Auto-link outlets to servers based on names
+                linked_count = 0
+                if outlet_names:
+                    linked_count = self._auto_link_outlets_to_servers(pdu_id, outlet_names)
                 
                 # Update last_sync using REST API
                 from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
@@ -1669,7 +1889,9 @@ class PDUHandler(BaseHandler):
                 return {
                     'success': True,
                     'outlet_states': outlet_states,
+                    'outlet_names': outlet_names,
                     'outlets_synced': len(outlet_states),
+                    'outlets_auto_linked': linked_count,
                     'protocol_used': 'snmp'
                 }
             else:
@@ -1743,7 +1965,13 @@ class PDUHandler(BaseHandler):
             
             if outlet_states:
                 for outlet_num, state in outlet_states.items():
-                    self._update_outlet_state(pdu_id, outlet_num, state)
+                    name = outlet_names.get(outlet_num)
+                    self._update_outlet_state(pdu_id, outlet_num, state, name)
+                
+                # Auto-link outlets to servers based on names
+                linked_count = 0
+                if outlet_names:
+                    linked_count = self._auto_link_outlets_to_servers(pdu_id, outlet_names)
                 
                 # Update last_sync using REST API
                 from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
@@ -1769,7 +1997,9 @@ class PDUHandler(BaseHandler):
                 return {
                     'success': True,
                     'outlet_states': outlet_states,
+                    'outlet_names': outlet_names,
                     'outlets_synced': len(outlet_states),
+                    'outlets_auto_linked': linked_count,
                     'protocol_used': 'snmp'
                 }
             else:
@@ -2403,8 +2633,8 @@ class PDUHandler(BaseHandler):
         except Exception as e:
             self.log(f"Error creating outlet records: {e}", "WARN")
     
-    def _update_outlet_state(self, pdu_id: str, outlet_number: int, state: str) -> None:
-        """Update single outlet state in database using REST API"""
+    def _update_outlet_state(self, pdu_id: str, outlet_number: int, state: str, name: str = None) -> None:
+        """Update single outlet state (and optionally name) in database using REST API"""
         from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
         from datetime import datetime, timezone
         
@@ -2420,7 +2650,11 @@ class PDUHandler(BaseHandler):
             if state != 'unknown':
                 outlet_data['last_state_change'] = current_time
             
-            self.log(f"Upserting outlet {outlet_number} state: {state}")
+            # Include outlet name if provided (from SNMP discovery)
+            if name:
+                outlet_data['outlet_name'] = name
+            
+            self.log(f"Upserting outlet {outlet_number} state: {state}" + (f", name: '{name}'" if name else ""))
             
             response = requests.post(
                 f"{DSM_URL}/rest/v1/pdu_outlets",
