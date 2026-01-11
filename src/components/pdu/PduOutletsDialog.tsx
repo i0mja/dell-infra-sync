@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   AlertDialog,
@@ -20,6 +21,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { usePduOutlets } from '@/hooks/usePdus';
+import { usePduOutletAssignments } from '@/hooks/usePduOutletAssignments';
+import { OutletServerAssignmentPopover } from './OutletServerAssignmentPopover';
 import { controlPduOutlet, syncPduStatus } from '@/services/pduService';
 import { toast } from 'sonner';
 import {
@@ -30,6 +33,10 @@ import {
   Loader2,
   CheckCircle,
   XCircle,
+  Pencil,
+  Check,
+  X,
+  Server,
 } from 'lucide-react';
 import type { Pdu, OutletAction } from '@/types/pdu';
 
@@ -44,10 +51,18 @@ export function PduOutletsDialog({ open, onOpenChange, pdu }: PduOutletsDialogPr
   const [isActioning, setIsActioning] = useState(false);
   const [confirmAction, setConfirmAction] = useState<OutletAction | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [editingOutletId, setEditingOutletId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
   
-  const { outlets, isLoading, refetch } = usePduOutlets(pdu?.id || null);
+  const { outlets, isLoading, refetch, updateOutletName } = usePduOutlets(pdu?.id || null);
+  const { 
+    assignments, 
+    assignServer, 
+    unassignServer 
+  } = usePduOutletAssignments(pdu?.id || null);
 
   const toggleOutlet = (outletNumber: number) => {
+    if (editingOutletId) return; // Don't toggle while editing
     setSelectedOutlets((prev) =>
       prev.includes(outletNumber)
         ? prev.filter((n) => n !== outletNumber)
@@ -71,7 +86,6 @@ export function PduOutletsDialog({ open, onOpenChange, pdu }: PduOutletsDialogPr
       await controlPduOutlet(pdu.id, selectedOutlets, action);
       toast.success(`${action.charAt(0).toUpperCase() + action.slice(1)} command sent to ${selectedOutlets.length} outlet(s)`);
       setSelectedOutlets([]);
-      // Refetch after a delay to get updated status
       setTimeout(() => refetch(), 2000);
     } catch (error) {
       toast.error(`Failed to ${action} outlets: ${error}`);
@@ -93,6 +107,31 @@ export function PduOutletsDialog({ open, onOpenChange, pdu }: PduOutletsDialogPr
       toast.error(`Failed to sync: ${error}`);
     } finally {
       setIsSyncing(false);
+    }
+  };
+
+  const startEditing = (outletId: string, currentName: string | null) => {
+    setEditingOutletId(outletId);
+    setEditingName(currentName || '');
+  };
+
+  const cancelEditing = () => {
+    setEditingOutletId(null);
+    setEditingName('');
+  };
+
+  const saveOutletName = async (outletId: string) => {
+    try {
+      await updateOutletName.mutateAsync({ 
+        outletId, 
+        name: editingName.trim() || '' 
+      });
+      toast.success('Outlet name updated');
+    } catch (error) {
+      toast.error('Failed to update outlet name');
+    } finally {
+      setEditingOutletId(null);
+      setEditingName('');
     }
   };
 
@@ -123,14 +162,14 @@ export function PduOutletsDialog({ open, onOpenChange, pdu }: PduOutletsDialogPr
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-[700px]">
+        <DialogContent className="sm:max-w-[800px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Power className="h-5 w-5" />
               {pdu.name} - Outlet Control
             </DialogTitle>
             <DialogDescription>
-              {pdu.ip_address} • {pdu.total_outlets} outlets
+              {pdu.ip_address} • {pdu.total_outlets} outlets • Click outlet name to edit
             </DialogDescription>
           </DialogHeader>
 
@@ -166,39 +205,116 @@ export function PduOutletsDialog({ open, onOpenChange, pdu }: PduOutletsDialogPr
             </div>
 
             {/* Outlets grid */}
-            <ScrollArea className="h-[300px] rounded-md border p-4">
+            <ScrollArea className="h-[350px] rounded-md border p-4">
               {isLoading ? (
                 <div className="flex items-center justify-center h-full">
                   <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                 </div>
               ) : outlets.length > 0 ? (
                 <div className="grid grid-cols-2 gap-2">
-                  {outlets.map((outlet) => (
-                    <div
-                      key={outlet.id}
-                      onClick={() => toggleOutlet(outlet.outlet_number)}
-                      className={`
-                        flex items-center justify-between p-3 rounded-lg border cursor-pointer
-                        transition-colors hover:bg-accent
-                        ${selectedOutlets.includes(outlet.outlet_number) 
-                          ? 'border-primary bg-primary/10' 
-                          : 'border-border'}
-                      `}
-                    >
-                      <div className="flex items-center gap-3">
-                        {getStateIcon(outlet.outlet_state)}
-                        <div>
-                          <div className="font-medium text-sm">
-                            {outlet.outlet_name || `Outlet ${outlet.outlet_number}`}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            Outlet {outlet.outlet_number}
+                  {outlets.map((outlet) => {
+                    const assignment = assignments[outlet.outlet_number];
+                    const isEditing = editingOutletId === outlet.id;
+                    
+                    return (
+                      <div
+                        key={outlet.id}
+                        onClick={() => toggleOutlet(outlet.outlet_number)}
+                        className={`
+                          flex items-center justify-between p-3 rounded-lg border cursor-pointer
+                          transition-colors hover:bg-accent
+                          ${selectedOutlets.includes(outlet.outlet_number) 
+                            ? 'border-primary bg-primary/10' 
+                            : 'border-border'}
+                        `}
+                      >
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          {getStateIcon(outlet.outlet_state)}
+                          <div className="flex-1 min-w-0">
+                            {isEditing ? (
+                              <div 
+                                className="flex items-center gap-1"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <Input
+                                  value={editingName}
+                                  onChange={(e) => setEditingName(e.target.value)}
+                                  className="h-7 text-sm"
+                                  placeholder={`Outlet ${outlet.outlet_number}`}
+                                  autoFocus
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') saveOutletName(outlet.id);
+                                    if (e.key === 'Escape') cancelEditing();
+                                  }}
+                                />
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 w-7 p-0"
+                                  onClick={() => saveOutletName(outlet.id)}
+                                >
+                                  <Check className="h-4 w-4 text-green-500" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 w-7 p-0"
+                                  onClick={cancelEditing}
+                                >
+                                  <X className="h-4 w-4 text-muted-foreground" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1 group">
+                                <span 
+                                  className="font-medium text-sm truncate cursor-text hover:text-primary"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    startEditing(outlet.id, outlet.outlet_name);
+                                  }}
+                                >
+                                  {outlet.outlet_name || `Outlet ${outlet.outlet_number}`}
+                                </span>
+                                <Pencil 
+                                  className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    startEditing(outlet.id, outlet.outlet_name);
+                                  }}
+                                />
+                              </div>
+                            )}
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <span>#{outlet.outlet_number}</span>
+                              {assignment && (
+                                <div className="flex items-center gap-1 text-primary">
+                                  <Server className="h-3 w-3" />
+                                  <span className="truncate max-w-[100px]">
+                                    {assignment.server_hostname}
+                                  </span>
+                                  <Badge variant="outline" className="h-4 text-[10px] px-1">
+                                    {assignment.feed_label}
+                                  </Badge>
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </div>
+                        
+                        <div className="flex items-center gap-2">
+                          {getStateBadge(outlet.outlet_state)}
+                          <OutletServerAssignmentPopover
+                            pduId={pdu.id}
+                            outletNumber={outlet.outlet_number}
+                            currentAssignment={assignment}
+                            onAssign={(data) => assignServer.mutate(data)}
+                            onUnassign={(id) => unassignServer.mutate(id)}
+                            isAssigning={assignServer.isPending || unassignServer.isPending}
+                          />
+                        </div>
                       </div>
-                      {getStateBadge(outlet.outlet_state)}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
