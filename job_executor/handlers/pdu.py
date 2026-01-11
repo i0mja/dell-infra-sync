@@ -1078,7 +1078,50 @@ class PDUHandler(BaseHandler):
                 'protocol_used': 'snmp'
             }
         
-        # NMC or Auto mode - try NMC first
+        # Auto mode - try SNMP first (fast and reliable), fall back to NMC
+        if protocol == 'auto':
+            self.log("Auto mode: trying SNMP first (preferred for control)")
+            snmp_command = snmp_command_map.get(action)
+            
+            if action == 'status':
+                outlet_states = self._snmp_get_all_outlet_states(ip_address, snmp_read_community)
+                if outlet_states:
+                    for outlet_num, state in outlet_states.items():
+                        self._update_outlet_state(pdu_id, outlet_num, state)
+                    return {
+                        'success': True,
+                        'action': 'status',
+                        'outlet_states': outlet_states,
+                        'protocol_used': 'snmp'
+                    }
+            elif snmp_command:
+                # Try SNMP control
+                results = []
+                all_success = True
+                for outlet in outlet_numbers:
+                    success, message = self._snmp_control_outlet(ip_address, snmp_write_community, outlet, snmp_command)
+                    results.append({'outlet': outlet, 'success': success, 'message': message})
+                    if not success:
+                        all_success = False
+                
+                if all_success:
+                    self._update_pdu_status(pdu_id, 'online', last_seen=True)
+                    new_state = 'on' if action == 'on' else ('off' if action == 'off' else 'unknown')
+                    if action != 'reboot':
+                        for outlet_num in outlet_numbers:
+                            self._update_outlet_state(pdu_id, outlet_num, new_state)
+                    
+                    return {
+                        'success': True,
+                        'action': action,
+                        'outlet_numbers': outlet_numbers,
+                        'results': results,
+                        'protocol_used': 'snmp'
+                    }
+                else:
+                    self.log("SNMP control failed, falling back to NMC", "WARN")
+        
+        # NMC mode or Auto fallback - try NMC web interface
         try:
             success, message = self._login(pdu_url, username, password)
             
@@ -1096,50 +1139,9 @@ class PDUHandler(BaseHandler):
                     self.log(f"Telnet clear failed: {clear_msg}", "WARN")
             
             if not success:
-                # Try SNMP fallback in auto mode for ANY NMC failure
+                # SNMP already tried for auto mode above, so this is a hard fail
                 if protocol == 'auto':
-                    self.log(f"NMC login failed ({message}), using SNMP for outlet control", "WARN")
-                    
-                    if action == 'status':
-                        outlet_states = self._snmp_get_all_outlet_states(ip_address, snmp_read_community)
-                        for outlet_num, state in outlet_states.items():
-                            self._update_outlet_state(pdu_id, outlet_num, state)
-                        return {
-                            'success': True,
-                            'action': 'status',
-                            'outlet_states': outlet_states,
-                            'protocol_used': 'snmp',
-                            'nmc_blocked': True
-                        }
-                    
-                    snmp_command = snmp_command_map.get(action)
-                    if snmp_command:
-                        results = []
-                        all_success = True
-                        for outlet in outlet_numbers:
-                            snmp_success, snmp_msg = self._snmp_control_outlet(
-                                ip_address, snmp_write_community, outlet, snmp_command
-                            )
-                            results.append({'outlet': outlet, 'success': snmp_success, 'message': snmp_msg})
-                            if not snmp_success:
-                                all_success = False
-                        
-                        if all_success:
-                            self._update_pdu_status(pdu_id, 'online', last_seen=True)
-                            new_state = 'on' if action == 'on' else ('off' if action == 'off' else 'unknown')
-                            if action != 'reboot':
-                                for outlet_num in outlet_numbers:
-                                    self._update_outlet_state(pdu_id, outlet_num, new_state)
-                        
-                        return {
-                            'success': all_success,
-                            'action': action,
-                            'outlet_numbers': outlet_numbers,
-                            'results': results,
-                            'protocol_used': 'snmp',
-                            'nmc_blocked': True
-                        }
-                
+                    return {'success': False, 'error': f'Both SNMP and NMC failed: {message}'}
                 self._update_pdu_status(pdu_id, 'error')
                 return {'success': False, 'error': message}
             
@@ -1244,7 +1246,46 @@ class PDUHandler(BaseHandler):
             else:
                 return {'success': False, 'error': 'SNMP sync failed'}
         
-        # NMC or Auto mode
+        # Auto mode - try SNMP first (fast and reliable), fall back to NMC
+        if protocol == 'auto':
+            self.log("Auto mode: trying SNMP first (preferred for sync)")
+            outlet_states = self._snmp_get_all_outlet_states(ip_address, snmp_community)
+            
+            if outlet_states:
+                for outlet_num, state in outlet_states.items():
+                    self._update_outlet_state(pdu_id, outlet_num, state)
+                
+                # Update last_sync using REST API
+                from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+                from datetime import datetime, timezone
+                
+                current_time = datetime.now(timezone.utc).isoformat()
+                requests.patch(
+                    f"{DSM_URL}/rest/v1/pdus",
+                    headers={
+                        'apikey': SERVICE_ROLE_KEY,
+                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal'
+                    },
+                    params={'id': f'eq.{pdu_id}'},
+                    json={'last_sync': current_time},
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
+                
+                self._update_pdu_status(pdu_id, 'online', last_seen=True)
+                
+                return {
+                    'success': True,
+                    'outlet_states': outlet_states,
+                    'outlets_synced': len(outlet_states),
+                    'protocol_used': 'snmp'
+                }
+            else:
+                self.log("SNMP sync failed, falling back to NMC web interface", "WARN")
+        
+        # NMC mode or Auto fallback
         try:
             success, message = self._login(pdu_url, username, password)
             
@@ -1262,46 +1303,45 @@ class PDUHandler(BaseHandler):
                     self.log(f"Telnet clear failed: {clear_msg}", "WARN")
             
             if not success:
-                # Try SNMP fallback in auto mode for ANY NMC failure
+                # SNMP already tried for auto mode above
                 if protocol == 'auto':
-                    self.log(f"NMC login failed ({message}), using SNMP for sync", "WARN")
-                    outlet_states = self._snmp_get_all_outlet_states(ip_address, snmp_community)
-                    
-                    if outlet_states:
-                        for outlet_num, state in outlet_states.items():
-                            self._update_outlet_state(pdu_id, outlet_num, state)
-                        
-                        # Update last_sync using REST API
-                        from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
-                        from datetime import datetime, timezone
-                        
-                        current_time = datetime.now(timezone.utc).isoformat()
-                        requests.patch(
-                            f"{DSM_URL}/rest/v1/pdus",
-                            headers={
-                                'apikey': SERVICE_ROLE_KEY,
-                                'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
-                                'Content-Type': 'application/json',
-                                'Prefer': 'return=minimal'
-                            },
-                            params={'id': f'eq.{pdu_id}'},
-                            json={'last_sync': current_time},
-                            verify=VERIFY_SSL,
-                            timeout=10
-                        )
-                        
-                        self._update_pdu_status(pdu_id, 'online', last_seen=True)
-                        
-                        return {
-                            'success': True,
-                            'outlet_states': outlet_states,
-                            'outlets_synced': len(outlet_states),
-                            'protocol_used': 'snmp',
-                            'nmc_blocked': True
-                        }
+                    return {'success': False, 'error': f'Both SNMP and NMC failed: {message}'}
+                return {'success': False, 'error': f'NMC login failed: {message}'}
+            
+            # Get outlet states via NMC
+            outlet_states = self._get_outlet_states()
+            
+            if outlet_states:
+                for outlet_num, state in outlet_states.items():
+                    self._update_outlet_state(pdu_id, outlet_num, state)
                 
-                self._update_pdu_status(pdu_id, 'error')
-                return {'success': False, 'error': message}
+                # Update last_sync using REST API
+                from job_executor.config import DSM_URL, SERVICE_ROLE_KEY, VERIFY_SSL
+                from datetime import datetime, timezone
+                
+                current_time = datetime.now(timezone.utc).isoformat()
+                requests.patch(
+                    f"{DSM_URL}/rest/v1/pdus",
+                    headers={
+                        'apikey': SERVICE_ROLE_KEY,
+                        'Authorization': f'Bearer {SERVICE_ROLE_KEY}',
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal'
+                    },
+                    params={'id': f'eq.{pdu_id}'},
+                    json={'last_sync': current_time},
+                    verify=VERIFY_SSL,
+                    timeout=10
+                )
+                
+                self._logout()
+                
+                return {
+                    'success': True,
+                    'outlet_states': outlet_states,
+                    'outlets_synced': len(outlet_states),
+                    'protocol_used': 'nmc'
+                }
             
             self._update_pdu_status(pdu_id, 'online', last_seen=True)
             
