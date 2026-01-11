@@ -1509,14 +1509,25 @@ class PDUHandler(BaseHandler):
                         
                         # Check if this is a navigation/menu page (has links but no outlet data tables)
                         has_outlet_keyword = 'outlet' in text_lower or 'pdu' in text_lower
-                        has_table_data = '<table' in text_lower and ('on</td>' in text_lower or 'off</td>' in text_lower or 'state' in text_lower)
+                        # Enhanced detection for APC page patterns
+                        has_table_data = '<table' in text_lower and (
+                            'on</td>' in text_lower or 
+                            'off</td>' in text_lower or 
+                            'state' in text_lower or
+                            'ledon' in text_lower or
+                            'ledoff' in text_lower
+                        )
                         has_js_data = 'outletstate' in text_lower or 'olstate' in text_lower
+                        # APC outlet control form indicators
+                        has_apc_form = 'hashform' in text_lower or 'outlctrl1' in text_lower or 'ol_ctrl' in text_lower
+                        # APC status indicators - check for numbered outlet rows
+                        has_outlet_table = ('outlet 1' in text_lower or 'outlet1' in text_lower) and '<table' in text_lower
                         
-                        if has_table_data or has_js_data:
+                        if has_table_data or has_js_data or has_apc_form or has_outlet_table:
                             # This looks like actual outlet data
                             content = response.text
                             successful_url = url
-                            self.log(f"Found outlet DATA page at: {url}")
+                            self.log(f"Found outlet DATA page at: {url} (table:{has_table_data}, js:{has_js_data}, form:{has_apc_form}, tbl:{has_outlet_table})")
                             break
                         elif has_outlet_keyword:
                             # This might be a navigation page - save it to scan for links
@@ -1556,10 +1567,15 @@ class PDUHandler(BaseHandler):
                             response = self._session.get(full_url, timeout=self._request_timeout)
                             if response.status_code == 200:
                                 text_lower = response.text.lower()
-                                has_table_data = '<table' in text_lower and ('on</td>' in text_lower or 'off</td>' in text_lower)
+                                has_table_data = '<table' in text_lower and (
+                                    'on</td>' in text_lower or 'off</td>' in text_lower or
+                                    'ledon' in text_lower or 'ledoff' in text_lower
+                                )
                                 has_js_data = 'outletstate' in text_lower or 'olstate' in text_lower
+                                has_apc_form = 'hashform' in text_lower or 'outlctrl1' in text_lower or 'ol_ctrl' in text_lower
+                                has_outlet_table = ('outlet 1' in text_lower or 'outlet1' in text_lower) and '<table' in text_lower
                                 
-                                if has_table_data or has_js_data:
+                                if has_table_data or has_js_data or has_apc_form or has_outlet_table:
                                     content = response.text
                                     successful_url = full_url
                                     self.log(f"Found outlet DATA page via link discovery: {full_url}")
@@ -1700,8 +1716,90 @@ class PDUHandler(BaseHandler):
                 if outlet_num <= 48 and outlet_num not in outlet_states:
                     outlet_states[outlet_num] = 'on' if match[1].lower() == 'on' else 'off'
             
-            # Store HTML for debugging (increased to 4000 chars)
-            self._last_outlet_html = content[:4000] if content else "EMPTY_CONTENT"
+            # Pattern 10: APC LED indicators - <td><img src="...ledOn.gif"/></td>
+            led_pattern = r'<img[^>]*src="[^"]*led(On|Off)[^"]*"[^>]*>.*?(?:Outlet|outlet)\s*(\d+)'
+            led_matches = re.findall(led_pattern, content, re.IGNORECASE | re.DOTALL)
+            self.log(f"Pattern 10 (LED) matches: {len(led_matches)}")
+            
+            for match in led_matches:
+                state = 'on' if match[0].lower() == 'on' else 'off'
+                outlet_num = int(match[1])
+                if outlet_num <= 48 and outlet_num not in outlet_states:
+                    outlet_states[outlet_num] = state
+            
+            # Also try reverse order (outlet number before LED)
+            led_pattern2 = r'(?:Outlet|outlet)\s*(\d+).*?<img[^>]*src="[^"]*led(On|Off)[^"]*"[^>]*>'
+            led_matches2 = re.findall(led_pattern2, content, re.IGNORECASE | re.DOTALL)
+            self.log(f"Pattern 10b (LED reverse) matches: {len(led_matches2)}")
+            
+            for match in led_matches2:
+                outlet_num = int(match[0])
+                state = 'on' if match[1].lower() == 'on' else 'off'
+                if outlet_num <= 48 and outlet_num not in outlet_states:
+                    outlet_states[outlet_num] = state
+            
+            # Pattern 11: APC select dropdown with state - <select name="OL_Ctrl_1">...<option selected>On</option>
+            select_pattern = r'(?:OL_Ctrl|olCtrl)[_]?(\d+)[^>]*>.*?<option[^>]*selected[^>]*>\s*(On|Off)\s*</option>'
+            select_matches = re.findall(select_pattern, content, re.IGNORECASE | re.DOTALL)
+            self.log(f"Pattern 11 (select) matches: {len(select_matches)}")
+            
+            for match in select_matches:
+                outlet_num = int(match[0])
+                state = 'on' if match[1].lower() == 'on' else 'off'
+                if outlet_num <= 48 and outlet_num not in outlet_states:
+                    outlet_states[outlet_num] = state
+            
+            # Pattern 12: Generic table row with Outlet N and On/Off in same row
+            # More flexible: finds rows that contain both an outlet number and a state
+            row_flex_pattern = r'<tr[^>]*>(.*?)</tr>'
+            rows = re.findall(row_flex_pattern, content, re.IGNORECASE | re.DOTALL)
+            self.log(f"Pattern 12 (flexible row) checking {len(rows)} rows")
+            
+            for row in rows:
+                # Look for outlet number
+                outlet_match = re.search(r'[>\s](\d{1,2})[<\s]', row)
+                # Look for On/Off state
+                state_match = re.search(r'>\s*(On|Off)\s*<', row, re.IGNORECASE)
+                
+                if outlet_match and state_match:
+                    outlet_num = int(outlet_match.group(1))
+                    if 1 <= outlet_num <= 48 and outlet_num not in outlet_states:
+                        state = 'on' if state_match.group(1).lower() == 'on' else 'off'
+                        outlet_states[outlet_num] = state
+                        self.log(f"Pattern 12 found: Outlet {outlet_num} = {state}")
+            
+            # Pattern 13: State in input value - <input name="state_1" value="On">
+            input_pattern = r'(?:state|outlet)[_]?(\d+)[^>]*value=["\']([^"\']*)["\']'
+            input_matches = re.findall(input_pattern, content, re.IGNORECASE)
+            self.log(f"Pattern 13 (input) matches: {len(input_matches)}")
+            
+            for match in input_matches:
+                outlet_num = int(match[0])
+                val = match[1].lower()
+                if outlet_num <= 48 and outlet_num not in outlet_states:
+                    if 'on' in val or val == '1':
+                        outlet_states[outlet_num] = 'on'
+                    elif 'off' in val or val == '0':
+                        outlet_states[outlet_num] = 'off'
+            
+            # Pattern 14: APC Switched Rack PDU specific - look for any numbered cell followed by On/Off within 500 chars
+            if not outlet_states:
+                self.log("Trying Pattern 14 (proximity search)...")
+                # Find all potential outlet numbers
+                number_matches = list(re.finditer(r'[>\s](\d{1,2})[<\s]', content))
+                for num_match in number_matches:
+                    outlet_num = int(num_match.group(1))
+                    if 1 <= outlet_num <= 48:
+                        # Look for On/Off within next 500 characters
+                        search_range = content[num_match.end():num_match.end()+500]
+                        state_match = re.search(r'>\s*(On|Off)\s*<', search_range, re.IGNORECASE)
+                        if state_match and outlet_num not in outlet_states:
+                            state = 'on' if state_match.group(1).lower() == 'on' else 'off'
+                            outlet_states[outlet_num] = state
+                            self.log(f"Pattern 14 found: Outlet {outlet_num} = {state}")
+            
+            # Store HTML for debugging (increased to 8000 chars)
+            self._last_outlet_html = content[:8000] if content else "EMPTY_CONTENT"
             
             if not outlet_states:
                 self.log("No outlet patterns matched in HTML - may need new regex patterns", "WARN")
