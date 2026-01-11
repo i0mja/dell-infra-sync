@@ -59,19 +59,38 @@ def _import_pysnmp_v7():
     PYSNMP_V7_PLUS = True
     print(f"pysnmp {PYSNMP_VERSION} (v7+ API with SnmpDispatcher) loaded successfully")
 
-# Try to import pysnmp with version detection
+# Try to import pysnmp with version detection and fallback between API styles
 try:
     import pysnmp
     PYSNMP_VERSION = getattr(pysnmp, '__version__', '0.0.0')
     major_version = int(PYSNMP_VERSION.split('.')[0])
     
     if major_version >= 7:
-        _import_pysnmp_v7()
+        # v7+ - try v7 API first, fallback to classic
+        try:
+            _import_pysnmp_v7()
+        except Exception as v7_err:
+            print(f"v7 API import failed: {v7_err}, trying classic API...")
+            try:
+                _import_pysnmp_classic()
+            except Exception as classic_err:
+                print(f"Classic API also failed: {classic_err}")
+                SNMP_AVAILABLE = False
     else:
-        _import_pysnmp_classic()
-        
+        # Version 6.x or lower - try classic first, then v7
+        # (pysnmp-lextudio 6.x may use v7-style paths despite version number)
+        try:
+            _import_pysnmp_classic()
+        except Exception as classic_err:
+            print(f"Classic API import failed: {classic_err}, trying v7 API...")
+            try:
+                _import_pysnmp_v7()
+            except Exception as v7_err:
+                print(f"v7 API also failed: {v7_err}")
+                SNMP_AVAILABLE = False
+                
 except ImportError as initial_error:
-    # Attempt auto-installation of pysnmp-lextudio (the maintained fork)
+    # pysnmp not installed at all - attempt auto-installation
     print(f"pysnmp import failed: {initial_error}")
     print("Attempting to install pysnmp-lextudio...")
     try:
@@ -79,20 +98,25 @@ except ImportError as initial_error:
             [sys.executable, '-m', 'pip', 'install', 'pysnmp-lextudio'],
             timeout=120
         )
-        # Try importing again after installation
         import pysnmp
         PYSNMP_VERSION = getattr(pysnmp, '__version__', '0.0.0')
-        major_version = int(PYSNMP_VERSION.split('.')[0])
-        
-        if major_version >= 7:
+        # After fresh install, try v7 first (lextudio default), fallback to classic
+        try:
             _import_pysnmp_v7()
-        else:
-            _import_pysnmp_classic()
-            
-        print("Successfully installed and imported pysnmp-lextudio")
+        except Exception as v7_err:
+            print(f"Post-install v7 API failed: {v7_err}, trying classic...")
+            try:
+                _import_pysnmp_classic()
+            except Exception as classic_err:
+                print(f"Post-install classic API also failed: {classic_err}")
+                SNMP_AVAILABLE = False
+        print(f"Successfully installed pysnmp-lextudio, SNMP_AVAILABLE={SNMP_AVAILABLE}")
     except Exception as e:
         print(f"Warning: Could not install pysnmp: {e}")
         SNMP_AVAILABLE = False
+
+# Log final SNMP status at startup
+print(f"SNMP_AVAILABLE: {SNMP_AVAILABLE}, Version: {PYSNMP_VERSION}")
 
 from .base import BaseHandler
 from datetime import datetime, timezone
