@@ -1,10 +1,13 @@
-import { useState } from 'react';
-import { usePdus } from '@/hooks/usePdus';
+import { useState, useMemo, useEffect } from 'react';
+import { usePdus, usePduOutlets } from '@/hooks/usePdus';
 import { testPduConnection, discoverPdu, syncPduStatus } from '@/services/pduService';
-import { PduCard } from '@/components/pdu/PduCard';
+import { PduStatsBar } from '@/components/pdu/PduStatsBar';
+import { PdusTable } from '@/components/pdu/PdusTable';
+import { PduDetailsSidebar } from '@/components/pdu/PduDetailsSidebar';
 import { AddPduDialog } from '@/components/pdu/AddPduDialog';
 import { EditPduDialog } from '@/components/pdu/EditPduDialog';
 import { PduOutletsDialog } from '@/components/pdu/PduOutletsDialog';
+import { PduDiagnosticsDialog } from '@/components/pdu/PduDiagnosticsDialog';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
@@ -17,17 +20,59 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Plus, Zap, RefreshCw } from 'lucide-react';
+import { Plus, Zap } from 'lucide-react';
 import { toast } from 'sonner';
-import type { Pdu, PduFormData, PduDiscoverResponse } from '@/types/pdu';
+import type { Pdu, PduFormData, PduDiscoverResponse, PduOutlet } from '@/types/pdu';
 
 export default function Pdus() {
   const { pdus, isLoading, refetch, addPdu, updatePdu, deletePdu } = usePdus();
   
+  const [selectedPdu, setSelectedPdu] = useState<Pdu | null>(null);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [editingPdu, setEditingPdu] = useState<Pdu | null>(null);
   const [deletingPdu, setDeletingPdu] = useState<Pdu | null>(null);
   const [viewingOutletsPdu, setViewingOutletsPdu] = useState<Pdu | null>(null);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [testingPdu, setTestingPdu] = useState<string | null>(null);
+  const [syncingPdu, setSyncingPdu] = useState<string | null>(null);
+  const [isSyncingAll, setIsSyncingAll] = useState(false);
+
+  // Search and filter state
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+
+  // Fetch outlets for selected PDU
+  const { outlets: selectedPduOutlets } = usePduOutlets(selectedPdu?.id || null);
+
+  // Build outlets map for all PDUs (for table preview)
+  const [outletsMap, setOutletsMap] = useState<Map<string, PduOutlet[]>>(new Map());
+
+  // Update outlets map when PDUs change
+  useEffect(() => {
+    // For efficiency, we only fetch outlets for the selected PDU
+    // The table uses a simpler preview based on total_outlets count
+    if (selectedPdu && selectedPduOutlets) {
+      setOutletsMap(prev => {
+        const newMap = new Map(prev);
+        newMap.set(selectedPdu.id, selectedPduOutlets);
+        return newMap;
+      });
+    }
+  }, [selectedPdu, selectedPduOutlets]);
+
+  // Compute stats
+  const stats = useMemo(() => {
+    const online = pdus.filter(p => p.connection_status === 'online').length;
+    const offline = pdus.filter(p => p.connection_status === 'offline').length;
+    const error = pdus.filter(p => p.connection_status === 'error').length;
+    const unknown = pdus.filter(p => !p.connection_status || p.connection_status === 'unknown').length;
+    const totalOutlets = pdus.reduce((sum, p) => sum + (p.total_outlets || 0), 0);
+    
+    return { online, offline, error, unknown, totalOutlets };
+  }, [pdus]);
+
+  // Default to Cloud mode for badge display
+  const useJobExecutor = false;
 
   const handleAdd = async (data: PduFormData) => {
     const result = await addPdu.mutateAsync(data);
@@ -37,7 +82,6 @@ export default function Pdus() {
       toast.info('Discovering PDU outlets...');
       try {
         const discovery = await discoverPdu(result.id);
-        // Check if it's an instant API response (has discovered property)
         if (typeof discovery === 'object' && 'discovered' in discovery) {
           const discoverResult = discovery as PduDiscoverResponse;
           if (discoverResult.success && discoverResult.discovered?.total_outlets) {
@@ -46,7 +90,6 @@ export default function Pdus() {
             toast.warning(`Discovery: ${discoverResult.error}`);
           }
         } else {
-          // Job queue fallback - just notify
           toast.info('Discovery job queued');
         }
         refetch();
@@ -64,9 +107,13 @@ export default function Pdus() {
     if (!deletingPdu) return;
     await deletePdu.mutateAsync(deletingPdu.id);
     setDeletingPdu(null);
+    if (selectedPdu?.id === deletingPdu.id) {
+      setSelectedPdu(null);
+    }
   };
 
   const handleTest = async (pdu: Pdu) => {
+    setTestingPdu(pdu.id);
     try {
       const result = await testPduConnection(pdu.id);
       if (typeof result === 'object' && 'success' in result) {
@@ -81,10 +128,13 @@ export default function Pdus() {
       setTimeout(() => refetch(), 1000);
     } catch (error) {
       toast.error(`Failed to test connection: ${error}`);
+    } finally {
+      setTestingPdu(null);
     }
   };
 
   const handleSync = async (pdu: Pdu) => {
+    setSyncingPdu(pdu.id);
     try {
       const result = await syncPduStatus(pdu.id);
       if (typeof result === 'object' && 'success' in result) {
@@ -99,10 +149,46 @@ export default function Pdus() {
       setTimeout(() => refetch(), 1000);
     } catch (error) {
       toast.error(`Failed to sync status: ${error}`);
+    } finally {
+      setSyncingPdu(null);
     }
   };
 
+  const handleSyncAll = async () => {
+    setIsSyncingAll(true);
+    let successCount = 0;
+    let failCount = 0;
+    
+    for (const pdu of pdus) {
+      try {
+        const result = await syncPduStatus(pdu.id);
+        if (typeof result === 'object' && 'success' in result) {
+          if (result.success) {
+            successCount++;
+          } else {
+            failCount++;
+          }
+        } else {
+          successCount++;
+        }
+      } catch {
+        failCount++;
+      }
+    }
+    
+    if (successCount > 0) {
+      toast.success(`Synced ${successCount} PDU(s)`);
+    }
+    if (failCount > 0) {
+      toast.error(`Failed to sync ${failCount} PDU(s)`);
+    }
+    
+    setTimeout(() => refetch(), 2000);
+    setIsSyncingAll(false);
+  };
+
   const handleDiscoverAll = async () => {
+    setIsSyncingAll(true);
     let successCount = 0;
     let failCount = 0;
     
@@ -116,7 +202,7 @@ export default function Pdus() {
             failCount++;
           }
         } else {
-          successCount++; // Job queued counts as success
+          successCount++;
         }
       } catch {
         failCount++;
@@ -131,70 +217,128 @@ export default function Pdus() {
     }
     
     setTimeout(() => refetch(), 2000);
+    setIsSyncingAll(false);
   };
 
-  return (
-    <div className="container mx-auto py-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Zap className="h-6 w-6" />
-            PDU Management
-          </h1>
-          <p className="text-muted-foreground">
-            Manage Schneider Electric / APC Power Distribution Units
-          </p>
-        </div>
+  const handlePduClick = (pdu: Pdu) => {
+    setSelectedPdu(pdu);
+  };
 
-        <div className="flex items-center gap-2">
-          {pdus.length > 0 && (
-            <Button variant="outline" onClick={handleDiscoverAll}>
-              <RefreshCw className="mr-2 h-4 w-4" />
-              Discover All
-            </Button>
-          )}
-          <Button onClick={() => setShowAddDialog(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add PDU
-          </Button>
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="flex flex-col h-full overflow-hidden">
+        <div className="border-b bg-card px-4 py-3">
+          <Skeleton className="h-8 w-full" />
+        </div>
+        <div className="flex-1 flex">
+          <div className="flex-1 p-4 space-y-2">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+          <div className="w-[440px] border-l p-4">
+            <Skeleton className="h-full" />
+          </div>
         </div>
       </div>
+    );
+  }
 
-      {/* PDU Grid */}
-      {isLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {[1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-[280px]" />
-          ))}
+  // Empty state
+  if (pdus.length === 0) {
+    return (
+      <div className="flex flex-col h-full overflow-hidden">
+        <PduStatsBar
+          totalPdus={0}
+          onlineCount={0}
+          offlineCount={0}
+          unknownCount={0}
+          errorCount={0}
+          totalOutlets={0}
+          useJobExecutor={useJobExecutor}
+          onAddPdu={() => setShowAddDialog(true)}
+          onRefreshAll={refetch}
+          onSyncAll={handleSyncAll}
+          onDiscoverAll={handleDiscoverAll}
+        />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center text-muted-foreground">
+            <Zap className="h-12 w-12 mx-auto mb-4" />
+            <h3 className="text-lg font-medium mb-2">No PDUs Configured</h3>
+            <p className="text-sm mb-4">
+              Add your first PDU to start managing power outlets
+            </p>
+            <Button onClick={() => setShowAddDialog(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add PDU
+            </Button>
+          </div>
         </div>
-      ) : pdus.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {pdus.map((pdu) => (
-            <PduCard
-              key={pdu.id}
-              pdu={pdu}
-              onEdit={setEditingPdu}
-              onDelete={setDeletingPdu}
-              onTest={handleTest}
-              onSync={handleSync}
-              onViewOutlets={setViewingOutletsPdu}
-            />
-          ))}
+
+        <AddPduDialog
+          open={showAddDialog}
+          onOpenChange={setShowAddDialog}
+          onSubmit={handleAdd}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Stats Bar */}
+      <PduStatsBar
+        totalPdus={pdus.length}
+        onlineCount={stats.online}
+        offlineCount={stats.offline}
+        unknownCount={stats.unknown}
+        errorCount={stats.error}
+        totalOutlets={stats.totalOutlets}
+        useJobExecutor={useJobExecutor}
+        onAddPdu={() => setShowAddDialog(true)}
+        onRefreshAll={refetch}
+        onSyncAll={handleSyncAll}
+        onDiscoverAll={handleDiscoverAll}
+        isSyncing={isSyncingAll}
+      />
+
+      {/* Main Content: Table + Sidebar */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Table */}
+        <div className="flex-1 overflow-hidden min-w-0">
+          <PdusTable
+            pdus={pdus}
+            outlets={outletsMap}
+            selectedPduId={selectedPdu?.id || null}
+            onPduClick={handlePduClick}
+            onTest={handleTest}
+            onSync={handleSync}
+            onEdit={setEditingPdu}
+            onDelete={setDeletingPdu}
+            onViewOutlets={setViewingOutletsPdu}
+            searchTerm={searchTerm}
+            onSearchChange={setSearchTerm}
+            statusFilter={statusFilter}
+            onStatusFilterChange={setStatusFilter}
+          />
         </div>
-      ) : (
-        <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-          <Zap className="h-12 w-12 mb-4" />
-          <h3 className="text-lg font-medium mb-2">No PDUs Configured</h3>
-          <p className="text-sm mb-4">
-            Add your first PDU to start managing power outlets
-          </p>
-          <Button onClick={() => setShowAddDialog(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add PDU
-          </Button>
-        </div>
-      )}
+
+        {/* Sidebar */}
+        <PduDetailsSidebar
+          selectedPdu={selectedPdu}
+          outlets={selectedPduOutlets || []}
+          onClose={() => setSelectedPdu(null)}
+          onEdit={() => selectedPdu && setEditingPdu(selectedPdu)}
+          onDelete={() => selectedPdu && setDeletingPdu(selectedPdu)}
+          onTest={() => selectedPdu && handleTest(selectedPdu)}
+          onSync={() => selectedPdu && handleSync(selectedPdu)}
+          onViewOutlets={() => selectedPdu && setViewingOutletsPdu(selectedPdu)}
+          onViewDiagnostics={() => setShowDiagnostics(true)}
+          isTesting={testingPdu === selectedPdu?.id}
+          isSyncing={syncingPdu === selectedPdu?.id}
+        />
+      </div>
 
       {/* Dialogs */}
       <AddPduDialog
@@ -215,6 +359,15 @@ export default function Pdus() {
         onOpenChange={(open) => !open && setViewingOutletsPdu(null)}
         pdu={viewingOutletsPdu}
       />
+
+      {selectedPdu && (
+        <PduDiagnosticsDialog
+          pdu={selectedPdu}
+          open={showDiagnostics}
+          onOpenChange={setShowDiagnostics}
+          onRefresh={() => selectedPdu && handleSync(selectedPdu)}
+        />
+      )}
 
       {/* Delete Confirmation */}
       <AlertDialog open={!!deletingPdu} onOpenChange={() => setDeletingPdu(null)}>
