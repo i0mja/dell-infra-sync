@@ -574,7 +574,7 @@ class APIHandler(BaseHTTPRequestHandler):
                 return
             
             # Connect to vCenter
-            si = self.executor._connect_vcenter(vcenter_settings)
+            si = self.executor.connect_vcenter(vcenter_settings)
             content = si.RetrieveContent()
             
             # Find datastore
