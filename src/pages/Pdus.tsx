@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { usePdus, usePduOutlets } from '@/hooks/usePdus';
 import { testPduConnection, discoverPdu, syncPduStatus } from '@/services/pduService';
+import { useActiveJobs } from '@/hooks/useActiveJobs';
 import { PduStatsBar } from '@/components/pdu/PduStatsBar';
 import { PdusTable } from '@/components/pdu/PdusTable';
 import { PduDetailsSidebar } from '@/components/pdu/PduDetailsSidebar';
@@ -40,6 +41,16 @@ export default function Pdus() {
   // Search and filter state
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+
+  // Track PDU-related jobs in queue
+  const { activeJobs } = useActiveJobs();
+  const pduJobs = useMemo(() => {
+    const pduJobTypes = ['pdu_discover', 'pdu_sync', 'pdu_test', 'pdu_outlet_control'];
+    return activeJobs.filter(job => pduJobTypes.includes(job.job_type));
+  }, [activeJobs]);
+  
+  const pendingPduJobs = pduJobs.filter(j => j.status === 'pending').length;
+  const runningPduJobs = pduJobs.filter(j => j.status === 'running').length;
 
   // Fetch outlets for selected PDU
   const { outlets: selectedPduOutlets } = usePduOutlets(selectedPdu?.id || null);
@@ -301,6 +312,8 @@ export default function Pdus() {
         onSyncAll={handleSyncAll}
         onDiscoverAll={handleDiscoverAll}
         isSyncing={isSyncingAll}
+        pendingJobs={pendingPduJobs}
+        runningJobs={runningPduJobs}
       />
 
       {/* Main Content: Table + Sidebar */}

@@ -58,6 +58,19 @@ class DatabaseMixin:
                             continue
                     
                     ready_jobs.append(job)
+                
+                # Prioritize user-triggered jobs over internal/scheduled jobs
+                # This ensures PDU discover, test, and sync jobs run before background vcenter_sync
+                def job_priority(j):
+                    details = j.get('details') or {}
+                    is_internal = details.get('is_internal', False)
+                    triggered_by = details.get('triggered_by', '')
+                    is_scheduled = triggered_by in ('scheduled', 'scheduled_sync', 'automatic')
+                    # Priority: 0 = user-triggered (highest), 1 = internal/scheduled (lowest)
+                    priority = 1 if (is_internal or is_scheduled) else 0
+                    return (priority, j.get('created_at', ''))
+                
+                ready_jobs.sort(key=job_priority)
                 return ready_jobs
             else:
                 self.log(f"Error fetching jobs: {response.status_code}", "ERROR")

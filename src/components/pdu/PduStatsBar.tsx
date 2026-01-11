@@ -6,7 +6,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Plus, RefreshCw, Activity, Zap, ChevronDown, Settings } from "lucide-react";
+import { Plus, RefreshCw, Activity, Zap, ChevronDown, Settings, Clock, Loader2 } from "lucide-react";
 
 interface PduStatsBarProps {
   totalPdus: number;
@@ -22,6 +22,8 @@ interface PduStatsBarProps {
   onDiscoverAll: () => void;
   onPduSettings?: () => void;
   isSyncing?: boolean;
+  pendingJobs?: number;
+  runningJobs?: number;
 }
 
 export function PduStatsBar({
@@ -38,7 +40,10 @@ export function PduStatsBar({
   onDiscoverAll,
   onPduSettings,
   isSyncing = false,
+  pendingJobs = 0,
+  runningJobs = 0,
 }: PduStatsBarProps) {
+  const hasQueuedJobs = pendingJobs > 0 || runningJobs > 0;
   return (
     <div className="border-b bg-card">
       <div className="flex flex-col gap-2 px-3 py-2 sm:px-4 lg:px-6 lg:flex-row lg:items-center lg:justify-between">
@@ -139,6 +144,19 @@ export function PduStatsBar({
             <Plus className="mr-1.5 h-3.5 w-3.5" />
             Add
           </Button>
+
+          {hasQueuedJobs && (
+            <Badge variant="secondary" className="gap-1.5 text-xs h-7 animate-pulse">
+              {runningJobs > 0 ? (
+                <Loader2 className="h-3 w-3 animate-spin text-blue-500" />
+              ) : (
+                <Clock className="h-3 w-3 text-muted-foreground" />
+              )}
+              <span className="font-medium">
+                {runningJobs > 0 ? `${runningJobs} running` : `${pendingJobs} queued`}
+              </span>
+            </Badge>
+          )}
 
           <Badge variant="outline" className="gap-1.5 text-xs h-7 sm:ml-1">
             <span
