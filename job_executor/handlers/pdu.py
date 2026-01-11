@@ -15,6 +15,10 @@ from typing import Dict, List, Optional, Any, Tuple
 
 import requests
 
+import sys
+import subprocess
+
+# Try to import pysnmp, auto-install if missing
 try:
     from pysnmp.hlapi import (
         setCmd, getCmd, nextCmd, SnmpEngine, CommunityData,
@@ -22,7 +26,23 @@ try:
     )
     SNMP_AVAILABLE = True
 except ImportError:
-    SNMP_AVAILABLE = False
+    # Attempt auto-installation of pysnmp
+    print("pysnmp not found, attempting auto-installation...")
+    try:
+        subprocess.check_call(
+            [sys.executable, '-m', 'pip', 'install', 'pysnmp'],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        from pysnmp.hlapi import (
+            setCmd, getCmd, nextCmd, SnmpEngine, CommunityData,
+            UdpTransportTarget, ContextData, ObjectType, ObjectIdentity, Integer
+        )
+        SNMP_AVAILABLE = True
+        print("Successfully installed and imported pysnmp library")
+    except Exception as e:
+        print(f"Warning: Could not install pysnmp: {e}")
+        SNMP_AVAILABLE = False
 
 from .base import BaseHandler
 
@@ -350,6 +370,15 @@ class PDUHandler(BaseHandler):
                 return False, "Connection timeout"
             
             if response.status_code != 200:
+                # Enhanced diagnostics for 403 and other errors
+                if response.status_code == 403:
+                    self.log(f"403 Forbidden - Response headers: {dict(response.headers)}", "DEBUG")
+                    self.log(f"403 Forbidden - Response body snippet: {response.text[:500]}", "DEBUG")
+                    body_lower = response.text.lower()
+                    if 'access denied' in body_lower or 'blocked' in body_lower:
+                        return False, "Login page returned status 403 - IP may be blocked or access control enabled on PDU"
+                    if 'rate limit' in body_lower or 'too many' in body_lower:
+                        return False, "Login page returned status 403 - Rate limited, wait and retry"
                 return False, f"Login page returned status {response.status_code}"
             
             # Diagnostic: Log login page HTML structure
