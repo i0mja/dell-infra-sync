@@ -1454,24 +1454,36 @@ class PDUHandler(BaseHandler):
             if self._session_token == "cookie-auth":
                 outlet_urls = [
                     f"{self._pdu_url}/outlctrl.htm",
+                    f"{self._pdu_url}/outctl.htm",
                     f"{self._pdu_url}/outlet.htm",
+                    f"{self._pdu_url}/outlets.htm",
+                    f"{self._pdu_url}/status.htm",
                     f"{self._pdu_url}/rPDUout.htm",
                     f"{self._pdu_url}/rPDUOutletControl.htm",
                     f"{self._pdu_url}/rpdu/outlpwr.htm",
                     f"{self._pdu_url}/rpdu/outlctrl.htm",
+                    f"{self._pdu_url}/rpdu/outlet.htm",
+                    f"{self._pdu_url}/rpdu/status.htm",
                     f"{self._pdu_url}/ms/outlctrl.htm",
+                    f"{self._pdu_url}/status/outlets.htm",
                 ]
             else:
                 # Token-based auth uses NMC path
                 outlet_urls = [
                     f"{self._pdu_url}/NMC/{self._session_token}/outlctrl.htm",
+                    f"{self._pdu_url}/NMC/{self._session_token}/outctl.htm",
                     f"{self._pdu_url}/NMC/{self._session_token}/outlet.htm",
+                    f"{self._pdu_url}/NMC/{self._session_token}/outlets.htm",
+                    f"{self._pdu_url}/NMC/{self._session_token}/status.htm",
                     f"{self._pdu_url}/NMC/{self._session_token}/rPDUout.htm",
                     f"{self._pdu_url}/NMC/{self._session_token}/rPDUOutletControl.htm",
                     # Rack PDU specific paths
                     f"{self._pdu_url}/NMC/{self._session_token}/rpdu/outlpwr.htm",
                     f"{self._pdu_url}/NMC/{self._session_token}/rpdu/outlctrl.htm",
+                    f"{self._pdu_url}/NMC/{self._session_token}/rpdu/outlet.htm",
+                    f"{self._pdu_url}/NMC/{self._session_token}/rpdu/status.htm",
                     f"{self._pdu_url}/NMC/{self._session_token}/ms/outlctrl.htm",
+                    f"{self._pdu_url}/NMC/{self._session_token}/status/outlets.htm",
                     # Also try without token in case session is cookie-based
                     f"{self._pdu_url}/outlctrl.htm",
                     f"{self._pdu_url}/outlet.htm",
@@ -1480,9 +1492,12 @@ class PDUHandler(BaseHandler):
             
             content = None
             successful_url = None
+            discovered_pages = []  # Pages discovered from navigation links
             
             self.log(f"Session token being used: {self._session_token[:20] if self._session_token else 'None'}...")
             
+            # First pass: try direct URLs and collect navigation pages
+            nav_pages = []
             for url in outlet_urls:
                 self.log(f"Trying outlet URL: {url}")
                 try:
@@ -1490,19 +1505,76 @@ class PDUHandler(BaseHandler):
                     self.log(f"Response: {response.status_code}, length: {len(response.text)}")
                     
                     if response.status_code == 200:
-                        # Check if this looks like an outlet control page
                         text_lower = response.text.lower()
-                        if 'outlet' in text_lower or 'pdu' in text_lower or 'power' in text_lower:
+                        
+                        # Check if this is a navigation/menu page (has links but no outlet data tables)
+                        has_outlet_keyword = 'outlet' in text_lower or 'pdu' in text_lower
+                        has_table_data = '<table' in text_lower and ('on</td>' in text_lower or 'off</td>' in text_lower or 'state' in text_lower)
+                        has_js_data = 'outletstate' in text_lower or 'olstate' in text_lower
+                        
+                        if has_table_data or has_js_data:
+                            # This looks like actual outlet data
                             content = response.text
                             successful_url = url
-                            self.log(f"Found outlet page at: {url}")
+                            self.log(f"Found outlet DATA page at: {url}")
                             break
-                        else:
-                            self.log(f"Page doesn't contain outlet/pdu/power keywords, trying next")
-                            self.log(f"Page snippet: {response.text[:200]}")
+                        elif has_outlet_keyword:
+                            # This might be a navigation page - save it to scan for links
+                            nav_pages.append((url, response.text))
+                            self.log(f"Found potential nav page at: {url}, will scan for links")
                 except Exception as e:
                     self.log(f"Error fetching {url}: {e}")
                     continue
+            
+            # Second pass: if no data page found, scan navigation pages for links
+            if not content and nav_pages:
+                self.log(f"Scanning {len(nav_pages)} navigation pages for outlet data links...")
+                for nav_url, nav_html in nav_pages:
+                    # Find links that might lead to outlet data
+                    link_pattern = r'href=["\']([^"\']*(?:outlet|status|control|power|rpdu)[^"\']*\.htm)["\']'
+                    links = re.findall(link_pattern, nav_html, re.IGNORECASE)
+                    self.log(f"Found {len(links)} potential outlet links in {nav_url}: {links[:5]}")
+                    
+                    for link in links:
+                        # Resolve relative URLs
+                        if link.startswith('/'):
+                            full_url = f"{self._pdu_url}{link}"
+                        elif link.startswith('http'):
+                            full_url = link
+                        else:
+                            # Relative to current path
+                            base_path = nav_url.rsplit('/', 1)[0]
+                            full_url = f"{base_path}/{link}"
+                        
+                        if full_url in [u for u, _ in nav_pages] or full_url in discovered_pages:
+                            continue  # Already tried this URL
+                        
+                        discovered_pages.append(full_url)
+                        self.log(f"Trying discovered link: {full_url}")
+                        
+                        try:
+                            response = self._session.get(full_url, timeout=self._request_timeout)
+                            if response.status_code == 200:
+                                text_lower = response.text.lower()
+                                has_table_data = '<table' in text_lower and ('on</td>' in text_lower or 'off</td>' in text_lower)
+                                has_js_data = 'outletstate' in text_lower or 'olstate' in text_lower
+                                
+                                if has_table_data or has_js_data:
+                                    content = response.text
+                                    successful_url = full_url
+                                    self.log(f"Found outlet DATA page via link discovery: {full_url}")
+                                    break
+                        except Exception as e:
+                            self.log(f"Error fetching discovered link {full_url}: {e}")
+                    
+                    if content:
+                        break
+            
+            # If still no data page, use the first nav page for pattern matching
+            if not content and nav_pages:
+                content = nav_pages[0][1]
+                successful_url = nav_pages[0][0]
+                self.log(f"Using nav page for pattern matching: {successful_url}")
             
             # Store for debugging
             self._successful_outlet_url = successful_url
@@ -1512,14 +1584,13 @@ class PDUHandler(BaseHandler):
                 self._last_outlet_html = "NO_PAGE_FOUND"
                 return {}
             
-            self.log(f"Outlet page HTML snippet (first 800 chars): {content[:800]}")
+            self.log(f"Outlet page HTML snippet (first 1000 chars): {content[:1000]}")
             
             outlet_states = {}
             
             # Parse outlet states from the page using multiple patterns
             
-            # Pattern 1: Table-based status
-            # <td>Outlet 1</td><td>On</td>
+            # Pattern 1: Table-based status - <td>Outlet 1</td><td>On</td>
             table_pattern = r'Outlet\s*(\d+)[^<]*</td>\s*<td[^>]*>([^<]+)</td>'
             matches = re.findall(table_pattern, content, re.IGNORECASE)
             self.log(f"Pattern 1 (table) matches: {len(matches)}")
@@ -1534,8 +1605,7 @@ class PDUHandler(BaseHandler):
                 else:
                     outlet_states[outlet_num] = 'unknown'
             
-            # Pattern 2: JavaScript-based status
-            # outletState[1] = "On"
+            # Pattern 2: JavaScript-based status - outletState[1] = "On"
             js_pattern = r'outletState\[(\d+)\]\s*=\s*["\']([^"\']+)["\']'
             js_matches = re.findall(js_pattern, content, re.IGNORECASE)
             self.log(f"Pattern 2 (JS) matches: {len(js_matches)}")
@@ -1551,7 +1621,6 @@ class PDUHandler(BaseHandler):
                     outlet_states[outlet_num] = 'unknown'
             
             # Pattern 3: CSS class-based status
-            # <span class="outletOn">Outlet 1</span>
             on_pattern = r'class="[^"]*outletOn[^"]*"[^>]*>.*?Outlet\s*(\d+)'
             off_pattern = r'class="[^"]*outletOff[^"]*"[^>]*>.*?Outlet\s*(\d+)'
             
@@ -1564,8 +1633,7 @@ class PDUHandler(BaseHandler):
             for match in off_matches:
                 outlet_states[int(match)] = 'off'
             
-            # Pattern 4: Alternative table format
-            # <td>1</td>...<td>On</td> or similar with outlet number in first column
+            # Pattern 4: Alternative table format - <td>1</td>...<td>On</td>
             alt_table_pattern = r'<td[^>]*>\s*(\d{1,2})\s*</td>.*?<td[^>]*>\s*(On|Off)\s*</td>'
             alt_matches = re.findall(alt_table_pattern, content, re.IGNORECASE | re.DOTALL)
             self.log(f"Pattern 4 (alt table) matches: {len(alt_matches)}")
@@ -1574,11 +1642,10 @@ class PDUHandler(BaseHandler):
                 outlet_num = int(match[0])
                 if outlet_num <= 48:  # Reasonable outlet number limit
                     state = 'on' if match[1].lower() == 'on' else 'off'
-                    if outlet_num not in outlet_states:  # Don't overwrite existing
+                    if outlet_num not in outlet_states:
                         outlet_states[outlet_num] = state
             
-            # Pattern 5: Select/Option based
-            # <option value="1">Outlet 1 - On</option>
+            # Pattern 5: Select/Option based - Outlet 1 - On
             option_pattern = r'Outlet\s*(\d+)[^<]*[-:]\s*(On|Off)'
             option_matches = re.findall(option_pattern, content, re.IGNORECASE)
             self.log(f"Pattern 5 (option) matches: {len(option_matches)}")
@@ -1589,12 +1656,56 @@ class PDUHandler(BaseHandler):
                 if outlet_num not in outlet_states:
                     outlet_states[outlet_num] = state
             
-            # Store HTML for debugging
-            self._last_outlet_html = content[:2000] if content else "EMPTY_CONTENT"
+            # Pattern 6: Image-based status - <img src="images/on.gif"/>
+            img_pattern = r'(?:Outlet|outlet)\s*(\d+).*?<img[^>]*src="[^"]*/(on|off)\.(?:gif|png|jpg)'
+            img_matches = re.findall(img_pattern, content, re.IGNORECASE | re.DOTALL)
+            self.log(f"Pattern 6 (image) matches: {len(img_matches)}")
+            
+            for match in img_matches:
+                outlet_num = int(match[0])
+                state = match[1].lower()
+                if outlet_num not in outlet_states:
+                    outlet_states[outlet_num] = state
+            
+            # Pattern 7: JavaScript state arrays - olState = [1,1,0,1,0,0,0,0]
+            array_pattern = r'(?:olState|outletState|outlets)\s*=\s*\[([\d,\s]+)\]'
+            array_match = re.search(array_pattern, content, re.IGNORECASE)
+            if array_match:
+                states_str = array_match.group(1)
+                states = [int(s.strip()) for s in states_str.split(',') if s.strip().isdigit()]
+                self.log(f"Pattern 7 (JS array) found {len(states)} states: {states}")
+                for i, state_val in enumerate(states):
+                    outlet_num = i + 1  # 1-indexed
+                    if outlet_num not in outlet_states:
+                        outlet_states[outlet_num] = 'on' if state_val == 1 else 'off'
+            
+            # Pattern 8: Checkbox with outlet number - OL_Ctrl1_1 value="1"
+            checkbox_pattern = r'OL_Ctrl(\d+)[_\d]*[^>]*(?:checked|value="1")'
+            checkbox_matches = re.findall(checkbox_pattern, content, re.IGNORECASE)
+            self.log(f"Pattern 8 (checkbox) matches: {len(checkbox_matches)}")
+            
+            for match in checkbox_matches:
+                outlet_num = int(match)
+                if outlet_num not in outlet_states:
+                    outlet_states[outlet_num] = 'on'
+            
+            # Pattern 9: APC specific - name column followed by state column
+            # Matches: <td class="...">ServerName</td><td>...</td><td>On</td>
+            apc_row_pattern = r'<tr[^>]*>.*?<td[^>]*>[^<]*</td>.*?<td[^>]*>[^<]*(\d+)[^<]*</td>.*?<td[^>]*>\s*(On|Off)\s*</td>.*?</tr>'
+            apc_matches = re.findall(apc_row_pattern, content, re.IGNORECASE | re.DOTALL)
+            self.log(f"Pattern 9 (APC row) matches: {len(apc_matches)}")
+            
+            for match in apc_matches:
+                outlet_num = int(match[0])
+                if outlet_num <= 48 and outlet_num not in outlet_states:
+                    outlet_states[outlet_num] = 'on' if match[1].lower() == 'on' else 'off'
+            
+            # Store HTML for debugging (increased to 4000 chars)
+            self._last_outlet_html = content[:4000] if content else "EMPTY_CONTENT"
             
             if not outlet_states:
                 self.log("No outlet patterns matched in HTML - may need new regex patterns", "WARN")
-                self.log(f"Full HTML for debugging:\n{content[:2000]}", "DEBUG")
+                self.log(f"Full HTML for debugging:\n{content[:3000]}", "DEBUG")
             else:
                 self.log(f"Parsed {len(outlet_states)} outlet states: {outlet_states}")
             
