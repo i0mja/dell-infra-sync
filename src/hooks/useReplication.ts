@@ -9,6 +9,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { syncProtectionConfig } from '@/services/replicationService';
 
 // Get Job Executor URL for operations only
 const getJobExecutorUrl = (): string => {
@@ -819,22 +820,17 @@ export function useProtectionGroups() {
       });
       
       if (hasConfigChanges) {
-        // Get current user for created_by
-        const { data: { user } } = await supabase.auth.getUser();
+        // Use instant API with job queue fallback
+        const changesPayload = {
+          changes: configFields.filter(f => updates[f as keyof typeof updates] !== undefined),
+          rpo_minutes: updates.rpo_minutes,
+          retention_policy: updates.retention_policy,
+          replication_schedule: updates.replication_schedule,
+        };
         
-        // Queue sync_protection_config job
-        await supabase.from('jobs').insert({
-          job_type: 'sync_protection_config' as any, // Cast needed until types regenerate
-          status: 'pending',
-          target_scope: { protection_group_id: id },
-          details: {
-            protection_group_id: id,
-            changes: configFields.filter(f => updates[f as keyof typeof updates] !== undefined),
-            rpo_minutes: updates.rpo_minutes,
-            retention_policy: updates.retention_policy,
-            replication_schedule: updates.replication_schedule,
-          },
-          created_by: user?.id,
+        // Fire and forget - sync in background
+        syncProtectionConfig(id, changesPayload).catch(err => {
+          console.error('Failed to sync protection config:', err);
         });
       }
       

@@ -1265,3 +1265,108 @@ export async function scanDatastoreStatusApi(targetId: string): Promise<ScanData
     throw new Error('Unknown error scanning datastore status');
   }
 }
+
+// ============================================================================
+// Cluster Instant API Functions
+// ============================================================================
+
+export interface ClusterSafetyCheckResponse {
+  success: boolean;
+  cluster_name?: string;
+  cluster_id?: string;
+  safe_to_proceed?: boolean;
+  healthy_hosts?: number;
+  total_hosts?: number;
+  min_required_hosts?: number;
+  details?: Record<string, any>;
+  response_time_ms?: number;
+  error?: string;
+}
+
+/**
+ * Run cluster safety check via instant API
+ */
+export async function clusterSafetyCheckApi(
+  clusterName: string,
+  vcenterId?: string,
+  options?: { minRequiredHosts?: number }
+): Promise<ClusterSafetyCheckResponse> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/cluster-safety-check`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        cluster_name: clusterName,
+        vcenter_id: vcenterId,
+        min_required_hosts: options?.minRequiredHosts || 2,
+      }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to run cluster safety check');
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        throw new Error('Job Executor is not running or not reachable. Please ensure it is started on your local network.');
+      }
+      throw error;
+    }
+    throw new Error('Unknown error running cluster safety check');
+  }
+}
+
+// ============================================================================
+// Replication Instant API Functions
+// ============================================================================
+
+export interface SyncProtectionConfigResponse {
+  success: boolean;
+  protection_group_id?: string;
+  message?: string;
+  response_time_ms?: number;
+  error?: string;
+}
+
+/**
+ * Sync protection group config to ZFS appliances via instant API
+ */
+export async function syncProtectionConfigApi(
+  protectionGroupId: string,
+  changes?: Record<string, any>
+): Promise<SyncProtectionConfigResponse> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/sync-protection-config`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        protection_group_id: protectionGroupId,
+        changes: changes || {},
+      }),
+    });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to sync protection config');
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        throw new Error('Job Executor is not running or not reachable. Please ensure it is started on your local network.');
+      }
+      throw error;
+    }
+    throw new Error('Unknown error syncing protection config');
+  }
+}
