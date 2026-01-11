@@ -442,22 +442,48 @@ class PDUHandler(BaseHandler):
                 self.log(f"Session token acquired: {self._session_token[:8]}...")
                 return True, "Login successful"
             
-            # Alternative success detection: Look for logout/logoff links
+            # Try harder to extract session token from response content before giving up
+            # Look for any NMC link pattern in the page content
+            link_patterns = [
+                r'/NMC/([a-zA-Z0-9+/=_-]{8,})/',       # Standard NMC token in links
+                r'href=["\'][^"\']*NMC/([^/"\']+)/',   # Token in href attributes
+                r'action=["\'][^"\']*NMC/([^/"\']+)/', # Token in form actions
+                r'NMC/([a-zA-Z0-9+/=_-]{8,})/\w+\.htm', # Token in any .htm URL
+            ]
+            
+            for pattern in link_patterns:
+                content_match = re.search(pattern, response.text)
+                if content_match:
+                    token = content_match.group(1)
+                    if token not in ['logon', 'login', 'logout', 'logoff']:  # Skip these pseudo-tokens
+                        self._session_token = token
+                        self.log(f"Session token extracted from content: {self._session_token[:8]}...")
+                        return True, "Login successful"
+            
+            # Alternative success detection: Look for logout/logoff links (but still need to find token)
             if 'logoff' in response.text.lower() or 'logout' in response.text.lower():
-                self.log("Detected logout link - login appears successful")
-                self._session_token = "no-token-required"
-                return True, "Login successful (detected logout link)"
+                self.log("Detected logout link - login appears successful but no token found")
+                # Try to extract from logout link itself
+                logout_match = re.search(r'href=["\'][^"\']*NMC/([^/"\']+)/log(?:out|off)', response.text, re.IGNORECASE)
+                if logout_match:
+                    self._session_token = logout_match.group(1)
+                    self.log(f"Session token from logout link: {self._session_token[:8]}...")
+                    return True, "Login successful"
+                # Last resort - try cookie-based auth (some newer firmware)
+                self._session_token = "cookie-auth"
+                self.log("Using cookie-based authentication (no URL token)")
+                return True, "Login successful (cookie-based)"
             
             # Alternative: Check if we landed on a home/status page (not login)
             if 'home.htm' in final_url.lower() or 'status' in final_url.lower():
-                self.log("Landed on home/status page - login successful")
-                self._session_token = "no-token-required"
+                self.log("Landed on home/status page - login successful but no token in URL")
+                self._session_token = "cookie-auth"
                 return True, "Login successful (redirected to home)"
             
             # Alternative: No login form in response means we're authenticated
             if 'logon.htm' not in response.text.lower() and '<input' not in response.text.lower():
-                self.log("No login form in response - likely authenticated")
-                self._session_token = "no-token-required"
+                self.log("No login form in response - likely authenticated via cookies")
+                self._session_token = "cookie-auth"
                 return True, "Login successful"
             
             # Check if we're still on the login page (bad credentials)
@@ -468,13 +494,6 @@ class PDUHandler(BaseHandler):
                 # Still on login page but no explicit error - could be redirect issue
                 self.log("Still on login page but no explicit error - may need different auth flow")
                 return False, "Login failed - still on login page"
-            
-            # Try to find session token in response content
-            content_match = re.search(r'/NMC/([a-zA-Z0-9+/=]+)/', response.text)
-            if content_match:
-                self._session_token = content_match.group(1)
-                self.log(f"Session token from content: {self._session_token[:8]}...")
-                return True, "Login successful"
             
             return False, "Could not extract session token from response"
             
@@ -1408,25 +1427,71 @@ class PDUHandler(BaseHandler):
         Returns dict of outlet_number -> state ('on', 'off', 'unknown')
         """
         if not self._session_token or not self._session:
+            self.log("Cannot get outlet states: no session token or session", "WARN")
             return {}
         
         try:
-            status_url = f"{self._pdu_url}/NMC/{self._session_token}/outlctrl.htm"
-            response = self._session.get(status_url, timeout=self._request_timeout)
+            # Try multiple possible outlet page URLs for different APC firmware versions
+            outlet_urls = []
             
-            if response.status_code != 200:
+            # Cookie-based auth uses root URLs directly
+            if self._session_token == "cookie-auth":
+                outlet_urls = [
+                    f"{self._pdu_url}/outlctrl.htm",
+                    f"{self._pdu_url}/outlet.htm",
+                    f"{self._pdu_url}/rPDUout.htm",
+                    f"{self._pdu_url}/rPDUOutletControl.htm",
+                ]
+            else:
+                # Token-based auth uses NMC path
+                outlet_urls = [
+                    f"{self._pdu_url}/NMC/{self._session_token}/outlctrl.htm",
+                    f"{self._pdu_url}/NMC/{self._session_token}/outlet.htm",
+                    f"{self._pdu_url}/NMC/{self._session_token}/rPDUout.htm",
+                    f"{self._pdu_url}/NMC/{self._session_token}/rPDUOutletControl.htm",
+                    # Also try without token in case it's not needed
+                    f"{self._pdu_url}/outlctrl.htm",
+                    f"{self._pdu_url}/outlet.htm",
+                ]
+            
+            content = None
+            successful_url = None
+            
+            for url in outlet_urls:
+                self.log(f"Trying outlet URL: {url}")
+                try:
+                    response = self._session.get(url, timeout=self._request_timeout)
+                    self.log(f"Response: {response.status_code}")
+                    
+                    if response.status_code == 200:
+                        # Check if this looks like an outlet control page
+                        text_lower = response.text.lower()
+                        if 'outlet' in text_lower or 'pdu' in text_lower or 'power' in text_lower:
+                            content = response.text
+                            successful_url = url
+                            self.log(f"Found outlet page at: {url}")
+                            break
+                        else:
+                            self.log(f"Page doesn't contain outlet info, trying next")
+                except Exception as e:
+                    self.log(f"Error fetching {url}: {e}")
+                    continue
+            
+            if not content:
+                self.log("No outlet page found at any URL", "WARN")
                 return {}
             
-            content = response.text
+            self.log(f"Outlet page HTML snippet (first 800 chars): {content[:800]}")
+            
             outlet_states = {}
             
-            # Parse outlet states from the page
-            # Look for patterns like "Outlet 1: On" or status indicators
+            # Parse outlet states from the page using multiple patterns
             
             # Pattern 1: Table-based status
             # <td>Outlet 1</td><td>On</td>
             table_pattern = r'Outlet\s*(\d+)[^<]*</td>\s*<td[^>]*>([^<]+)</td>'
             matches = re.findall(table_pattern, content, re.IGNORECASE)
+            self.log(f"Pattern 1 (table) matches: {len(matches)}")
             
             for match in matches:
                 outlet_num = int(match[0])
@@ -1442,6 +1507,7 @@ class PDUHandler(BaseHandler):
             # outletState[1] = "On"
             js_pattern = r'outletState\[(\d+)\]\s*=\s*["\']([^"\']+)["\']'
             js_matches = re.findall(js_pattern, content, re.IGNORECASE)
+            self.log(f"Pattern 2 (JS) matches: {len(js_matches)}")
             
             for match in js_matches:
                 outlet_num = int(match[0])
@@ -1458,12 +1524,46 @@ class PDUHandler(BaseHandler):
             on_pattern = r'class="[^"]*outletOn[^"]*"[^>]*>.*?Outlet\s*(\d+)'
             off_pattern = r'class="[^"]*outletOff[^"]*"[^>]*>.*?Outlet\s*(\d+)'
             
-            for match in re.findall(on_pattern, content, re.IGNORECASE):
+            on_matches = re.findall(on_pattern, content, re.IGNORECASE)
+            off_matches = re.findall(off_pattern, content, re.IGNORECASE)
+            self.log(f"Pattern 3 (CSS) on/off matches: {len(on_matches)}/{len(off_matches)}")
+            
+            for match in on_matches:
                 outlet_states[int(match)] = 'on'
-            for match in re.findall(off_pattern, content, re.IGNORECASE):
+            for match in off_matches:
                 outlet_states[int(match)] = 'off'
             
-            self.log(f"Parsed outlet states: {outlet_states}")
+            # Pattern 4: Alternative table format
+            # <td>1</td>...<td>On</td> or similar with outlet number in first column
+            alt_table_pattern = r'<td[^>]*>\s*(\d{1,2})\s*</td>.*?<td[^>]*>\s*(On|Off)\s*</td>'
+            alt_matches = re.findall(alt_table_pattern, content, re.IGNORECASE | re.DOTALL)
+            self.log(f"Pattern 4 (alt table) matches: {len(alt_matches)}")
+            
+            for match in alt_matches:
+                outlet_num = int(match[0])
+                if outlet_num <= 48:  # Reasonable outlet number limit
+                    state = 'on' if match[1].lower() == 'on' else 'off'
+                    if outlet_num not in outlet_states:  # Don't overwrite existing
+                        outlet_states[outlet_num] = state
+            
+            # Pattern 5: Select/Option based
+            # <option value="1">Outlet 1 - On</option>
+            option_pattern = r'Outlet\s*(\d+)[^<]*[-:]\s*(On|Off)'
+            option_matches = re.findall(option_pattern, content, re.IGNORECASE)
+            self.log(f"Pattern 5 (option) matches: {len(option_matches)}")
+            
+            for match in option_matches:
+                outlet_num = int(match[0])
+                state = 'on' if match[1].lower() == 'on' else 'off'
+                if outlet_num not in outlet_states:
+                    outlet_states[outlet_num] = state
+            
+            if not outlet_states:
+                self.log("No outlet patterns matched in HTML - may need new regex patterns", "WARN")
+                self.log(f"Full HTML for debugging:\n{content[:2000]}", "DEBUG")
+            else:
+                self.log(f"Parsed {len(outlet_states)} outlet states: {outlet_states}")
+            
             return outlet_states
             
         except Exception as e:
