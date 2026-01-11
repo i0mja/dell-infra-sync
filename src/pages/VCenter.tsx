@@ -35,6 +35,7 @@ import { NetworksFilterToolbar } from "@/components/vcenter/NetworksFilterToolba
 import { SyncableTabTrigger } from "@/components/vcenter/SyncableTabTrigger";
 import { ServerUpdateWizard } from "@/components/jobs/ServerUpdateWizard";
 import { UpdateAvailabilityScanDialog } from "@/components/updates";
+import { triggerVCenterSync, triggerPartialSync } from "@/services/vcenterService";
 import type { ScanTarget } from "@/components/updates/types";
 import type { SidebarNavItem } from "@/components/vcenter/SidebarBreadcrumb";
 
@@ -471,42 +472,31 @@ export default function VCenter() {
   const handlePartialSync = async (scope: 'vms' | 'hosts' | 'clusters' | 'datastores' | 'networks') => {
     try {
       setPartialSyncing(scope);
-      const { data: { user } } = await supabase.auth.getUser();
       
-      if (!user) {
-        toast({
-          title: "Authentication required",
-          description: "Please log in to sync",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      const targetVCenterId = selectedVCenterId === "all" ? null : selectedVCenterId;
-
-      const { data, error } = await supabase.from("jobs").insert({
-        job_type: "partial_vcenter_sync",
-        status: "pending",
-        created_by: user.id,
-        details: { 
-          sync_scope: scope,
-          vcenter_id: targetVCenterId,
-          sync_type: `${scope}_only`
-        },
-      }).select().single();
-
-      if (error) throw error;
+      const targetVCenterId = selectedVCenterId === "all" ? undefined : selectedVCenterId;
+      const result = await triggerPartialSync(scope, targetVCenterId);
 
       const scopeLabel = scope.charAt(0).toUpperCase() + scope.slice(1);
-      toast({
-        title: `${scopeLabel} sync started`,
-        description: `Syncing ${scope} from vCenter`,
-        action: (
-          <Button variant="outline" size="sm" onClick={() => navigate('/maintenance-planner?tab=jobs')}>
-            View Jobs
-          </Button>
-        ),
-      });
+      
+      // If result is a string, it's a job ID (fallback occurred)
+      if (typeof result === 'string') {
+        toast({
+          title: `${scopeLabel} sync started`,
+          description: `Syncing ${scope} from vCenter (queued)`,
+          action: (
+            <Button variant="outline" size="sm" onClick={() => navigate('/maintenance-planner?tab=jobs')}>
+              View Jobs
+            </Button>
+          ),
+        });
+      } else if (result.success) {
+        toast({
+          title: `${scopeLabel} sync completed`,
+          description: result.message || `${scope} synced successfully`,
+        });
+      } else {
+        throw new Error(result.error || 'Sync failed');
+      }
 
       // Refresh data after a short delay
       setTimeout(() => {
