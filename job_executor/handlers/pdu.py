@@ -57,23 +57,23 @@ def _import_pysnmp_v6_async():
     global SnmpEngine, CommunityData, UdpTransportTarget, ContextData
     global ObjectType, ObjectIdentity, Integer
     
-    # v6.x uses v3arch.asyncio path with async functions
-    from pysnmp.hlapi.v3arch.asyncio import (
+    # pysnmp 6.x uses hlapi.asyncio with camelCase function names
+    from pysnmp.hlapi.asyncio import (
         SnmpEngine,
         CommunityData,
         UdpTransportTarget,
         ContextData,
         ObjectType,
         ObjectIdentity,
-        get_cmd as get_cmd_async,
-        set_cmd as set_cmd_async,
-        bulk_cmd as bulk_cmd_async,
+        getCmd as get_cmd_async,    # camelCase in 6.x
+        setCmd as set_cmd_async,    # camelCase in 6.x
+        nextCmd as bulk_cmd_async,  # 6.x uses nextCmd for walking
     )
     from pysnmp.proto.rfc1902 import Integer32 as Integer
     
     SNMP_AVAILABLE = True
     PYSNMP_V7_PLUS = True  # Use async wrappers
-    print(f"pysnmp {PYSNMP_VERSION} (v6.x asyncio API) loaded successfully")
+    print(f"pysnmp {PYSNMP_VERSION} (hlapi.asyncio API) loaded successfully")
 
 # =============================================================================
 # Async-to-Sync SNMP wrappers for pysnmp v6+ (asyncio-only API)
@@ -81,13 +81,12 @@ def _import_pysnmp_v6_async():
 
 def _run_snmp_get_v7(ip: str, port: int, community: str, oid: str,
                       timeout: int = 10, retries: int = 2):
-    """Synchronous wrapper for pysnmp v6+ async get_cmd"""
+    """Synchronous wrapper for pysnmp 6.x async getCmd"""
     async def _do_get():
         snmpEngine = SnmpEngine()
         try:
-            transport = await UdpTransportTarget.create(
-                (ip, port), timeout=timeout, retries=retries
-            )
+            # pysnmp 6.x uses sync constructor for UdpTransportTarget
+            transport = UdpTransportTarget((ip, port), timeout=timeout, retries=retries)
             return await get_cmd_async(
                 snmpEngine,
                 CommunityData(community),
@@ -96,18 +95,18 @@ def _run_snmp_get_v7(ip: str, port: int, community: str, oid: str,
                 ObjectType(ObjectIdentity(oid))
             )
         finally:
-            snmpEngine.close_dispatcher()
+            if hasattr(snmpEngine, 'close_dispatcher'):
+                snmpEngine.close_dispatcher()
     return asyncio.run(_do_get())
 
 def _run_snmp_set_v7(ip: str, port: int, community: str, oid: str,
                       value: int, timeout: int = 5, retries: int = 2):
-    """Synchronous wrapper for pysnmp v6+ async set_cmd"""
+    """Synchronous wrapper for pysnmp 6.x async setCmd"""
     async def _do_set():
         snmpEngine = SnmpEngine()
         try:
-            transport = await UdpTransportTarget.create(
-                (ip, port), timeout=timeout, retries=retries
-            )
+            # pysnmp 6.x uses sync constructor for UdpTransportTarget
+            transport = UdpTransportTarget((ip, port), timeout=timeout, retries=retries)
             return await set_cmd_async(
                 snmpEngine,
                 CommunityData(community),
@@ -116,41 +115,55 @@ def _run_snmp_set_v7(ip: str, port: int, community: str, oid: str,
                 ObjectType(ObjectIdentity(oid), Integer(value))
             )
         finally:
-            snmpEngine.close_dispatcher()
+            if hasattr(snmpEngine, 'close_dispatcher'):
+                snmpEngine.close_dispatcher()
     return asyncio.run(_do_set())
 
 def _run_snmp_walk_v7(ip: str, port: int, community: str, base_oid: str,
                        timeout: int = 10, retries: int = 2) -> list:
-    """Synchronous wrapper for pysnmp v6+ async bulk walk"""
+    """Synchronous wrapper for pysnmp 6.x async nextCmd walk"""
     async def _do_walk():
         results = []
         snmpEngine = SnmpEngine()
         try:
-            transport = await UdpTransportTarget.create(
-                (ip, port), timeout=timeout, retries=retries
-            )
+            # pysnmp 6.x uses sync constructor for UdpTransportTarget
+            transport = UdpTransportTarget((ip, port), timeout=timeout, retries=retries)
             current_oid = base_oid
+            
             while True:
                 error_indication, error_status, error_index, var_binds = await bulk_cmd_async(
                     snmpEngine,
                     CommunityData(community),
                     transport,
                     ContextData(),
-                    0, 25,  # nonRepeaters, maxRepetitions
                     ObjectType(ObjectIdentity(current_oid)),
                 )
+                
                 if error_indication or error_status:
                     break
                 if not var_binds:
                     break
-                for var_bind in var_binds:
-                    oid_str = str(var_bind[0])
-                    if not oid_str.startswith(base_oid):
-                        return results  # Left the subtree
-                    results.append(var_bind)
-                    current_oid = oid_str  # Continue from last OID
+                
+                # nextCmd returns list of var_bind tuples
+                for var_bind_row in var_binds:
+                    if isinstance(var_bind_row, tuple):
+                        # Single var_bind tuple
+                        oid_str = str(var_bind_row[0])
+                        if not oid_str.startswith(base_oid):
+                            return results
+                        results.append(var_bind_row)
+                        current_oid = oid_str
+                    else:
+                        # Nested list of var_binds
+                        for var_bind in var_bind_row:
+                            oid_str = str(var_bind[0])
+                            if not oid_str.startswith(base_oid):
+                                return results
+                            results.append(var_bind)
+                            current_oid = oid_str
         finally:
-            snmpEngine.close_dispatcher()
+            if hasattr(snmpEngine, 'close_dispatcher'):
+                snmpEngine.close_dispatcher()
         return results
     return asyncio.run(_do_walk())
 
