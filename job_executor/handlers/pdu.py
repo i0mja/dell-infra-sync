@@ -384,18 +384,32 @@ class PDUHandler(BaseHandler):
             else:
                 login_url = f"{self._pdu_url}/Forms/login1"
             
-            # Build payload with detected field names
-            payload = {
-                username_field: username,
-                password_field: password,
-                'submit': 'Log On'
-            }
+            # Extract ALL hidden fields from the login form (CSRF tokens, session IDs, etc.)
+            hidden_input_pattern = r'<input[^>]*type=["\']hidden["\'][^>]*>'
+            hidden_inputs = re.findall(hidden_input_pattern, response.text, re.IGNORECASE)
+            
+            # Build payload with all hidden fields first
+            payload = {}
+            for hidden_input in hidden_inputs:
+                name_match = re.search(r'name=["\']([^"\']+)["\']', hidden_input, re.IGNORECASE)
+                value_match = re.search(r'value=["\']([^"\']*)["\']', hidden_input, re.IGNORECASE)
+                if name_match:
+                    name = name_match.group(1)
+                    value = value_match.group(1) if value_match else ''
+                    payload[name] = value
+                    self.log(f"Found hidden field: {name}={value[:30] if value else '(empty)'}...")
+            
+            # Add username/password fields
+            payload[username_field] = username
+            payload[password_field] = password
+            payload['submit'] = 'Log On'
+            
             headers = {
                 'Content-Type': 'application/x-www-form-urlencoded',
                 'Referer': login_page_url
             }
             
-            self.log(f"Submitting login to: {login_url} with fields: {list(payload.keys())}")
+            self.log(f"Submitting login to: {login_url} with {len(payload)} fields: {list(payload.keys())}")
             response = self._session.post(
                 login_url, 
                 data=payload, 
