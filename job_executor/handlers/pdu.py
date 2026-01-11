@@ -1595,13 +1595,13 @@ class PDUHandler(BaseHandler):
                         self._add_diagnostic('ERROR', 'sync_failed', f'SNMP failed and NMC login failed: {message}')
                         self._save_diagnostics(pdu_id)
                         return {'success': False, 'error': f'SNMP failed and NMC login failed: {message}'}
-                    except Exception as e:
-                        self.log(f"NMC fallback error: {e}", "ERROR")
-                        self._add_diagnostic('ERROR', 'sync_failed', f'NMC fallback exception: {e}')
-                        self._save_diagnostics(pdu_id)
-                        return {'success': False, 'error': f'SNMP failed and NMC fallback failed: {e}'}
-                    finally:
-                        self._logout()
+                except Exception as e:
+                    self.log(f"NMC fallback error: {e}", "ERROR")
+                    self._add_diagnostic('ERROR', 'sync_failed', f'NMC fallback exception: {e}')
+                    self._save_diagnostics(pdu_id)
+                    return {'success': False, 'error': f'SNMP failed and NMC fallback failed: {e}'}
+                finally:
+                    self._logout()
         
         # Auto mode - try SNMP first (fast and reliable), fall back to NMC
         if protocol == 'auto':
