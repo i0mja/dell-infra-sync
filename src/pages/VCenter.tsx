@@ -413,17 +413,7 @@ export default function VCenter() {
   const handleSync = async () => {
     try {
       setSyncing(true);
-      const { data: { user } } = await supabase.auth.getUser();
       
-      if (!user) {
-        toast({
-          title: "Authentication required",
-          description: "Please log in to sync",
-          variant: "destructive",
-        });
-        return;
-      }
-
       // Get all sync-enabled vCenters
       const enabledVCenters = vcenters.filter(vc => vc.sync_enabled);
       
@@ -436,28 +426,40 @@ export default function VCenter() {
         return;
       }
 
-      // Create sync jobs for all enabled vCenters
-      const { error } = await supabase.from("jobs").insert(
-        enabledVCenters.map(vc => ({
-          job_type: "vcenter_sync" as const,
-          status: "pending" as const,
-          created_by: user.id,
-          target_scope: { vcenter_ids: [vc.id] },
-          details: { sync_type: "full_sync", vcenter_name: vc.name },
-        }))
+      // Sync each vCenter using the instant API pattern
+      const results = await Promise.all(
+        enabledVCenters.map(vc => triggerVCenterSync(vc.id))
       );
-
-      if (error) throw error;
-
-      toast({
-        title: `Syncing ${enabledVCenters.length} vCenter${enabledVCenters.length > 1 ? 's' : ''}`,
-        description: "Job Executor will handle the syncs",
-        action: (
-          <Button variant="outline" size="sm" onClick={() => navigate('/maintenance-planner?tab=jobs')}>
-            View Jobs
-          </Button>
-        ),
-      });
+      
+      // Check if any used instant API vs job queue
+      const instantCount = results.filter(r => typeof r !== 'string' && r.success).length;
+      const queuedCount = results.filter(r => typeof r === 'string').length;
+      
+      if (instantCount > 0 && queuedCount === 0) {
+        toast({
+          title: `Synced ${instantCount} vCenter${instantCount > 1 ? 's' : ''}`,
+          description: "vCenter data synced successfully",
+        });
+      } else if (queuedCount > 0) {
+        toast({
+          title: `Syncing ${enabledVCenters.length} vCenter${enabledVCenters.length > 1 ? 's' : ''}`,
+          description: instantCount > 0 
+            ? `${instantCount} instant, ${queuedCount} queued` 
+            : "Sync jobs queued",
+          action: (
+            <Button variant="outline" size="sm" onClick={() => navigate('/maintenance-planner?tab=jobs')}>
+              View Jobs
+            </Button>
+          ),
+        });
+      }
+      
+      // Refresh data
+      setTimeout(() => {
+        fetchHosts();
+        refetchVCenterData();
+      }, 2000);
+      
     } catch (error: any) {
       toast({
         title: "Sync failed",

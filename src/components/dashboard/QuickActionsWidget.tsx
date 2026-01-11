@@ -2,38 +2,42 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Zap, Search, RefreshCw, FileBarChart, Server } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/hooks/useAuth";
+import { triggerVCenterSync } from "@/services/vcenterService";
 import { toast } from "sonner";
 import { useState } from "react";
 
 export const QuickActionsWidget = () => {
   const navigate = useNavigate();
-  const { session } = useAuth();
-  const [isCreatingJob, setIsCreatingJob] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
 
-  const createJob = async (jobType: string, label: string) => {
-    if (!session?.user?.id) {
-      toast.error("You must be logged in to create jobs");
-      return;
-    }
-
-    setIsCreatingJob(jobType);
+  const handleVCenterSync = async () => {
+    setIsSyncing(true);
     try {
-      const { error } = await supabase.from('jobs').insert({
-        job_type: jobType as any,
-        created_by: session.user.id,
-        status: 'pending',
-        target_scope: {}
-      });
-
-      if (error) throw error;
-      toast.success(`${label} job created`);
+      const result = await triggerVCenterSync();
+      
+      // If result is a string, it's a job ID (fallback occurred)
+      if (typeof result === 'string') {
+        toast.success('vCenter sync started', {
+          description: 'Sync job queued',
+          action: {
+            label: 'View Jobs',
+            onClick: () => navigate('/maintenance-planner?tab=jobs')
+          }
+        });
+      } else if (result.success) {
+        toast.success('vCenter sync completed', {
+          description: result.message || 'vCenter data synced successfully'
+        });
+      } else {
+        throw new Error(result.error || 'Sync failed');
+      }
     } catch (err) {
-      console.error('Failed to create job:', err);
-      toast.error(`Failed to create ${label.toLowerCase()} job`);
+      console.error('Failed to sync vCenter:', err);
+      toast.error('vCenter sync failed', {
+        description: err instanceof Error ? err.message : 'Unknown error'
+      });
     } finally {
-      setIsCreatingJob(null);
+      setIsSyncing(false);
     }
   };
 
@@ -48,7 +52,8 @@ export const QuickActionsWidget = () => {
       icon: RefreshCw,
       label: 'Sync vCenter',
       description: 'Update vCenter data',
-      onClick: () => createJob('vcenter_sync', 'vCenter Sync')
+      onClick: handleVCenterSync,
+      loading: isSyncing
     },
     {
       icon: Server,
@@ -76,7 +81,7 @@ export const QuickActionsWidget = () => {
         <div className="grid grid-cols-2 gap-2">
           {actions.map(action => {
             const Icon = action.icon;
-            const isLoading = isCreatingJob === action.label;
+            const isLoading = 'loading' in action && action.loading;
             
             return (
               <Button
@@ -86,7 +91,7 @@ export const QuickActionsWidget = () => {
                 onClick={action.onClick}
                 disabled={isLoading}
               >
-                <Icon className="h-5 w-5" />
+                <Icon className={`h-5 w-5 ${isLoading ? 'animate-spin' : ''}`} />
                 <span className="text-xs font-medium">{action.label}</span>
               </Button>
             );
