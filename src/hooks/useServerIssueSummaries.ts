@@ -17,6 +17,29 @@ export interface ServerIssueSummary {
   hasWarning: boolean;    // Only warnings (no critical)
 }
 
+// Helper to format drive slot from slot number or name field
+function formatDriveSlot(slot: string | number | null, name: string | null): string {
+  // If slot is a valid number, format as "Bay X"
+  if (slot != null && slot !== '') {
+    return `Bay ${slot}`;
+  }
+  
+  // Try to extract from name (e.g., "Disk.Bay.7:Enclosure..." -> "Bay 7")
+  if (name) {
+    const bayMatch = name.match(/Bay\.?(\d+)/i);
+    if (bayMatch) {
+      return `Bay ${bayMatch[1]}`;
+    }
+    // Fallback: try any number in the name
+    const numMatch = name.match(/(\d+)/);
+    if (numMatch) {
+      return `Bay ${numMatch[1]}`;
+    }
+  }
+  
+  return 'Unknown Bay';
+}
+
 export function useServerIssueSummaries() {
   return useQuery({
     queryKey: ["server-issue-summaries"],
@@ -24,7 +47,7 @@ export function useServerIssueSummaries() {
       // Get drive issues with details
       const { data: driveData } = await supabase
         .from("server_drives")
-        .select("server_id, slot, health, status, predicted_failure, model");
+        .select("server_id, slot, name, health, status, predicted_failure, model");
       
       // Get memory issues with details
       const { data: memoryData } = await supabase
@@ -53,7 +76,7 @@ export function useServerIssueSummaries() {
           
           existing.issues.push({
             type: 'drive',
-            slot: d.slot || 'Unknown',
+            slot: formatDriveSlot(d.slot, d.name),
             health: d.health || 'Unknown',
             status: d.status || 'Unknown',
             message: d.predicted_failure 
