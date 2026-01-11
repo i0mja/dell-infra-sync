@@ -26,11 +26,16 @@ SNMP_AVAILABLE = False
 PYSNMP_VERSION = None
 PYSNMP_V7_PLUS = False
 
-# v7+ async function references (set by _import_pysnmp_v7)
+# v6+/v7+ async function references (set by _import_pysnmp_v6_async)
 get_cmd_async = None
 set_cmd_async = None
 bulk_cmd_async = None
-SnmpDispatcher = None
+SnmpEngine = None
+ContextData = None
+CommunityData = None
+UdpTransportTarget = None
+ObjectType = None
+ObjectIdentity = None
 Integer = None
 
 def _import_pysnmp_classic():
@@ -45,18 +50,19 @@ def _import_pysnmp_classic():
     SNMP_AVAILABLE = True
     print(f"pysnmp {PYSNMP_VERSION} (classic API) loaded successfully")
 
-def _import_pysnmp_v7():
-    """Import pysnmp using the v7+ asyncio API (pysnmp-lextudio)"""
+def _import_pysnmp_v6_async():
+    """Import pysnmp using the v6.x asyncio API (pysnmp/pysnmp-lextudio 6.x)"""
     global SNMP_AVAILABLE, PYSNMP_V7_PLUS
     global get_cmd_async, set_cmd_async, bulk_cmd_async
-    global SnmpDispatcher, CommunityData, UdpTransportTarget
+    global SnmpEngine, CommunityData, UdpTransportTarget, ContextData
     global ObjectType, ObjectIdentity, Integer
     
-    # v7+ uses v1arch.asyncio path with async functions
-    from pysnmp.hlapi.v1arch.asyncio import (
-        SnmpDispatcher,
+    # v6.x uses v3arch.asyncio path with async functions
+    from pysnmp.hlapi.v3arch.asyncio import (
+        SnmpEngine,
         CommunityData,
         UdpTransportTarget,
+        ContextData,
         ObjectType,
         ObjectIdentity,
         get_cmd as get_cmd_async,
@@ -66,52 +72,70 @@ def _import_pysnmp_v7():
     from pysnmp.proto.rfc1902 import Integer32 as Integer
     
     SNMP_AVAILABLE = True
-    PYSNMP_V7_PLUS = True
-    print(f"pysnmp {PYSNMP_VERSION} (v7+ asyncio API) loaded successfully")
+    PYSNMP_V7_PLUS = True  # Use async wrappers
+    print(f"pysnmp {PYSNMP_VERSION} (v6.x asyncio API) loaded successfully")
 
 # =============================================================================
-# Async-to-Sync SNMP wrappers for pysnmp v7+ (asyncio-only API)
+# Async-to-Sync SNMP wrappers for pysnmp v6+ (asyncio-only API)
 # =============================================================================
 
 def _run_snmp_get_v7(ip: str, port: int, community: str, oid: str,
                       timeout: int = 10, retries: int = 2):
-    """Synchronous wrapper for pysnmp v7+ async get_cmd"""
+    """Synchronous wrapper for pysnmp v6+ async get_cmd"""
     async def _do_get():
-        async with SnmpDispatcher() as snmpDispatcher:
+        snmpEngine = SnmpEngine()
+        try:
+            transport = await UdpTransportTarget.create(
+                (ip, port), timeout=timeout, retries=retries
+            )
             return await get_cmd_async(
-                snmpDispatcher,
+                snmpEngine,
                 CommunityData(community),
-                await UdpTransportTarget.create((ip, port), timeout=timeout, retries=retries),
+                transport,
+                ContextData(),
                 ObjectType(ObjectIdentity(oid))
             )
+        finally:
+            snmpEngine.close_dispatcher()
     return asyncio.run(_do_get())
 
 def _run_snmp_set_v7(ip: str, port: int, community: str, oid: str,
                       value: int, timeout: int = 5, retries: int = 2):
-    """Synchronous wrapper for pysnmp v7+ async set_cmd"""
+    """Synchronous wrapper for pysnmp v6+ async set_cmd"""
     async def _do_set():
-        async with SnmpDispatcher() as snmpDispatcher:
+        snmpEngine = SnmpEngine()
+        try:
+            transport = await UdpTransportTarget.create(
+                (ip, port), timeout=timeout, retries=retries
+            )
             return await set_cmd_async(
-                snmpDispatcher,
+                snmpEngine,
                 CommunityData(community),
-                await UdpTransportTarget.create((ip, port), timeout=timeout, retries=retries),
+                transport,
+                ContextData(),
                 ObjectType(ObjectIdentity(oid), Integer(value))
             )
+        finally:
+            snmpEngine.close_dispatcher()
     return asyncio.run(_do_set())
 
 def _run_snmp_walk_v7(ip: str, port: int, community: str, base_oid: str,
                        timeout: int = 10, retries: int = 2) -> list:
-    """Synchronous wrapper for pysnmp v7+ async bulk walk"""
+    """Synchronous wrapper for pysnmp v6+ async bulk walk"""
     async def _do_walk():
         results = []
-        async with SnmpDispatcher() as snmpDispatcher:
-            transport = await UdpTransportTarget.create((ip, port), timeout=timeout, retries=retries)
+        snmpEngine = SnmpEngine()
+        try:
+            transport = await UdpTransportTarget.create(
+                (ip, port), timeout=timeout, retries=retries
+            )
             current_oid = base_oid
             while True:
                 error_indication, error_status, error_index, var_binds = await bulk_cmd_async(
-                    snmpDispatcher,
+                    snmpEngine,
                     CommunityData(community),
                     transport,
+                    ContextData(),
                     0, 25,  # nonRepeaters, maxRepetitions
                     ObjectType(ObjectIdentity(current_oid)),
                 )
@@ -125,6 +149,8 @@ def _run_snmp_walk_v7(ip: str, port: int, community: str, base_oid: str,
                         return results  # Left the subtree
                     results.append(var_bind)
                     current_oid = oid_str  # Continue from last OID
+        finally:
+            snmpEngine.close_dispatcher()
         return results
     return asyncio.run(_do_walk())
 
@@ -134,27 +160,27 @@ try:
     PYSNMP_VERSION = getattr(pysnmp, '__version__', '0.0.0')
     major_version = int(PYSNMP_VERSION.split('.')[0])
     
-    if major_version >= 7:
-        # v7+ - try v7 async API first, fallback to classic
+    if major_version >= 6:
+        # v6+ - try v6 async API first (v3arch.asyncio), fallback to classic
         try:
-            _import_pysnmp_v7()
-        except Exception as v7_err:
-            print(f"v7 asyncio API import failed: {v7_err}, trying classic API...")
+            _import_pysnmp_v6_async()
+        except Exception as v6_err:
+            print(f"v6 asyncio API import failed: {v6_err}, trying classic API...")
             try:
                 _import_pysnmp_classic()
             except Exception as classic_err:
                 print(f"Classic API also failed: {classic_err}")
                 SNMP_AVAILABLE = False
     else:
-        # Version 6.x or lower - try classic first, then v7
+        # Version 5.x or lower - try classic first, then v6 async
         try:
             _import_pysnmp_classic()
         except Exception as classic_err:
-            print(f"Classic API import failed: {classic_err}, trying v7 asyncio API...")
+            print(f"Classic API import failed: {classic_err}, trying v6 asyncio API...")
             try:
-                _import_pysnmp_v7()
-            except Exception as v7_err:
-                print(f"v7 asyncio API also failed: {v7_err}")
+                _import_pysnmp_v6_async()
+            except Exception as v6_err:
+                print(f"v6 asyncio API also failed: {v6_err}")
                 SNMP_AVAILABLE = False
                 
 except ImportError as initial_error:
@@ -168,11 +194,11 @@ except ImportError as initial_error:
         )
         import pysnmp
         PYSNMP_VERSION = getattr(pysnmp, '__version__', '0.0.0')
-        # After fresh install, try v7 first (lextudio default), fallback to classic
+        # After fresh install, try v6 async first, fallback to classic
         try:
-            _import_pysnmp_v7()
-        except Exception as v7_err:
-            print(f"Post-install v7 asyncio API failed: {v7_err}, trying classic...")
+            _import_pysnmp_v6_async()
+        except Exception as v6_err:
+            print(f"Post-install v6 asyncio API failed: {v6_err}, trying classic...")
             try:
                 _import_pysnmp_classic()
             except Exception as classic_err:
