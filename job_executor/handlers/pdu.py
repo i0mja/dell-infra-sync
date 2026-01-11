@@ -9,6 +9,7 @@ Supports:
 
 import re
 import time
+import asyncio
 import urllib3
 from enum import IntEnum
 from typing import Dict, List, Optional, Any, Tuple
@@ -19,11 +20,18 @@ import sys
 import subprocess
 
 # =============================================================================
-# pysnmp version-aware import (supports both v4-6 classic API and v7+ new API)
+# pysnmp version-aware import (supports both v4-6 classic API and v7+ async API)
 # =============================================================================
 SNMP_AVAILABLE = False
 PYSNMP_VERSION = None
 PYSNMP_V7_PLUS = False
+
+# v7+ async function references (set by _import_pysnmp_v7)
+get_cmd_async = None
+set_cmd_async = None
+bulk_cmd_async = None
+SnmpDispatcher = None
+Integer = None
 
 def _import_pysnmp_classic():
     """Import pysnmp using the classic API (v4.x/5.x/6.x)"""
@@ -38,26 +46,87 @@ def _import_pysnmp_classic():
     print(f"pysnmp {PYSNMP_VERSION} (classic API) loaded successfully")
 
 def _import_pysnmp_v7():
-    """Import pysnmp using the v7+ API (pysnmp-lextudio)"""
+    """Import pysnmp using the v7+ asyncio API (pysnmp-lextudio)"""
     global SNMP_AVAILABLE, PYSNMP_V7_PLUS
-    global setCmd, getCmd, nextCmd, SnmpDispatcher, CommunityData
-    global UdpTransportTarget, ObjectType, ObjectIdentity, Integer
+    global get_cmd_async, set_cmd_async, bulk_cmd_async
+    global SnmpDispatcher, CommunityData, UdpTransportTarget
+    global ObjectType, ObjectIdentity, Integer
     
-    from pysnmp.hlapi.v1arch import (
+    # v7+ uses v1arch.asyncio path with async functions
+    from pysnmp.hlapi.v1arch.asyncio import (
         SnmpDispatcher,
         CommunityData,
         UdpTransportTarget,
         ObjectType,
         ObjectIdentity,
-        getCmd,
-        setCmd,
-        nextCmd,
+        get_cmd as get_cmd_async,
+        set_cmd as set_cmd_async,
+        bulk_cmd as bulk_cmd_async,
     )
-    from pysnmp.smi.rfc1902 import Integer32 as Integer
+    from pysnmp.proto.rfc1902 import Integer32 as Integer
     
     SNMP_AVAILABLE = True
     PYSNMP_V7_PLUS = True
-    print(f"pysnmp {PYSNMP_VERSION} (v7+ API with SnmpDispatcher) loaded successfully")
+    print(f"pysnmp {PYSNMP_VERSION} (v7+ asyncio API) loaded successfully")
+
+# =============================================================================
+# Async-to-Sync SNMP wrappers for pysnmp v7+ (asyncio-only API)
+# =============================================================================
+
+def _run_snmp_get_v7(ip: str, port: int, community: str, oid: str,
+                      timeout: int = 10, retries: int = 2):
+    """Synchronous wrapper for pysnmp v7+ async get_cmd"""
+    async def _do_get():
+        async with SnmpDispatcher() as snmpDispatcher:
+            return await get_cmd_async(
+                snmpDispatcher,
+                CommunityData(community),
+                await UdpTransportTarget.create((ip, port), timeout=timeout, retries=retries),
+                ObjectType(ObjectIdentity(oid))
+            )
+    return asyncio.run(_do_get())
+
+def _run_snmp_set_v7(ip: str, port: int, community: str, oid: str,
+                      value: int, timeout: int = 5, retries: int = 2):
+    """Synchronous wrapper for pysnmp v7+ async set_cmd"""
+    async def _do_set():
+        async with SnmpDispatcher() as snmpDispatcher:
+            return await set_cmd_async(
+                snmpDispatcher,
+                CommunityData(community),
+                await UdpTransportTarget.create((ip, port), timeout=timeout, retries=retries),
+                ObjectType(ObjectIdentity(oid), Integer(value))
+            )
+    return asyncio.run(_do_set())
+
+def _run_snmp_walk_v7(ip: str, port: int, community: str, base_oid: str,
+                       timeout: int = 10, retries: int = 2) -> list:
+    """Synchronous wrapper for pysnmp v7+ async bulk walk"""
+    async def _do_walk():
+        results = []
+        async with SnmpDispatcher() as snmpDispatcher:
+            transport = await UdpTransportTarget.create((ip, port), timeout=timeout, retries=retries)
+            current_oid = base_oid
+            while True:
+                error_indication, error_status, error_index, var_binds = await bulk_cmd_async(
+                    snmpDispatcher,
+                    CommunityData(community),
+                    transport,
+                    0, 25,  # nonRepeaters, maxRepetitions
+                    ObjectType(ObjectIdentity(current_oid)),
+                )
+                if error_indication or error_status:
+                    break
+                if not var_binds:
+                    break
+                for var_bind in var_binds:
+                    oid_str = str(var_bind[0])
+                    if not oid_str.startswith(base_oid):
+                        return results  # Left the subtree
+                    results.append(var_bind)
+                    current_oid = oid_str  # Continue from last OID
+        return results
+    return asyncio.run(_do_walk())
 
 # Try to import pysnmp with version detection and fallback between API styles
 try:
@@ -66,11 +135,11 @@ try:
     major_version = int(PYSNMP_VERSION.split('.')[0])
     
     if major_version >= 7:
-        # v7+ - try v7 API first, fallback to classic
+        # v7+ - try v7 async API first, fallback to classic
         try:
             _import_pysnmp_v7()
         except Exception as v7_err:
-            print(f"v7 API import failed: {v7_err}, trying classic API...")
+            print(f"v7 asyncio API import failed: {v7_err}, trying classic API...")
             try:
                 _import_pysnmp_classic()
             except Exception as classic_err:
@@ -78,15 +147,14 @@ try:
                 SNMP_AVAILABLE = False
     else:
         # Version 6.x or lower - try classic first, then v7
-        # (pysnmp-lextudio 6.x may use v7-style paths despite version number)
         try:
             _import_pysnmp_classic()
         except Exception as classic_err:
-            print(f"Classic API import failed: {classic_err}, trying v7 API...")
+            print(f"Classic API import failed: {classic_err}, trying v7 asyncio API...")
             try:
                 _import_pysnmp_v7()
             except Exception as v7_err:
-                print(f"v7 API also failed: {v7_err}")
+                print(f"v7 asyncio API also failed: {v7_err}")
                 SNMP_AVAILABLE = False
                 
 except ImportError as initial_error:
@@ -104,7 +172,7 @@ except ImportError as initial_error:
         try:
             _import_pysnmp_v7()
         except Exception as v7_err:
-            print(f"Post-install v7 API failed: {v7_err}, trying classic...")
+            print(f"Post-install v7 asyncio API failed: {v7_err}, trying classic...")
             try:
                 _import_pysnmp_classic()
             except Exception as classic_err:
@@ -116,7 +184,7 @@ except ImportError as initial_error:
         SNMP_AVAILABLE = False
 
 # Log final SNMP status at startup
-print(f"SNMP_AVAILABLE: {SNMP_AVAILABLE}, Version: {PYSNMP_VERSION}")
+print(f"SNMP_AVAILABLE: {SNMP_AVAILABLE}, Version: {PYSNMP_VERSION}, V7_ASYNC: {PYSNMP_V7_PLUS}")
 
 from .base import BaseHandler
 from datetime import datetime, timezone
@@ -726,7 +794,7 @@ class PDUHandler(BaseHandler):
                               command: SnmpOutletCommand) -> Tuple[bool, str]:
         """
         Control PDU outlet via SNMP - no session limitations.
-        Supports both pysnmp v4-6 (classic API) and v7+ (new API with SnmpDispatcher).
+        Supports both pysnmp v4-6 (classic API) and v7+ (asyncio API with wrappers).
         
         Tries both SPDU and RPDU2 OIDs for compatibility with different models.
         """
@@ -747,16 +815,12 @@ class PDUHandler(BaseHandler):
             try:
                 self.log(f"Trying SNMP SET with OID {oid_name}: {oid}")
                 
-                # Create setCmd based on pysnmp version
                 if PYSNMP_V7_PLUS:
-                    snmpDispatcher = SnmpDispatcher()
-                    iterator = setCmd(
-                        snmpDispatcher,
-                        CommunityData(community),
-                        UdpTransportTarget((ip, 161), timeout=5, retries=2),
-                        ObjectType(ObjectIdentity(oid), Integer(command.value))
-                    )
+                    # Use async-to-sync wrapper for v7+
+                    error_indication, error_status, error_index, var_binds = \
+                        _run_snmp_set_v7(ip, 161, community, oid, command.value)
                 else:
+                    # Classic API (v4-6)
                     iterator = setCmd(
                         SnmpEngine(),
                         CommunityData(community, mpModel=0),  # SNMP v1
@@ -764,8 +828,7 @@ class PDUHandler(BaseHandler):
                         ContextData(),
                         ObjectType(ObjectIdentity(oid), Integer(command.value))
                     )
-                
-                error_indication, error_status, error_index, var_binds = next(iterator)
+                    error_indication, error_status, error_index, var_binds = next(iterator)
                 
                 if error_indication:
                     last_error = str(error_indication)
@@ -788,7 +851,7 @@ class PDUHandler(BaseHandler):
     
     def _snmp_get_outlet_state(self, ip: str, community: str, outlet: int) -> Optional[str]:
         """Get single outlet state via SNMP with detailed error logging.
-        Supports both pysnmp v4-6 (classic API) and v7+ (new API)."""
+        Supports both pysnmp v4-6 (classic API) and v7+ (asyncio API with wrappers)."""
         if not SNMP_AVAILABLE:
             self.log("SNMP library (pysnmp) not available", "DEBUG")
             return None
@@ -803,16 +866,12 @@ class PDUHandler(BaseHandler):
         last_error = None
         for oid, oid_name in oids_to_try:
             try:
-                # Create getCmd based on pysnmp version
                 if PYSNMP_V7_PLUS:
-                    snmpDispatcher = SnmpDispatcher()
-                    iterator = getCmd(
-                        snmpDispatcher,
-                        CommunityData(community),
-                        UdpTransportTarget((ip, 161), timeout=10, retries=3),
-                        ObjectType(ObjectIdentity(oid))
-                    )
+                    # Use async-to-sync wrapper for v7+
+                    error_indication, error_status, error_index, var_binds = \
+                        _run_snmp_get_v7(ip, 161, community, oid)
                 else:
+                    # Classic API (v4-6)
                     iterator = getCmd(
                         SnmpEngine(),
                         CommunityData(community, mpModel=0),
@@ -820,8 +879,7 @@ class PDUHandler(BaseHandler):
                         ContextData(),
                         ObjectType(ObjectIdentity(oid))
                     )
-                
-                error_indication, error_status, error_index, var_binds = next(iterator)
+                    error_indication, error_status, error_index, var_binds = next(iterator)
                 
                 if error_indication:
                     last_error = f"{oid_name}: {error_indication}"
@@ -861,7 +919,7 @@ class PDUHandler(BaseHandler):
         """
         Walk an SNMP OID subtree to discover all outlet states.
         This works regardless of the PDU's OID indexing scheme (sequential, bank-indexed, etc.)
-        Supports both pysnmp v4-6 (classic API) and v7+ (new API with SnmpDispatcher).
+        Supports both pysnmp v4-6 (classic API) and v7+ (asyncio API with wrappers).
         
         Returns dict mapping outlet number (1-based) to state ('on' or 'off')
         """
@@ -871,46 +929,12 @@ class PDUHandler(BaseHandler):
             self.log(f"SNMP walking OID: {oid_name} ({base_oid}) [pysnmp v7+: {PYSNMP_V7_PLUS}]")
             outlet_index = 1  # Sequential outlet numbering
             
-            # Create iterator based on pysnmp version
             if PYSNMP_V7_PLUS:
-                # pysnmp 7.x API uses SnmpDispatcher instead of SnmpEngine
-                snmpDispatcher = SnmpDispatcher()
-                iterator = nextCmd(
-                    snmpDispatcher,
-                    CommunityData(community),
-                    UdpTransportTarget((ip, 161), timeout=10, retries=2),
-                    ObjectType(ObjectIdentity(base_oid)),
-                )
-            else:
-                # pysnmp 4.x/5.x/6.x classic API
-                iterator = nextCmd(
-                    SnmpEngine(),
-                    CommunityData(community, mpModel=0),
-                    UdpTransportTarget((ip, 161), timeout=10, retries=2),
-                    ContextData(),
-                    ObjectType(ObjectIdentity(base_oid)),
-                    lexicographicMode=False  # Stop when leaving this OID subtree
-                )
-            
-            for error_indication, error_status, error_index, var_binds in iterator:
-                if error_indication:
-                    self.log(f"SNMP walk error_indication: {error_indication}", "DEBUG")
-                    self._add_diagnostic('WARN', 'snmp_walk', f'SNMP error: {error_indication}', {
-                        'oid_name': oid_name,
-                        'error': str(error_indication)
-                    })
-                    break
-                if error_status:
-                    self.log(f"SNMP walk error_status: {error_status.prettyPrint()}", "DEBUG")
-                    break
+                # Use async-to-sync wrapper for v7+ bulk walk
+                var_binds_list = _run_snmp_walk_v7(ip, 161, community, base_oid)
                 
-                for var_bind in var_binds:
+                for var_bind in var_binds_list:
                     oid_str = str(var_bind[0])
-                    # Verify we're still in the target OID subtree
-                    if not oid_str.startswith(base_oid):
-                        self.log(f"SNMP walk left subtree at {oid_str}", "DEBUG")
-                        break
-                    
                     try:
                         value = int(var_bind[1])
                         if value == SnmpOutletState.ON:
@@ -927,6 +951,52 @@ class PDUHandler(BaseHandler):
                     except (ValueError, TypeError) as e:
                         self.log(f"SNMP walk: parse error at {oid_str}: {e}", "DEBUG")
                         continue
+            else:
+                # Classic API (v4-6)
+                iterator = nextCmd(
+                    SnmpEngine(),
+                    CommunityData(community, mpModel=0),
+                    UdpTransportTarget((ip, 161), timeout=10, retries=2),
+                    ContextData(),
+                    ObjectType(ObjectIdentity(base_oid)),
+                    lexicographicMode=False  # Stop when leaving this OID subtree
+                )
+                
+                for error_indication, error_status, error_index, var_binds in iterator:
+                    if error_indication:
+                        self.log(f"SNMP walk error_indication: {error_indication}", "DEBUG")
+                        self._add_diagnostic('WARN', 'snmp_walk', f'SNMP error: {error_indication}', {
+                            'oid_name': oid_name,
+                            'error': str(error_indication)
+                        })
+                        break
+                    if error_status:
+                        self.log(f"SNMP walk error_status: {error_status.prettyPrint()}", "DEBUG")
+                        break
+                    
+                    for var_bind in var_binds:
+                        oid_str = str(var_bind[0])
+                        # Verify we're still in the target OID subtree
+                        if not oid_str.startswith(base_oid):
+                            self.log(f"SNMP walk left subtree at {oid_str}", "DEBUG")
+                            break
+                        
+                        try:
+                            value = int(var_bind[1])
+                            if value == SnmpOutletState.ON:
+                                state = 'on'
+                            elif value == SnmpOutletState.OFF:
+                                state = 'off'
+                            else:
+                                self.log(f"SNMP walk: unknown state value {value} at {oid_str}", "DEBUG")
+                                continue
+                            
+                            outlet_states[outlet_index] = state
+                            self.log(f"SNMP walk: outlet {outlet_index} = {state} (OID: {oid_str})", "DEBUG")
+                            outlet_index += 1
+                        except (ValueError, TypeError) as e:
+                            self.log(f"SNMP walk: parse error at {oid_str}: {e}", "DEBUG")
+                            continue
             
             if outlet_states:
                 self.log(f"SNMP walk via {oid_name} found {len(outlet_states)} outlets")
