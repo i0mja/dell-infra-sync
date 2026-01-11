@@ -1,6 +1,8 @@
 import { useState, Fragment, useMemo, useEffect } from "react";
 import { Server } from "@/hooks/useServers";
 import { compareValues } from "@/lib/utils";
+import { useServerIssueSummaries, ServerIssueSummary } from "@/hooks/useServerIssueSummaries";
+import { ActiveIssuesSection } from "./ActiveIssuesSection";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -58,7 +60,7 @@ import {
   Power,
   Link2,
   Monitor,
-  Pin,
+  
   Eye,
   Search,
   MoreHorizontal,
@@ -207,15 +209,15 @@ export function ServersTable({
     "servers-table-views"
   );
 
-  // State for degraded banner dismissal
-  const [degradedBannerDismissed, setDegradedBannerDismissed] = useState(false);
-
   // Flatten servers for sorting
   const allServers = groupedData
     ? groupedData.flatMap((g) => g.servers.map((s) => ({ ...s, groupName: g.name, groupId: g.id })))
     : servers || [];
 
-  // Get effective status for sorting (considers hardware issues for degraded state)
+  // Fetch issue summaries for the Active Issues section
+  const { data: issueSummaries } = useServerIssueSummaries();
+
+  // Get effective status for display (considers hardware issues for degraded state)
   const getEffectiveStatus = (server: Server): string => {
     if (server.connection_status === "online") {
       const issues = hardwareIssues?.get(server.id);
@@ -227,27 +229,15 @@ export function ServersTable({
     return server.connection_status || "unknown";
   };
 
-  // Count of degraded servers for the pinning banner
-  const degradedCount = useMemo(() => {
-    return allServers.filter(s => getEffectiveStatus(s) === "degraded").length;
-  }, [allServers, hardwareIssues]);
+  // Count of servers with issues for the section header
+  const issueCount = useMemo(() => {
+    return issueSummaries?.size || 0;
+  }, [issueSummaries]);
 
-  // Reset dismissed state if degraded count changes (new issue detected)
-  useEffect(() => {
-    setDegradedBannerDismissed(false);
-  }, [degradedCount]);
-
-  // Apply sorting - degraded servers always pinned to top
+  // Apply sorting - NO LONGER pins degraded to top (they appear in dedicated section instead)
   const sortedServers = useMemo(() => {
     return [...allServers].sort((a, b) => {
-      // Primary sort: Degraded servers always first (pinned to top)
-      const aIsDegraded = getEffectiveStatus(a) === "degraded";
-      const bIsDegraded = getEffectiveStatus(b) === "degraded";
-      
-      if (aIsDegraded && !bIsDegraded) return -1;
-      if (!aIsDegraded && bIsDegraded) return 1;
-      
-      // Secondary sort: User's chosen sort field
+      // Only apply user's chosen sort field - no forced pinning
       if (!sortField) return 0;
       
       let aVal: any;
@@ -736,23 +726,16 @@ export function ServersTable({
         </DropdownMenu>
       </div>
 
-      {/* Degraded servers pinning notice */}
-      {degradedCount > 0 && !degradedBannerDismissed && (
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-warning/10 border-b border-warning/20 text-xs text-warning-foreground">
-          <Pin className="h-3 w-3 text-warning" />
-          <span>
-            <strong>{degradedCount}</strong> server{degradedCount > 1 ? 's' : ''} with hardware issues 
-            {degradedCount === 1 ? ' is' : ' are'} pinned to the top until resolved
-          </span>
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            className="h-5 px-1.5 ml-auto text-xs hover:bg-warning/20"
-            onClick={() => setDegradedBannerDismissed(true)}
-          >
-            <X className="h-3 w-3" />
-          </Button>
-        </div>
+      {/* Active Issues Section - shows servers with hardware issues at the top */}
+      {issueSummaries && issueSummaries.size > 0 && (
+        <ActiveIssuesSection
+          servers={allServers}
+          issueSummaries={issueSummaries}
+          selectedServers={selectedServers}
+          onServerClick={onServerClick}
+          onToggleSelection={toggleServerSelection}
+          selectedServerId={selectedServerId}
+        />
       )}
 
       {/* Table */}
