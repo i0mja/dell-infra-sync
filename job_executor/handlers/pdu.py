@@ -18,28 +18,78 @@ import requests
 import sys
 import subprocess
 
-# Try to import pysnmp, auto-install if missing
-try:
+# =============================================================================
+# pysnmp version-aware import (supports both v4-6 classic API and v7+ new API)
+# =============================================================================
+SNMP_AVAILABLE = False
+PYSNMP_VERSION = None
+PYSNMP_V7_PLUS = False
+
+def _import_pysnmp_classic():
+    """Import pysnmp using the classic API (v4.x/5.x/6.x)"""
+    global SNMP_AVAILABLE, setCmd, getCmd, nextCmd, SnmpEngine, CommunityData
+    global UdpTransportTarget, ContextData, ObjectType, ObjectIdentity, Integer
+    
     from pysnmp.hlapi import (
         setCmd, getCmd, nextCmd, SnmpEngine, CommunityData,
         UdpTransportTarget, ContextData, ObjectType, ObjectIdentity, Integer
     )
     SNMP_AVAILABLE = True
-except ImportError:
-    # Attempt auto-installation of pysnmp
-    print("pysnmp not found, attempting auto-installation...")
+    print(f"pysnmp {PYSNMP_VERSION} (classic API) loaded successfully")
+
+def _import_pysnmp_v7():
+    """Import pysnmp using the v7+ API (pysnmp-lextudio)"""
+    global SNMP_AVAILABLE, PYSNMP_V7_PLUS
+    global setCmd, getCmd, nextCmd, SnmpDispatcher, CommunityData
+    global UdpTransportTarget, ObjectType, ObjectIdentity, Integer
+    
+    from pysnmp.hlapi.v1arch import (
+        SnmpDispatcher,
+        CommunityData,
+        UdpTransportTarget,
+        ObjectType,
+        ObjectIdentity,
+        getCmd,
+        setCmd,
+        nextCmd,
+    )
+    from pysnmp.smi.rfc1902 import Integer32 as Integer
+    
+    SNMP_AVAILABLE = True
+    PYSNMP_V7_PLUS = True
+    print(f"pysnmp {PYSNMP_VERSION} (v7+ API with SnmpDispatcher) loaded successfully")
+
+# Try to import pysnmp with version detection
+try:
+    import pysnmp
+    PYSNMP_VERSION = getattr(pysnmp, '__version__', '0.0.0')
+    major_version = int(PYSNMP_VERSION.split('.')[0])
+    
+    if major_version >= 7:
+        _import_pysnmp_v7()
+    else:
+        _import_pysnmp_classic()
+        
+except ImportError as initial_error:
+    # Attempt auto-installation of pysnmp-lextudio (the maintained fork)
+    print(f"pysnmp import failed: {initial_error}")
+    print("Attempting to install pysnmp-lextudio...")
     try:
         subprocess.check_call(
-            [sys.executable, '-m', 'pip', 'install', 'pysnmp'],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
+            [sys.executable, '-m', 'pip', 'install', 'pysnmp-lextudio'],
+            timeout=120
         )
-        from pysnmp.hlapi import (
-            setCmd, getCmd, nextCmd, SnmpEngine, CommunityData,
-            UdpTransportTarget, ContextData, ObjectType, ObjectIdentity, Integer
-        )
-        SNMP_AVAILABLE = True
-        print("Successfully installed and imported pysnmp library")
+        # Try importing again after installation
+        import pysnmp
+        PYSNMP_VERSION = getattr(pysnmp, '__version__', '0.0.0')
+        major_version = int(PYSNMP_VERSION.split('.')[0])
+        
+        if major_version >= 7:
+            _import_pysnmp_v7()
+        else:
+            _import_pysnmp_classic()
+            
+        print("Successfully installed and imported pysnmp-lextudio")
     except Exception as e:
         print(f"Warning: Could not install pysnmp: {e}")
         SNMP_AVAILABLE = False
@@ -652,13 +702,14 @@ class PDUHandler(BaseHandler):
                               command: SnmpOutletCommand) -> Tuple[bool, str]:
         """
         Control PDU outlet via SNMP - no session limitations.
+        Supports both pysnmp v4-6 (classic API) and v7+ (new API with SnmpDispatcher).
         
         Tries both SPDU and RPDU2 OIDs for compatibility with different models.
         """
         if not SNMP_AVAILABLE:
             return False, "SNMP library (pysnmp) not available"
         
-        self.log(f"SNMP control: outlet={outlet}, command={command.name}, ip={ip}")
+        self.log(f"SNMP control: outlet={outlet}, command={command.name}, ip={ip} [pysnmp v7+: {PYSNMP_V7_PLUS}]")
         
         # Try primary OID first (sPDUOutletCtl for older models)
         oids_to_try = [
@@ -672,15 +723,25 @@ class PDUHandler(BaseHandler):
             try:
                 self.log(f"Trying SNMP SET with OID {oid_name}: {oid}")
                 
-                error_indication, error_status, error_index, var_binds = next(
-                    setCmd(
+                # Create setCmd based on pysnmp version
+                if PYSNMP_V7_PLUS:
+                    snmpDispatcher = SnmpDispatcher()
+                    iterator = setCmd(
+                        snmpDispatcher,
+                        CommunityData(community),
+                        UdpTransportTarget((ip, 161), timeout=5, retries=2),
+                        ObjectType(ObjectIdentity(oid), Integer(command.value))
+                    )
+                else:
+                    iterator = setCmd(
                         SnmpEngine(),
                         CommunityData(community, mpModel=0),  # SNMP v1
                         UdpTransportTarget((ip, 161), timeout=5, retries=2),
                         ContextData(),
                         ObjectType(ObjectIdentity(oid), Integer(command.value))
                     )
-                )
+                
+                error_indication, error_status, error_index, var_binds = next(iterator)
                 
                 if error_indication:
                     last_error = str(error_indication)
@@ -702,7 +763,8 @@ class PDUHandler(BaseHandler):
         return False, f"SNMP control failed: {last_error}"
     
     def _snmp_get_outlet_state(self, ip: str, community: str, outlet: int) -> Optional[str]:
-        """Get single outlet state via SNMP with detailed error logging"""
+        """Get single outlet state via SNMP with detailed error logging.
+        Supports both pysnmp v4-6 (classic API) and v7+ (new API)."""
         if not SNMP_AVAILABLE:
             self.log("SNMP library (pysnmp) not available", "DEBUG")
             return None
@@ -717,15 +779,25 @@ class PDUHandler(BaseHandler):
         last_error = None
         for oid, oid_name in oids_to_try:
             try:
-                error_indication, error_status, error_index, var_binds = next(
-                    getCmd(
+                # Create getCmd based on pysnmp version
+                if PYSNMP_V7_PLUS:
+                    snmpDispatcher = SnmpDispatcher()
+                    iterator = getCmd(
+                        snmpDispatcher,
+                        CommunityData(community),
+                        UdpTransportTarget((ip, 161), timeout=10, retries=3),
+                        ObjectType(ObjectIdentity(oid))
+                    )
+                else:
+                    iterator = getCmd(
                         SnmpEngine(),
                         CommunityData(community, mpModel=0),
-                        UdpTransportTarget((ip, 161), timeout=10, retries=3),  # Increased timeout
+                        UdpTransportTarget((ip, 161), timeout=10, retries=3),
                         ContextData(),
                         ObjectType(ObjectIdentity(oid))
                     )
-                )
+                
+                error_indication, error_status, error_index, var_binds = next(iterator)
                 
                 if error_indication:
                     last_error = f"{oid_name}: {error_indication}"
@@ -765,25 +837,44 @@ class PDUHandler(BaseHandler):
         """
         Walk an SNMP OID subtree to discover all outlet states.
         This works regardless of the PDU's OID indexing scheme (sequential, bank-indexed, etc.)
+        Supports both pysnmp v4-6 (classic API) and v7+ (new API with SnmpDispatcher).
         
         Returns dict mapping outlet number (1-based) to state ('on' or 'off')
         """
         outlet_states = {}
         
         try:
-            self.log(f"SNMP walking OID: {oid_name} ({base_oid})")
+            self.log(f"SNMP walking OID: {oid_name} ({base_oid}) [pysnmp v7+: {PYSNMP_V7_PLUS}]")
             outlet_index = 1  # Sequential outlet numbering
             
-            for error_indication, error_status, error_index, var_binds in nextCmd(
-                SnmpEngine(),
-                CommunityData(community, mpModel=0),
-                UdpTransportTarget((ip, 161), timeout=10, retries=2),
-                ContextData(),
-                ObjectType(ObjectIdentity(base_oid)),
-                lexicographicMode=False  # Stop when leaving this OID subtree
-            ):
+            # Create iterator based on pysnmp version
+            if PYSNMP_V7_PLUS:
+                # pysnmp 7.x API uses SnmpDispatcher instead of SnmpEngine
+                snmpDispatcher = SnmpDispatcher()
+                iterator = nextCmd(
+                    snmpDispatcher,
+                    CommunityData(community),
+                    UdpTransportTarget((ip, 161), timeout=10, retries=2),
+                    ObjectType(ObjectIdentity(base_oid)),
+                )
+            else:
+                # pysnmp 4.x/5.x/6.x classic API
+                iterator = nextCmd(
+                    SnmpEngine(),
+                    CommunityData(community, mpModel=0),
+                    UdpTransportTarget((ip, 161), timeout=10, retries=2),
+                    ContextData(),
+                    ObjectType(ObjectIdentity(base_oid)),
+                    lexicographicMode=False  # Stop when leaving this OID subtree
+                )
+            
+            for error_indication, error_status, error_index, var_binds in iterator:
                 if error_indication:
                     self.log(f"SNMP walk error_indication: {error_indication}", "DEBUG")
+                    self._add_diagnostic('WARN', 'snmp_walk', f'SNMP error: {error_indication}', {
+                        'oid_name': oid_name,
+                        'error': str(error_indication)
+                    })
                     break
                 if error_status:
                     self.log(f"SNMP walk error_status: {error_status.prettyPrint()}", "DEBUG")
@@ -818,6 +909,11 @@ class PDUHandler(BaseHandler):
                 
         except Exception as e:
             self.log(f"SNMP walk exception for {oid_name}: {e}", "WARN")
+            self._add_diagnostic('ERROR', 'snmp_walk', f'Exception during SNMP walk: {e}', {
+                'oid_name': oid_name,
+                'exception': str(e),
+                'pysnmp_version': PYSNMP_VERSION
+            })
         
         return outlet_states
     
